@@ -2,21 +2,12 @@ package com.esark.gasp;
 
 import android.content.Context;
 import android.content.Intent;
-import android.os.SystemClock;
-import android.util.Log;
 
 import com.esark.framework.Game;
 import com.esark.framework.Graphics;
 import com.esark.framework.Input;
-import com.esark.framework.Pixmap;
+import com.esark.framework.Input.TouchEvent;
 import com.esark.framework.Screen;
-
-import static com.esark.framework.AndroidGame.bufferFlag;
-import static com.esark.gasp.Assets.gaspMainBackground;
-import static com.esark.gasp.FFT.fft;
-
-import static java.lang.Math.sin;
-import static java.lang.Math.sqrt;
 
 import java.text.SimpleDateFormat;
 import java.util.Date;
@@ -63,6 +54,7 @@ public class GameScreen extends Screen implements Input {
     public static String[] timeStamp = new String[100];
     public static int eventCount = 0;
     public int manualPatientEventUpCount = 0;
+    public double[] A2DValCopy = new double[500];
 
     //Constructor
     public GameScreen(Game game) {
@@ -80,7 +72,7 @@ public class GameScreen extends Screen implements Input {
     private void updateRunning(List<TouchEvent> touchEvents, float deltaTime, Context context) {
         //updateRunning() contains controller code of our MVC scheme
         Graphics g = game.getGraphics();
-        g.drawPortraitPixmap(Assets.gaspMainBackground, 0, 0);
+        g.drawPortraitPixmap(Assets.laryngospasmBackgroundMain , 0, 0);
         len = touchEvents.size();
         //Check to see if paused
         for (int i = 0; i < len; i++) {
@@ -202,43 +194,7 @@ public class GameScreen extends Screen implements Input {
         //    xStart = 300;
         //  xStop = 301;
         int u = 0;
-        //   for (int y = 1; y < 8; y++) {
-
-        // freqScalar = 0.1534;      //50
-        //  freqScalar = 64.34;
-        //freqScalar = 0.0155;
-        // freqScalar = 3.25;       //100
-        // freqScalar = 1.63;      //200
-        //  freqScalar = 0.652;      //500
-/*
-        for(int h = 0; h < 2048; h++){
-            sineWave[h] = (int)amplitude*sin(h/freqScalar) + 800;
-        }
-        if(increasingFlag == 1) {
-            amplitude += 50;
-            if (amplitude >= 500){
-                increasingFlag = 0;
-            }
-        }
-        else if(increasingFlag == 0){
-            amplitude -= 50;
-            if(amplitude <= 100){
-                increasingFlag = 1;
-            }
-        }
-        if(freqIncreasingFlag == 1) {
-            freqScalar --;
-            if (freqScalar <= 10){
-                freqIncreasingFlag = 0;
-            }
-        }
-        else if(freqIncreasingFlag == 0){
-            freqScalar ++;
-            if (freqScalar >= 100){
-                freqIncreasingFlag = 1;
-            }
-        }
-        */
+        
         xStart = 3350;
         xStop = 3335;
         for (int n = 499; n > 2; n --) {
@@ -249,6 +205,29 @@ public class GameScreen extends Screen implements Input {
                 break;
             }
         }
+        for(int i = 0; i < 500; i++)
+        {
+            A2DValCopy[i] = A2DVal[i];
+        }
+        // ++++++++++++++++++ RMS (Root-Mean Square) Visualization ++++++++++++++++++++++++++
+        double[] movingRMS = RMSCalculator.calculateMovingRMS(A2DValCopy, 20);
+        double[] smoothedRMS = MovingAverageCalculator.calculateMovingAverage(movingRMS, 10);        // +++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+        
+        if (smoothedRMS.length > 2) {
+            xStart = 3250;
+            xStop = 3235;
+            for (int n = smoothedRMS.length - 1; n > 1; n--) {
+                // Drawing smoothed RMS in red line for visibility, feel free to change back to black
+                g.drawBlueLine(xStart, (int) (smoothedRMS[n] + 1600), xStop, (int) ((smoothedRMS[n - 1]) + 1600), 0);
+                xStart = xStop;
+                xStop -= 15;
+                if (xStop <= 410) {
+                    break;
+                }
+            }
+        }
+
+        // ++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
         //double[] signal = {1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0}; // Example data
         double fs = 10.0; // Example sampling frequency (Hz)
 
@@ -261,7 +240,7 @@ public class GameScreen extends Screen implements Input {
         //  psdResult = psdCalc.calculatePSD(sineWave, fs);
 
         for (int i = 0; i < psdResult.length; i++) {
-            psdResult[i] = psdResult[i] * -0.025 + 3233;
+            psdResult[i] = psdResult[i] * -0.025 + 3600;
             if(psdResult[i] < 2000){
                 psdResult[i] = 2000;
             }
@@ -277,73 +256,6 @@ public class GameScreen extends Screen implements Input {
                 break;
             }
         }
-        /*
-        Complex[] cinput = new Complex[2048];        //256 works
-        for (int m = 0; m < 2048; m++) {
-           // cinput[m] = new Complex(A2DVal[m], 0.0);
-            cinput[m] = new Complex(sineWave[m], 0.0);
-            xStart = xStop;
-            xStop++;
-        }
-        fft(cinput);
-
-    //    System.out.println("Results:");
-        for (Complex c : cinput) {
-       //     System.out.println(c);
-           // psd[u] = ((c.re * c.re + c.im * c.im) / -6000000) + 3500;
-            psd[u] = ((c.re * c.re + c.im * c.im) / -10240000) + 3500;
-            //if(psd[u] < 5000){
-              //  psd[u] = 3000;
-            //}
-      //      System.out.println("PSD:");
-        //    System.out.println(psd[u]);
-            u++;
-        }
-
-        xStart = 300;
-        xStop = 301;
-        for (int i = 1024; i < 2048; i++) {
-            g.drawBlackLine(xStart, (int) psd[i - 1], xStop, (int) psd[i], 0);
-            xStart = xStop;
-            xStop += 3;
-        }
-
-
-        String freqString = String.valueOf(freq);
-      //  g.drawText("100", 330, PSDYVAL);
-        //g.drawText("200", 785, PSDYVAL);
-      //  g.drawText("500", 1700, PSDYVAL);
-      //  g.drawText(freqString, 2300, 3700);
-      //  while(bufferFlag == 0);
-
-
-        xStart = 3500;
-        xStop = 3499;
-        for (int n = 499; n > 2; n --) {
-            g.drawBlackLine(xStart, (int) A2DVal[n], xStop, (int) (A2DVal[n - 1]), 0);
-            xStart = xStop;
-            xStop-= 15;
-        }
-/*
-        //xStart = 3370;
-        //xStop = 3369;
-        xStart = 2800;
-        xStop = 2799;
-        for (int n = 2047; n > 0; n -- ) {
-            g.drawBlackLine(xStart, (int) sineWave[n], xStop, (int) (sineWave[n - 1]), 0);
-            xStart = xStop;
-            //xStop-= 5;
-            xStop--;
-            if(xStart <= 380){
-                break;
-            }
-        }
-
-     //   bufferFlag = 0;
-       // SystemClock.sleep(10);
-       */
-
-
     }
 
     @Override

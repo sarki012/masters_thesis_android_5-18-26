@@ -14,7 +14,7 @@ public class LoadingScreen extends Screen {
     public GameScreen gameScreen = new GameScreen(game);
     public void update(float deltaTime, Context context) {
         Graphics g = game.getGraphics();
-        Assets.gaspMainBackground = g.newPixmap("gaspMainBackground.png", PixmapFormat.ARGB4444);
+        Assets.laryngospasmBackgroundMain = g.newPixmap("laryngospasmBackgroundMain.png", PixmapFormat.ARGB4444);
         game.setScreen(gameScreen);
     }
     public void present(float deltaTime) {

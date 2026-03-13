@@ -185,7 +185,7 @@ public abstract class AndroidGame extends Activity implements Game {
                                         for (int k = 0; k < 499; k++) {
                                             A2DVal[k] = A2DVal[k + 1];      //Shift all values 1 to the right. Rolling buffer
                                         }
-                                        A2DVal[499] = (((double) totalA2DVal / -3.2 + 1360));
+                                        A2DVal[499] = (((double) totalA2DVal / -3.0 + 1400));
                                         if(A2DVal[499] <= 60)
                                         {
                                             A2DVal[499]  = 60;

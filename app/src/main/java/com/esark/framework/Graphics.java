@@ -14,6 +14,7 @@ public interface Graphics {
 
     public void drawLine(int x, int y, int x2, int y2, int color);
 
+    public void drawBlueLine(int x, int y, int x2, int y2, int color);
     public void drawBlackLine(int x, int y, int x2, int y2, int color);
 
     public void drawRedLine(int x, int y, int x2, int y2, int color);
