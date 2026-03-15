@@ -151,15 +151,17 @@ public class GameScreen extends Screen implements Input {
         }
 
         //   if(landscape == 0) {
+/*
+        g.drawRect(620, 4600, 1550, 400, 0);       //Bluetooth Connect
+        g.drawRect(70, 2075, 870, 275, 0);       //Start
+        g.drawRect(900, 3875, 300, 275, 0);       //RMS Height Threshold Text
+        g.drawRect(1400, 3745, 275, 275, 0);       //Left Up Button
+        g.drawRect(1400, 4030, 275, 275, 0);       //Left Down Button
+        g.drawRect(185, 4300, 1550, 299, 0);       //Event Log
+        g.drawRect(1750, 4300, 1550, 299, 0);       //Last Event
+        g.drawRect(185, 4600, 1550, 400, 0);       //Manual Patient Event
 
-        //  g.drawRect(1750, 4600, 1550, 400, 0);       //Bluetooth Connect
-        // g.drawRect(185, 3500, 1550, 275, 0);       //Start
-        //   g.drawRect(900, 3875, 300, 275, 0);       //RMS Height Threshold Text
-        //   g.drawRect(1400, 3745, 275, 275, 0);       //Left Up Button
-        //   g.drawRect(1400, 4030, 275, 275, 0);       //Left Down Button
-        //  g.drawRect(185, 4300, 1550, 299, 0);       //Event Log
-        //   g.drawRect(1750, 4300, 1550, 299, 0);       //Last Event
-        // g.drawRect(185, 4600, 1550, 400, 0);       //Manual Patient Event
+ */
         String eventCountStr = String.valueOf(eventCount);
         g.drawText(eventCountStr, 1550, 4800);
         ////////////////// Start / Stop Recording //////////////////////////////////////////
