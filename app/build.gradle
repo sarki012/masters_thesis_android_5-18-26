@@ -10,8 +10,7 @@ android {
     defaultConfig {
         applicationId "com.esark.gaspSemg"
         minSdkVersion 24
-        //noinspection ExpiredTargetSdkVersion
-        targetSdkVersion 28
+        targetSdkVersion 34
         versionCode 1
         versionName "1.0"
 

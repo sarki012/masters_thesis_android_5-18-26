@@ -16,7 +16,7 @@
         android:supportsRtl="true"
         android:theme="@style/Theme.MuscleVolt"
         android:largeHeap="true">
-        <activity android:name="com.esark.gasp.GaspSemg" android:configChanges="orientation|screenSize">
+        <activity android:name="com.esark.gasp.GaspSemg" android:exported="true" android:configChanges="orientation|screenSize">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN"/>
                 <category android:name="android.intent.category.LAUNCHER"/>

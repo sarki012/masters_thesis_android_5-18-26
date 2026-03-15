@@ -196,7 +196,7 @@ public class GameScreen extends Screen implements Input {
         //    xStart = 300;
         //  xStop = 301;
         int u = 0;
-        
+
         xStart = 1600;
         xStop = 1585;
         for (int n = 499; n > 2; n --) {
@@ -214,7 +214,7 @@ public class GameScreen extends Screen implements Input {
         // ++++++++++++++++++ RMS (Root-Mean Square) Visualization ++++++++++++++++++++++++++
         double[] movingRMS = RMSCalculator.calculateMovingRMS(A2DValCopy, 20);
         double[] smoothedRMS = MovingAverageCalculator.calculateMovingAverage(movingRMS, 10);        // +++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
-        
+
         if (smoothedRMS.length > 2) {
             xStart = 1600;
             xStop = 1585;
