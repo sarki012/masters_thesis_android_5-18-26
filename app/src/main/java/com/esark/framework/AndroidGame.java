@@ -16,11 +16,11 @@ import android.content.res.Configuration;
 import android.graphics.Bitmap;
 import android.graphics.Bitmap.Config;
 import android.graphics.Point;
+import android.os.Build;
 import android.os.Bundle;
 import android.os.Handler;
 import android.os.Looper;
 import android.os.Message;
-import android.os.SystemClock;
 import android.util.DisplayMetrics;
 import android.view.Display;
 import android.view.View;
@@ -42,6 +42,8 @@ import com.esark.gasp.ConnectedThread;
 
 import java.io.IOException;
 import java.io.UnsupportedEncodingException;
+import java.util.ArrayList;
+import java.util.List;
 import java.util.Set;
 import java.util.UUID;
 
@@ -102,18 +104,9 @@ public abstract class AndroidGame extends Activity implements Game {
 
     public static int bufferFlag = 0;
 
-   // private LruCache<String, Bitmap> mMemoryCache;
-    //public int count = 0;
     @Override
     public void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
-
-                /*
-
-    If you setup the cache in the Application class then it will never get destroyed
-    until the app shuts down. You are guaranteed that the Application class will always
-    be "alive" when ever one of your activities are.
-         */
 
         setContentView(R.layout.activity_main);
 
@@ -137,9 +130,8 @@ public abstract class AndroidGame extends Activity implements Game {
         mDevicesListView.setAdapter(mBTArrayAdapter); // assign model to view
         mDevicesListView.setOnItemClickListener(mDeviceClickListener);
 
-        // Ask for location permission if not already allowed
-        if(ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_COARSE_LOCATION) != PackageManager.PERMISSION_GRANTED)
-            ActivityCompat.requestPermissions(this, new String[]{Manifest.permission.ACCESS_COARSE_LOCATION}, 1);
+        // Ask for permissions
+        checkPermissions();
 
         //Message from run() in ConnectedThread mHandler.obtain message
         mHandler = new Handler(Looper.getMainLooper()){
@@ -158,7 +150,6 @@ public abstract class AndroidGame extends Activity implements Game {
                             }
                         }
                         for(i = 0; i < 3; i++) {
-                           // if(readMessage.charAt(t) == 'a' | readMessage.charAt(t) <= 9 | readMessage.charAt(t) == '-'){
                             if (readMessage.charAt(t) == 'a') {         //Next char is a number
                                 t++;
                                 if(Character.getNumericValue(readMessage.charAt(t)) >= 0 && Character.getNumericValue(readMessage.charAt(t)) <= 9 &&
@@ -194,14 +185,6 @@ public abstract class AndroidGame extends Activity implements Game {
                                         {
                                             A2DVal[499]  = 1900;
                                         }
-                                   //     System.out.println("A2DVal[2247] " + A2DVal[2247]);
-                                        //  bufferFlag = 1;
-                                        //if(GameScreen.A2DVal[j] < 40) {
-                                        // GameScreen.A2DVal[j] = 40;
-                                        //}
-                                        //   j++;
-                                        // if (j > 3499)
-                                        //   j = 0;
                                     }
                                 }
                             }
@@ -288,6 +271,41 @@ public abstract class AndroidGame extends Activity implements Game {
 
     }
 
+    private void checkPermissions() {
+        List<String> permissionsNeeded = new ArrayList<>();
+
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            if (ContextCompat.checkSelfPermission(this, Manifest.permission.BLUETOOTH_SCAN) != PackageManager.PERMISSION_GRANTED) {
+                permissionsNeeded.add(Manifest.permission.BLUETOOTH_SCAN);
+            }
+            if (ContextCompat.checkSelfPermission(this, Manifest.permission.BLUETOOTH_CONNECT) != PackageManager.PERMISSION_GRANTED) {
+                permissionsNeeded.add(Manifest.permission.BLUETOOTH_CONNECT);
+            }
+        } else {
+            if (ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION) != PackageManager.PERMISSION_GRANTED) {
+                permissionsNeeded.add(Manifest.permission.ACCESS_FINE_LOCATION);
+            }
+        }
+
+        if (!permissionsNeeded.isEmpty()) {
+            ActivityCompat.requestPermissions(this, permissionsNeeded.toArray(new String[0]), 1);
+        }
+    }
+
+    private boolean hasConnectPermission() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            return ContextCompat.checkSelfPermission(this, Manifest.permission.BLUETOOTH_CONNECT) == PackageManager.PERMISSION_GRANTED;
+        }
+        return true;
+    }
+
+    private boolean hasScanPermission() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+            return ContextCompat.checkSelfPermission(this, Manifest.permission.BLUETOOTH_SCAN) == PackageManager.PERMISSION_GRANTED;
+        }
+        return ContextCompat.checkSelfPermission(this, Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED;
+    }
+
     public void onConfigurationChanged(Configuration newConfig) {
         super.onConfigurationChanged(newConfig);
         Graphics g = this.getGraphics();
@@ -305,6 +323,10 @@ public abstract class AndroidGame extends Activity implements Game {
 
 
     private void bluetoothOn(){
+        if (!hasConnectPermission()) {
+            checkPermissions();
+            return;
+        }
         if (!mBTAdapter.isEnabled()) {
             Intent enableBtIntent = new Intent(BluetoothAdapter.ACTION_REQUEST_ENABLE);
             startActivityForResult(enableBtIntent, REQUEST_ENABLE_BT);
@@ -325,8 +347,6 @@ public abstract class AndroidGame extends Activity implements Game {
         if (requestCode == REQUEST_ENABLE_BT) {
             // Make sure the request was successful
             if (resultCode == RESULT_OK) {
-                // The user picked a contact.
-                // The Intent's data Uri identifies which contact was selected.
                 mBluetoothStatus.setText("Enabled");
             } else
                 mBluetoothStatus.setText("Disabled");
@@ -334,12 +354,20 @@ public abstract class AndroidGame extends Activity implements Game {
     }
 
     private void bluetoothOff(){
+        if (!hasConnectPermission()) {
+            checkPermissions();
+            return;
+        }
         mBTAdapter.disable(); // turn off
         mBluetoothStatus.setText("Bluetooth disabled");
         Toast.makeText(getApplicationContext(),"Bluetooth turned Off", Toast.LENGTH_SHORT).show();
     }
 
     private void discover(){
+        if (!hasScanPermission()) {
+            checkPermissions();
+            return;
+        }
         // Check if the device is already discovering
         if(mBTAdapter.isDiscovering()){
             mBTAdapter.cancelDiscovery();
@@ -364,7 +392,9 @@ public abstract class AndroidGame extends Activity implements Game {
             String action = intent.getAction();
             if(BluetoothDevice.ACTION_FOUND.equals(action)){
                 BluetoothDevice device = intent.getParcelableExtra(BluetoothDevice.EXTRA_DEVICE);
-                // add the name to the list
+                if (ActivityCompat.checkSelfPermission(context, Manifest.permission.BLUETOOTH_CONNECT) != PackageManager.PERMISSION_GRANTED) {
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) return;
+                }
                 mBTArrayAdapter.add(device.getName() + "\n" + device.getAddress());
                 mBTArrayAdapter.notifyDataSetChanged();
             }
@@ -372,6 +402,10 @@ public abstract class AndroidGame extends Activity implements Game {
     };
 
     private void listPairedDevices(){
+        if (!hasConnectPermission()) {
+            checkPermissions();
+            return;
+        }
         mBTArrayAdapter.clear();
         mPairedDevices = mBTAdapter.getBondedDevices();
         if(mBTAdapter.isEnabled()) {
@@ -389,6 +423,10 @@ public abstract class AndroidGame extends Activity implements Game {
         @Override
         public void onItemClick(AdapterView<?> parent, View view, int position, long id) {
 
+            if (!hasConnectPermission()) {
+                checkPermissions();
+                return;
+            }
             if(!mBTAdapter.isEnabled()) {
                 Toast.makeText(getBaseContext(), "Bluetooth not on", Toast.LENGTH_SHORT).show();
                 return;
@@ -413,11 +451,14 @@ public abstract class AndroidGame extends Activity implements Game {
                         mBTSocket = createBluetoothSocket(device);
                     } catch (IOException e) {
                         fail = true;
-                        Toast.makeText(getBaseContext(), "Socket creation failed", Toast.LENGTH_SHORT).show();
                     }
                     // Establish the Bluetooth socket connection.
                     try {
-                        mBTSocket.connect();
+                        if (ActivityCompat.checkSelfPermission(AndroidGame.this, Manifest.permission.BLUETOOTH_CONNECT) == PackageManager.PERMISSION_GRANTED || Build.VERSION.SDK_INT < Build.VERSION_CODES.S) {
+                            mBTSocket.connect();
+                        } else {
+                            fail = true;
+                        }
                     } catch (IOException e) {
                         try {
                             fail = true;
@@ -425,8 +466,6 @@ public abstract class AndroidGame extends Activity implements Game {
                             mHandler.obtainMessage(CONNECTING_STATUS, -1, -1)
                                     .sendToTarget();
                         } catch (IOException e2) {
-                            //insert code to deal with this
-                            Toast.makeText(getBaseContext(), "Socket creation failed", Toast.LENGTH_SHORT).show();
                         }
                     }
                     if(!fail) {
@@ -441,26 +480,17 @@ public abstract class AndroidGame extends Activity implements Game {
         }
     };
 
-    /*
-    Investigate createBluetoothSocket more.
-     */
     private BluetoothSocket createBluetoothSocket(BluetoothDevice device) throws IOException {
-        //This function works with the try-catch block commented out
-        /*
-        try {
-            final Method m = device.getClass().getMethod("createInsecureRfcommSocketToServiceRecord", UUID.class);
-            return (BluetoothSocket) m.invoke(device, BT_MODULE_UUID);
-        } catch (Exception e) {
-            Log.e(TAG, "Could not create Insecure RFComm Connection",e);
+        if (ActivityCompat.checkSelfPermission(this, Manifest.permission.BLUETOOTH_CONNECT) != PackageManager.PERMISSION_GRANTED) {
+            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) {
+                throw new IOException("Missing BLUETOOTH_CONNECT permission");
+            }
         }
-*/
         return  device.createRfcommSocketToServiceRecord(BT_MODULE_UUID);
     }
 
     private void showGraph(){
         setContentView(renderView);
-        // Intent intent = new Intent(this, MuscleVolt.class);
-        //startActivity(intent);
     }
 
     @Override
@@ -474,8 +504,6 @@ public abstract class AndroidGame extends Activity implements Game {
         super.onPause();
         renderView.pause();
         screen.pause();
-   //     System.gc();
-        //screen.dispose();
         if (isFinishing())
             screen.dispose();
     }
