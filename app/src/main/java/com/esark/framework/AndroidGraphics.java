@@ -26,10 +26,7 @@ public class AndroidGraphics extends AndroidGame implements Graphics {
     public Bitmap resizedBitmap = null;
     public Bitmap joystickBitmap = null;
     public Bitmap blueJoystickBitmap = null;
- //   private Bitmap cacheBitmap = null;
     public static int staticCount = 0;
-   // public LruCache cache;
-  //  private LruCache<String, Bitmap> mMemoryCache;
     public GetLruCache mMemoryCache = null;
 
     public AndroidGraphics(AssetManager assets, Bitmap frameBuffer) {
@@ -124,30 +121,19 @@ public class AndroidGraphics extends AndroidGame implements Graphics {
         canvas.drawRect(x, y, x + width - 1, y + height - 1, paint);
         return;
     }
-/*
-    public void drawPixmap(Pixmap pixmap, int x, int y, int srcX, int srcY, int srcWidth, int srcHeight) {
-        srcRect.left = srcX;
-        srcRect.top = srcY;
-        srcRect.right = srcX + srcWidth - 1;
-        srcRect.bottom = srcY + srcHeight - 1;
 
-        dstRect.left = x;
-        dstRect.top = y;
-        dstRect.right = x + srcWidth - 1;
-        dstRect.bottom = y + srcHeight - 1;
-
-        canvas.drawBitmap(((AndroidPixmap) pixmap).bitmap, srcRect, dstRect, null);
-        return;
-    }
-*/
     public void drawEventLogButtonPixmap(Pixmap pixmap, int x, int y) {
         Bitmap resizedBitmap = Bitmap.createScaledBitmap(((AndroidPixmap) pixmap).bitmap, 1400, 500, false);
         canvas.drawBitmap(resizedBitmap, x, y, null);
         return;
 }
     public void drawPortraitPixmap(Pixmap pixmap, int x, int y) {
-        Bitmap resizedBitmap = Bitmap.createScaledBitmap(((AndroidPixmap) pixmap).bitmap, 3500, 5000, false);
-        canvas.drawBitmap(resizedBitmap, x, y, null);
+        // Use dstRect to scale the image to the full framebuffer size
+        // This avoids creating a new bitmap in memory and is more efficient
+        dstRect.set(x, y, x + frameBuffer.getWidth(), y + frameBuffer.getHeight());
+        // Enabling bilinear filtering to reduce blurriness/pixelation during scaling
+        paint.setFilterBitmap(true);
+        canvas.drawBitmap(((AndroidPixmap) pixmap).bitmap, null, dstRect, paint);
         return;
     }
     public void addBitmapToMemoryCache(String key, Bitmap bitmap) {     //Add a bitmap to the cache
