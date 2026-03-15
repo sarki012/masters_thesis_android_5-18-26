@@ -197,8 +197,8 @@ public class GameScreen extends Screen implements Input {
         //  xStop = 301;
         int u = 0;
         
-        xStart = 3350;
-        xStop = 3335;
+        xStart = 1600;
+        xStop = 1585;
         for (int n = 499; n > 2; n --) {
             g.drawBlackLine(xStart, (int) A2DVal[n], xStop, (int) (A2DVal[n - 1]), 0);
             xStart = xStop;
@@ -216,14 +216,20 @@ public class GameScreen extends Screen implements Input {
         double[] smoothedRMS = MovingAverageCalculator.calculateMovingAverage(movingRMS, 10);        // +++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
         
         if (smoothedRMS.length > 2) {
-            xStart = 3250;
-            xStop = 3235;
+            xStart = 1600;
+            xStop = 1585;
+            //xStop = 3235;
             for (int n = smoothedRMS.length - 1; n > 1; n--) {
-                // Drawing smoothed RMS in red line for visibility, feel free to change back to black
-                g.drawBlueLine(xStart, (int) (smoothedRMS[n] + 1600), xStop, (int) ((smoothedRMS[n - 1]) + 1600), 0);
+                // 1. Calculate the RMS amplitude (deviation from the 1360 baseline)
+                // 2. Plot it relative to your target y = 1050 (Centered symmetrically)
+                double rmsAmplitude = Math.abs(smoothedRMS[n] - 1360);
+                double rmsAmplitudeNext = Math.abs(smoothedRMS[n - 1] - 1360);
+
+                g.drawBlueLine(xStart, (int) (200 + rmsAmplitude), xStop, (int) (200 + rmsAmplitudeNext), 0);
+
                 xStart = xStop;
                 xStop -= 15;
-                if (xStop <= 410) {
+                if (xStop <= 180) {
                     break;
                 }
             }
@@ -248,13 +254,13 @@ public class GameScreen extends Screen implements Input {
             }
             // System.out.println("Frequency Bin " + i + ": PSD = " + psdResult[i]);
         }
-        xStart = 400;
-        xStop = 410;
+        xStart = 170;
+        xStop = 180;
         for (int i = 1; i < psdResult.length; i++) {
-            g.drawRedLine(xStart, (int) psdResult[i - 1], xStop, (int) psdResult[i], 0);
+            g.drawRedLine(xStart, (int) psdResult[i - 1] - 1695, xStop, (int) psdResult[i] - 1695, 0);
             xStart = xStop;
             xStop += 10;
-            if(xStop >= 3370){
+            if(xStop >= 1600){
                 break;
             }
         }
