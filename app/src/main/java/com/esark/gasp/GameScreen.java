@@ -18,7 +18,8 @@ public class GameScreen extends Screen implements Input {
 
     int xStart = 0, xStop = 0;
     //public static double[] A2DVal = new double[3500];
-    public static double[] A2DVal = new double[500];
+    public static double[] A2DVal = new double[1435];
+    public double[] A2DValCopy = new double[1435];
     double[] psd = new double[2048];
 
     double[] sineWave = new double[2048];
@@ -54,7 +55,6 @@ public class GameScreen extends Screen implements Input {
     public static String[] timeStamp = new String[100];
     public static int eventCount = 0;
     public int manualPatientEventUpCount = 0;
-    public double[] A2DValCopy = new double[500];
 
     //Constructor
     public GameScreen(Game game) {
@@ -199,15 +199,15 @@ public class GameScreen extends Screen implements Input {
 
         xStart = 1600;
         xStop = 1585;
-        for (int n = 499; n > 2; n --) {
+        for (int n = 1434; n > 2; n --) {
             g.drawBlackLine(xStart, (int) A2DVal[n] - 50, xStop, (int) (A2DVal[n - 1]) - 50, 0);
             xStart = xStop;
-            xStop-= 15;
+            xStop-= 1;
             if(xStop <= 165){
                 break;
             }
         }
-        for(int i = 0; i < 500; i++)
+        for(int i = 0; i < 1435; i++)
         {
             A2DValCopy[i] = A2DVal[i];
         }
