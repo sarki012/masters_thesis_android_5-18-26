@@ -200,10 +200,10 @@ public class GameScreen extends Screen implements Input {
         xStart = 1600;
         xStop = 1585;
         for (int n = 499; n > 2; n --) {
-            g.drawBlackLine(xStart, (int) A2DVal[n], xStop, (int) (A2DVal[n - 1]), 0);
+            g.drawBlackLine(xStart, (int) A2DVal[n] - 50, xStop, (int) (A2DVal[n - 1]) - 50, 0);
             xStart = xStop;
             xStop-= 15;
-            if(xStop <= 410){
+            if(xStop <= 165){
                 break;
             }
         }
@@ -248,9 +248,9 @@ public class GameScreen extends Screen implements Input {
         //  psdResult = psdCalc.calculatePSD(sineWave, fs);
 
         for (int i = 0; i < psdResult.length; i++) {
-            psdResult[i] = psdResult[i] * -0.025 + 3600;
-            if(psdResult[i] < 2000){
-                psdResult[i] = 2000;
+            psdResult[i] = psdResult[i] * -0.025 + 3575;
+            if(psdResult[i] < 1460){
+                psdResult[i] = 1460;
             }
             // System.out.println("Frequency Bin " + i + ": PSD = " + psdResult[i]);
         }
