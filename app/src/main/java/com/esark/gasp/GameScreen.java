@@ -248,9 +248,13 @@ public class GameScreen extends Screen implements Input {
         //  psdResult = psdCalc.calculatePSD(sineWave, fs);
 
         for (int i = 0; i < psdResult.length; i++) {
-            psdResult[i] = psdResult[i] * -0.025 + 3575;
-            if(psdResult[i] < 1460){
-                psdResult[i] = 1460;
+            psdResult[i] = psdResult[i] * -0.01 + 3575;
+            // Red line (PSD result) is drawn later as psdResult[i] - 1695.
+            // If we want the drawn y-value to not go above 1460, then psdResult[i] - 1695 >= 1460
+            // Because screen coordinates are 0 at the top, "above" 1460 means y < 1460.
+            // So we want psdResult[i] - 1695 >= 1460 => psdResult[i] >= 3155
+            if(psdResult[i] < 3155){
+                psdResult[i] = 3155;
             }
             // System.out.println("Frequency Bin " + i + ": PSD = " + psdResult[i]);
         }
