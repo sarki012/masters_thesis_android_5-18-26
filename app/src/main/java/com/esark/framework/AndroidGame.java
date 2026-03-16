@@ -103,6 +103,7 @@ public abstract class AndroidGame extends Activity implements Game {
     public static int height = 0;
 
     public static int bufferFlag = 0;
+    public int signalBufferLen = 1434;
 
     @Override
     public void onCreate(Bundle savedInstanceState) {
@@ -173,17 +174,17 @@ public abstract class AndroidGame extends Activity implements Game {
                                     number1 = Character.getNumericValue(bluetoothVal0);
                                     totalA2DVal = number10000 + number1000 + number100 + number10 + number1;
                                     if (totalA2DVal > 0 && totalA2DVal <= 99999) {
-                                        for (int k = 0; k < 499; k++) {
+                                        for (int k = 0; k < signalBufferLen; k++) {
                                             A2DVal[k] = A2DVal[k + 1];      //Shift all values 1 to the right. Rolling buffer
                                         }
-                                        A2DVal[499] = (((double) totalA2DVal / 3.0));
-                                        if(A2DVal[499] <= 180)
+                                        A2DVal[signalBufferLen] = (((double) totalA2DVal / 3.0));
+                                        if(A2DVal[signalBufferLen] <= 180)
                                         {
-                                            A2DVal[499]  = 180;
+                                            A2DVal[signalBufferLen]  = 180;
                                         }
-                                        else if(A2DVal[499] >= 640)
+                                        else if(A2DVal[signalBufferLen] >= 640)
                                         {
-                                            A2DVal[499]  = 640;
+                                            A2DVal[signalBufferLen]  = 640;
                                         }
                                     }
                                 }
