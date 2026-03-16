@@ -39,25 +39,25 @@ public class ConnectedThread extends Thread {
     @Override
     public void run() {
         DataInputStream dataIn = new DataInputStream(mmInStream);
-        
+
         // Keep listening to the InputStream until an exception occurs
         while (true) {
             try {
-                // Create a new buffer for each 50-byte packet
+                // Create a new buffer for each 24-byte packet
                 byte[] buffer = new byte[24];
-                
-                // readFully blocks until exactly 50 bytes are read or an exception occurs
+
+                // readFully blocks until exactly 24 bytes are read or an exception occurs
                 dataIn.readFully(buffer);
-                SystemClock.sleep(10);
-                // Send the full 50-byte buffer to the UI handler
+                SystemClock.sleep(5);
+                // Send the full 24-byte buffer to the UI handler
                 mHandler.obtainMessage(AndroidGame.MESSAGE_READ, 24, -1, buffer)
                         .sendToTarget();
-                
             } catch (IOException e) {
                 // Connection was likely lost
                 e.printStackTrace();
                 break;
             }
+
         }
     }
 
