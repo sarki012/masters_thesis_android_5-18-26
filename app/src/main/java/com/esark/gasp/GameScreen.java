@@ -198,11 +198,11 @@ public class GameScreen extends Screen implements Input {
         int u = 0;
 
         xStart = 1600;
-        xStop = 1585;
+        xStop = 1598;
         for (int n = 1434; n > 2; n --) {
             g.drawBlackLine(xStart, (int) A2DVal[n] - 50, xStop, (int) (A2DVal[n - 1]) - 50, 0);
             xStart = xStop;
-            xStop-= 15;
+            xStop-=2;
             if(xStop <= 165){
                 break;
             }
