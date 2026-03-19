@@ -1,7 +1,10 @@
 package com.esark.gasp;
 
+import static com.esark.framework.AndroidGame.signalBufferLen;
+
 import android.content.Context;
 import android.content.Intent;
+import android.util.Log;
 
 import com.esark.framework.Game;
 import com.esark.framework.Graphics;
@@ -15,11 +18,11 @@ import java.util.List;
 
 public class GameScreen extends Screen implements Input {
     Context context = null;
-
+    private static final String TAG = "GameScreen";
     int xStart = 0, xStop = 0;
     //public static double[] A2DVal = new double[3500];
-    public static double[] A2DVal = new double[1435];
-    public double[] A2DValCopy = new double[1435];
+    public static double[] A2DVal = new double[287];   //was 1435
+    public double[] A2DValCopy = new double[287];
     double[] psd = new double[2048];
 
     double[] sineWave = new double[2048];
@@ -198,9 +201,9 @@ public class GameScreen extends Screen implements Input {
         int u = 0;
 
         xStart = 1600;
-        int xStep = 3;      // Increase this to make the signal move faster across the screen (pixels per sample)
+        int xStep = 5;      // Increase this to make the signal move faster across the screen (pixels per sample)
         xStop = xStart - xStep;
-        for (int n = 1434; n > 0; n--) {
+        for (int n = signalBufferLen - 1; n > 0; n--) {
             // Using n-- (step of 1) makes the signal much smoother
             g.drawBlackLine(xStart, (int) A2DVal[n] - 50, xStop, (int) (A2DVal[n - 1]) - 50, 0);
             xStart = xStop;
@@ -209,14 +212,57 @@ public class GameScreen extends Screen implements Input {
                 break;
             }
         }
-        for(int i = 0; i < 1435; i++)
-        {
-            A2DValCopy[i] = A2DVal[i];
+
+        /*
+        xStart = 1600;
+        int xStopLimit = 165;
+        int totalGraphWidth = xStart - xStopLimit;
+
+        // numDisplayedSamples controls how many data points from A2DVal cover the screen
+        // Decrease this number to zoom in further, increase to zoom out.
+        // If 45 xStep showed 2 periods, then 1435/45 = ~32 samples.
+        double numDisplayedSamples = 128;
+
+        float yScale = 2.5f;
+        int baseline = 410;
+
+        int prevY = -1;
+        for (int x = xStart; x >= xStopLimit; x--) {
+            // Calculate the fractional index in the A2DVal buffer for this pixel
+            double bufferIndex = 1434 - (((double)(xStart - x) / totalGraphWidth) * numDisplayedSamples);
+
+            if (bufferIndex < 1) bufferIndex = 1;
+
+            int i0 = (int) bufferIndex;
+            int i1 = i0 - 1;
+            double fraction = bufferIndex - i0;
+
+            // Cosine Interpolation for a smooth curve
+            double mu2 = (1 - Math.cos(fraction * Math.PI)) / 2;
+            double interpolatedVal = A2DVal[i0] * (1 - mu2) + A2DVal[i1] * mu2;
+
+            int currentY = (int) ((interpolatedVal - baseline) * yScale + baseline) - 50;
+
+            if (prevY != -1) {
+                g.drawBlackLine(x + 1, prevY, x, currentY, 0);
+            }
+            prevY = currentY;
         }
+*/
+        System.arraycopy(A2DVal, 0, A2DValCopy, 0, A2DVal.length);
+        // Subtract DC offset (410) so RMS represents actual signal strength fluctuations
+
+
+
+
         // ++++++++++++++++++ RMS (Root-Mean Square) Visualization ++++++++++++++++++++++++++
         double[] movingRMS = RMSCalculator.calculateMovingRMS(A2DValCopy, 20);
         double[] smoothedRMS = MovingAverageCalculator.calculateMovingAverage(movingRMS, 10);        // +++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
-
+/*
+        for (int i = 0; i < smoothedRMS.length; i++) {
+            smoothedRMS[i] = 410.0 - smoothedRMS[i];
+        }
+*/
         if (smoothedRMS.length > 2) {
             xStart = 1600;
             xStop = 1585;
@@ -224,10 +270,26 @@ public class GameScreen extends Screen implements Input {
             for (int n = smoothedRMS.length - 1; n > 1; n--) {
                 // 1. Calculate the RMS amplitude (deviation from the 1360 baseline)
                 // 2. Plot it relative to your target y = 1050 (Centered symmetrically)
-                double rmsAmplitude = Math.abs(smoothedRMS[n] - 1360);
-                double rmsAmplitudeNext = Math.abs(smoothedRMS[n - 1] - 1360);
+                //double rmsAmplitude = Math.abs(smoothedRMS[n]);
+              //  double rmsAmplitudeNext = Math.abs(smoothedRMS[n - 1]);
 
-                g.drawBlueLine(xStart, (int) (200 + rmsAmplitude), xStop, (int) (200 + rmsAmplitudeNext), 0);
+                Log.d(TAG, "rmsAmplitude: " + smoothedRMS[n]);
+                Log.d(TAG, "rmsAmplitudeNext: " + smoothedRMS[n-1]);
+
+                if(smoothedRMS[n] > 423){
+                    smoothedRMS[n] = 423;
+                }
+                if(smoothedRMS[n-1] > 423){
+                    smoothedRMS[n-1] = 423;
+                }
+                if(smoothedRMS[n] < 273){
+                    smoothedRMS[n] = 273;
+                }
+                if(smoothedRMS[n-1] < 273){
+                    smoothedRMS[n-1] = 273;
+                }
+
+                g.drawBlueLine(xStart, (int) ((3*smoothedRMS[n])), xStop, (int) ((3*smoothedRMS[n-1])), 0);
 
                 xStart = xStop;
                 xStop -= 15;
@@ -236,6 +298,62 @@ public class GameScreen extends Screen implements Input {
                 }
             }
         }
+
+        /*
+        if (smoothedRMS.length > 2) {
+            xStart = 1600;
+            xStop = 1585;
+            //xStop = 3235;
+            for (int n = smoothedRMS.length - 1; n > 1; n--) {
+                // 1. Calculate the RMS amplitude (deviation from the 1360 baseline)
+                // 2. Plot it relative to your target y = 1050 (Centered symmetrically)
+                double rmsAmplitude = Math.abs(smoothedRMS[n] - 500);
+                double rmsAmplitudeNext = Math.abs(smoothedRMS[n - 1] - 500);
+
+                g.drawBlueLine(xStart, (int) (rmsAmplitude), xStop, (int) (rmsAmplitudeNext), 0);
+
+                xStart = xStop;
+                xStop -= 15;
+                if (xStop <= 180) {
+                    break;
+                }
+            }
+        }
+*/
+        /*
+        if (smoothedRMS.length > 2) {
+            xStart = 1600;
+            xStop = 1585;
+            // Target center for the blue line
+            int blueCenterY = -500;
+            // Baseline for RMS values when the signal is centered at 410
+            // The RMS of a constant signal 410 is 410.
+            double rmsBaseline = 410.0;
+            // Scale factor to make the line move visibly
+            float rmsYScale = 15.0f;
+
+            for (int n = smoothedRMS.length - 1; n > 1; n--) {
+                // Calculate deviation from baseline and scale it
+                double rmsAmplitude = (smoothedRMS[n] - rmsBaseline) * rmsYScale;
+                double rmsAmplitudeNext = (smoothedRMS[n - 1] - rmsBaseline) * rmsYScale;
+
+                // Draw centered at blueCenterY
+                int y1 = (int) (blueCenterY - rmsAmplitude);
+                int y2 = (int) (blueCenterY - rmsAmplitudeNext);
+                
+                // Draw the blue line
+                g.drawBlueLine(xStart, y1, xStop, y2, 0);
+
+
+                xStart = xStop;
+                xStop -= 15;
+                if (xStop <= 180) {
+                    break;
+                }
+            }
+        }
+        */
+
 
         // ++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
         //double[] signal = {1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0}; // Example data

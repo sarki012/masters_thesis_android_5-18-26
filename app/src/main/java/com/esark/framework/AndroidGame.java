@@ -103,7 +103,7 @@ public abstract class AndroidGame extends Activity implements Game {
     public static int height = 0;
 
     public static int bufferFlag = 0;
-    public int signalBufferLen = 1434;
+    public static int signalBufferLen = 287;
 
     @Override
     public void onCreate(Bundle savedInstanceState) {
@@ -168,13 +168,16 @@ public abstract class AndroidGame extends Activity implements Game {
                                     totalA2DVal = number10000 + number1000 + number100 + number10 + number1;
                                     
                                     if (totalA2DVal >= 0 && totalA2DVal <= 99999) {
-                                        // Shift buffer
-                                        System.arraycopy(A2DVal, 1, A2DVal, 0, signalBufferLen);
-                                        A2DVal[signalBufferLen] = ((double) totalA2DVal / 3.0);
+                                        // Shift buffer Buffer Shifting: System.arraycopy(A2DVal, 1, A2DVal, 0, signalBufferLen) moves every
+                                        // value in the array one index to the left. This discards the oldest data point (at index 0) to make
+                                        // room for the new one at the end.
+                                        System.arraycopy(A2DVal, 1, A2DVal, 0, signalBufferLen - 1);
+                                        A2DVal[signalBufferLen - 1] = ((double) totalA2DVal / 3.0);
+
                                         
                                         // Clamping
-                                        if(A2DVal[signalBufferLen] < 180) A2DVal[signalBufferLen] = 180;
-                                        else if(A2DVal[signalBufferLen] > 640) A2DVal[signalBufferLen] = 640;
+                                        if(A2DVal[signalBufferLen - 1] < 180) A2DVal[signalBufferLen - 1] = 180;
+                                        else if(A2DVal[signalBufferLen - 1] > 640) A2DVal[signalBufferLen - 1] = 640;
                                     }
                                 }
                             }
