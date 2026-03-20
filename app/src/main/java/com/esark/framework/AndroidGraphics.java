@@ -123,7 +123,7 @@ public class AndroidGraphics extends AndroidGame implements Graphics {
     }
 
     public void drawEventLogButtonPixmap(Pixmap pixmap, int x, int y) {
-        Bitmap resizedBitmap = Bitmap.createScaledBitmap(((AndroidPixmap) pixmap).bitmap, 400, 100, false);
+        Bitmap resizedBitmap = Bitmap.createScaledBitmap(((AndroidPixmap) pixmap).bitmap, 500, 100, false);
         canvas.drawBitmap(resizedBitmap, x, y, null);
         return;
 }
