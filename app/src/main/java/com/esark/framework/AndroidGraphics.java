@@ -96,7 +96,7 @@ public class AndroidGraphics extends AndroidGame implements Graphics {
     }
     public void drawBlueLine(int x, int y, int x2, int y2, int color) {
         paint.setColor(Color.BLUE);
-        paint.setStrokeWidth(20);
+        paint.setStrokeWidth(5);
         canvas.drawLine(x, y, x2, y2, paint);
         return;
     }
@@ -110,7 +110,7 @@ public class AndroidGraphics extends AndroidGame implements Graphics {
     public void drawRedLine(int x, int y, int x2, int y2, int color) {
 
         paint.setColor(Color.RED);
-        paint.setStrokeWidth(10);
+        paint.setStrokeWidth(5);
         canvas.drawLine(x, y, x2, y2, paint);
         return;
     }
@@ -148,7 +148,13 @@ public class AndroidGraphics extends AndroidGame implements Graphics {
 
     public void drawText(String percent, int x, int y) {
         paint.setColor(Color.BLACK);
-        paint.setTextSize(125);
+        paint.setTextSize(65);
+        canvas.drawText(percent, x, y, paint);
+        return;
+    }
+        public void drawRedText(String percent, int x, int y) {
+        paint.setColor(Color.RED);
+        paint.setTextSize(60);
         canvas.drawText(percent, x, y, paint);
         return;
     }

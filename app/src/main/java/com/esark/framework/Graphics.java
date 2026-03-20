@@ -28,6 +28,7 @@ public interface Graphics {
     //public void drawLandscapePixmap(Pixmap pixmap, int x, int y);
 
     public void drawText(String percent, int x, int y);
+    public void drawRedText(String redText, int x, int y);
 
     public void drawSmallText(String percent, int x, int y);
 
