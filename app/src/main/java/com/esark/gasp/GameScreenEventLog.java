@@ -59,7 +59,7 @@ public class GameScreenEventLog extends Screen implements Input {
            // if (event.type == TouchEvent.TOUCH_UP) {
            // }
             if (event.type == TouchEvent.TOUCH_UP || event.type == TouchEvent.TOUCH_DRAGGED || event.type == TouchEvent.TOUCH_DOWN) {
-                if (event.x > 185 && event.x < 1735 && event.y > 4700 && event.y < 4975) {
+                if(event.x > 25 && event.x < 675 && event.y > 2583 && event.y < 2780) {
                     //Artifact/PSD Screen
                     game.setScreen(game.getStartScreen());
                 }
