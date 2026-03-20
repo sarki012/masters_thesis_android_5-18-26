@@ -150,7 +150,7 @@ public class GameScreen extends Screen implements Input {
                         for(int w = 0; w < psdResult.length; w++){
                             PSDArray[eventCount][w] = psdResult[w];
                         }
-                        SimpleDateFormat dateFormat = new SimpleDateFormat("yyyy-MM-dd HH:mm:ss");
+                        SimpleDateFormat dateFormat = new SimpleDateFormat("HH:mm:ss");
                         timeStamp[eventCount]  = dateFormat.format(new Date());
                         eventCount++;
                         manualPatientEventUpCount = 1;

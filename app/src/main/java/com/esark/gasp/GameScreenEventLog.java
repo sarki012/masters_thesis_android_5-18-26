@@ -64,17 +64,17 @@ public class GameScreenEventLog extends Screen implements Input {
                     game.setScreen(game.getStartScreen());
                 }
                 //Button 1
-                if (event.x > 150 && event.x < 1550 && event.y > 500 && event.y < 1000) {
+                if (event.x > 50 && event.x < 500 && event.y > 300 && event.y < 400) {
                     eventCount = 0;
                     game.setScreen(gameScreenEvent);
                 }
                 //Button 2
-                if (event.x > 1900 && event.x < 3300 && event.y > 500 && event.y < 1000) {
+                if (event.x > 600 && event.x < 950 && event.y > 300 && event.y < 400) {
                     eventCount = 1;
                     game.setScreen(gameScreenEvent);
                 }
                 //Button 3
-                if (event.x > 150 && event.x < 1550 && event.y > 1050 && event.y < 1550) {
+                if (event.x > 1150 && event.x < 1500 && event.y > 300 && event.y < 400) {
                     eventCount = 2;
                     game.setScreen(gameScreenEvent);
                 }
@@ -93,25 +93,25 @@ public class GameScreenEventLog extends Screen implements Input {
 
         switch (eventCount) {
             case 1:
-                g.drawEventLogButtonPixmap(Assets.eventLogButton, 150, 500);
-                g.drawText(timeStamp[0], 250, 800);
+                g.drawEventLogButtonPixmap(Assets.eventLogButton, 50, 300);
+                g.drawText(timeStamp[0], 150, 375);
                 break; // Optional: exits the switch statement
             case 2:
-                g.drawEventLogButtonPixmap(Assets.eventLogButton, 150, 500);
-                g.drawText(timeStamp[0], 250, 800);
+                g.drawEventLogButtonPixmap(Assets.eventLogButton, 50, 300);
+                g.drawText(timeStamp[0], 150, 375);
 
-                g.drawEventLogButtonPixmap(Assets.eventLogButton, 1900, 500);
-                g.drawText(timeStamp[1], 2050, 800);
+                g.drawEventLogButtonPixmap(Assets.eventLogButton, 600, 300);
+                g.drawText(timeStamp[1], 700, 375);
                 break;
             case 3:
-                g.drawEventLogButtonPixmap(Assets.eventLogButton, 150, 500);
-                g.drawText(timeStamp[0], 250, 800);
+                g.drawEventLogButtonPixmap(Assets.eventLogButton, 50, 300);
+                g.drawText(timeStamp[0], 150, 375);
 
-                g.drawEventLogButtonPixmap(Assets.eventLogButton, 1900, 500);
-                g.drawText(timeStamp[1], 2050, 800);
+                g.drawEventLogButtonPixmap(Assets.eventLogButton, 600, 300);
+                g.drawText(timeStamp[1], 700, 375);
 
-                g.drawEventLogButtonPixmap(Assets.eventLogButton, 150, 1050);
-                g.drawText(timeStamp[2], 250, 1350);
+                g.drawEventLogButtonPixmap(Assets.eventLogButton, 1150, 300);
+                g.drawText(timeStamp[2], 1300, 375);
                 break; // Optional: exits the switch statement
             case 4:
                 g.drawEventLogButtonPixmap(Assets.eventLogButton, 150, 500);
