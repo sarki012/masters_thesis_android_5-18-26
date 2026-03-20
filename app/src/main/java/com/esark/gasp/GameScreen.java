@@ -23,6 +23,8 @@ public class GameScreen extends Screen implements Input {
     //public static double[] A2DVal = new double[3500];
     public static double[] A2DVal = new double[287];   //was 1435
     public double[] A2DValCopy = new double[287];
+    public static double[] movingRMS = new double[287];
+    public static double[] smoothedRMS = new double[287];
     double[] psd = new double[2048];
 
     double[] sineWave = new double[2048];
@@ -58,6 +60,7 @@ public class GameScreen extends Screen implements Input {
     public static String[] timeStamp = new String[100];
     public static int eventCount = 0;
     public int manualPatientEventUpCount = 0;
+    public int rmsWidthThreshTouch = 0;
 
     //Constructor
     public GameScreen(Game game) {
@@ -88,11 +91,12 @@ public class GameScreen extends Screen implements Input {
                     return;
                 }
                 //Start Recording Buttono
-                else if (event.x > 45 && event.x < 1240 && event.y > 1240 && event.y < 3775) {
+                else if (event.x > 45 && event.x < 1240 && event.y > 1240 && event.y < 2100) {
                     //Start
                     startTimeMillis = System.currentTimeMillis();
                     startRecording = 1;
                 }
+                //////////////////// Left Up Button ////////////////////////////////////////////////
                 else if (event.x > 685 && event.x < 840 && event.y > 2110 && event.y < 2215) {
                     //RMS threshold amplitude to trigger event. Left Up Button.
                     rmsThresholdTouch = 1;
@@ -101,12 +105,31 @@ public class GameScreen extends Screen implements Input {
                         leftUpCount = 1;
                     }
                 }
+                //////////////////// Left Down Button ////////////////////////////////////////////////
                 else if (event.x > 685 && event.x < 840 && event.y > 2220 && event.y < 2325) {
                     //RMS threshold amplitude to trigger event. Left Down Button.
                     rmsThresholdTouch = 1;
                     if (leftDownCount == 0) {       //Flag so we only increment the delay by 5 once per touch
                         rmsAmpThresh -= 5;
                         leftDownCount = 1;
+                    }
+                }
+                //////////////////// Right Up Button ////////////////////////////////////////////////
+                else if (event.x > 1560 && event.x < 1715 && event.y > 2110 && event.y < 2215) {
+                    //RMS threshold amplitude to trigger event. Left Up Button.
+                    rmsWidthThreshTouch = 1;
+                    if (rightUpCount == 0) {       //Flag so we only increment the delay by 5 once per touch
+                        rmsWidthThresh += 5;
+                        rightUpCount = 1;
+                    }
+                }
+                //////////////////// Right Down Button ////////////////////////////////////////////////
+                else if (event.x > 1560 && event.x < 1715 && event.y > 2220 && event.y < 2325) {
+                    //RMS threshold amplitude to trigger event. Left Down Button.
+                    rmsWidthThreshTouch = 1;
+                    if (rightDownCount == 0) {       //Flag so we only increment the delay by 5 once per touch
+                        rmsWidthThresh -= 5;
+                        rightDownCount = 1;
                     }
                 }
                 else if (event.x > 720 && event.x < 1190 && event.y > 2600 && event.y < 2700) {
@@ -121,8 +144,8 @@ public class GameScreen extends Screen implements Input {
                 else if (event.x > 25 && event.x < 675 && event.y > 2583 && event.y < 2780) {
                     //Manual Patient Event
                     if (manualPatientEventUpCount == 0) {       //Flag so we only increment the delay by 5 once per touch
-                        for(int r = 0; r < 2048; r++){
-                            eventArray[eventCount][r] = sineWave[r];
+                        for(int r = 0; r < signalBufferLen; r++){
+                            eventArray[eventCount][r] = A2DVal[r];
                         }
                         for(int w = 0; w < psdResult.length; w++){
                             PSDArray[eventCount][w] = psdResult[w];
@@ -139,13 +162,25 @@ public class GameScreen extends Screen implements Input {
                 //else if (landscape == 1 && event.x < 100 && event.y > 230)
             }
             else if(event.type == TouchEvent.TOUCH_UP){
+                /// ////////////////// Left Up Button //////////////////////////////////////////////
                 if (event.x > 685 && event.x < 840 && event.y > 2110 && event.y < 2215) {
                     //RMS threshold amplitude to trigger event. Left up button.
                     leftUpCount = 0;       //Flag so we only increment the delay by 5 once per touch
                 }
+                ////////////////////// Left Down Button ////////////////////////////////////////////
                 else if (event.x > 685 && event.x < 840 && event.y > 2220 && event.y < 2325) {
                     //RMS threshold amplitude to trigger event. Left Down Button.
                     leftDownCount = 0;       //Flag so we only increment the delay by 5 once per touch
+                }
+                ///////////////////// Right Up Button //////////////////////////////////////////////
+                if (event.x > 1560 && event.x < 1715 && event.y > 2110 && event.y < 2215) {
+                    //RMS threshold amplitude to trigger event. Left up button.
+                    rightUpCount = 0;       //Flag so we only increment the delay by 5 once per touch
+                }
+                /// ///////////////// Right Down Button ////////////////////////////////////////////
+                else if (event.x > 1560 && event.x < 1715 && event.y > 2220 && event.y < 2325) {
+                    //RMS threshold amplitude to trigger event. Left Down Button.
+                    rightDownCount = 0;       //Flag so we only increment the delay by 5 once per touch
                 }
                 else if(event.x > 25 && event.x < 675 && event.y > 2583 && event.y < 2780){
                     //Manual Patient Event
@@ -183,7 +218,7 @@ public class GameScreen extends Screen implements Input {
 
 
         String eventCountStr = String.valueOf(eventCount);
-        g.drawText(eventCountStr, 1550, 4800);
+        g.drawText(eventCountStr, 570, 2660);
         ////////////////// Start / Stop Recording //////////////////////////////////////////
         if(startRecording == 0){
             recDeltaTimeMillis = 0;
@@ -210,6 +245,17 @@ public class GameScreen extends Screen implements Input {
         else if(rmsThresholdTouch == 1){
             String rmsAmpThreshStr = String.valueOf(rmsAmpThresh);
             g.drawText(rmsAmpThreshStr, 395, 2235);    //Manual RMS Height Above Threshold Text
+        }
+
+        //////////////////////////////////////////////////////////////////////////////////////
+
+        //////////////////// Manual RMS Width Above Threshold to Trigger Event //////////////////////
+        if(rmsWidthThresh == 0) {
+            g.drawText("0", 1330, 2235);    //Manual RMS Height Above Threshold Text
+        }
+        else if(rmsWidthThresh == 1){
+            String rmsWidthThreshStr = String.valueOf(rmsWidthThresh);
+            g.drawText(rmsWidthThreshStr, 1330, 2235);    //Manual RMS Height Above Threshold Text
         }
 
         //////////////////////////////////////////////////////////////////////////////////////
@@ -273,8 +319,8 @@ public class GameScreen extends Screen implements Input {
 
 
         // ++++++++++++++++++ RMS (Root-Mean Square) Visualization ++++++++++++++++++++++++++
-        double[] movingRMS = RMSCalculator.calculateMovingRMS(A2DValCopy, 20);
-        double[] smoothedRMS = MovingAverageCalculator.calculateMovingAverage(movingRMS, 10);        // +++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+        movingRMS = RMSCalculator.calculateMovingRMS(A2DValCopy, 20);
+        smoothedRMS = MovingAverageCalculator.calculateMovingAverage(movingRMS, 10);        // +++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
 /*
         for (int i = 0; i < smoothedRMS.length; i++) {
             smoothedRMS[i] = 410.0 - smoothedRMS[i];
