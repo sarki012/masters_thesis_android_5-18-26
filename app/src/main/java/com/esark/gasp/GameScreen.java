@@ -154,17 +154,32 @@ public class GameScreen extends Screen implements Input {
         }
 
         //   if(landscape == 0) {
-/*
-        g.drawRect(620, 4600, 1550, 400, 0);       //Bluetooth Connect
-        g.drawRect(70, 2075, 870, 275, 0);       //Start
-        g.drawRect(900, 3875, 300, 275, 0);       //RMS Height Threshold Text
-        g.drawRect(1400, 3745, 275, 275, 0);       //Left Up Button
-        g.drawRect(1400, 4030, 275, 275, 0);       //Left Down Button
-        g.drawRect(185, 4300, 1550, 299, 0);       //Event Log
-        g.drawRect(1750, 4300, 1550, 299, 0);       //Last Event
-        g.drawRect(185, 4600, 1550, 400, 0);       //Manual Patient Event
 
- */
+        g.drawRect(1245, 2610, 470, 100, 0);       //Bluetooth Connect
+        g.drawRect(45, 2000, 1195, 100, 0);       //Start
+        g.drawRect(1315, 2000, 345, 100, 0);       //Stop
+      //  g.drawRect(350, 2185, 250, 85, 0);       //Manual RMS Height Above Threshold Text
+        g.drawText("50", 395, 2235);    //Manual RMS Height Above Threshold Text
+       // g.drawRect(350, 2380, 250, 85, 0);       //Auto RMS Height Threshold Text
+        g.drawText("50", 395, 2445);        //Auto RMS Height Threshold Text
+        g.drawRect(685, 2110, 155, 105, 0);       //Left Up Button
+        g.drawRect(685, 2220, 155, 105, 0);       //Left Down Button
+     //   g.drawRect(1240, 2180, 250, 85, 0);       //Manual RMS Width Above Threshold Text
+        g.drawText("50", 1330, 2235);       //Manual RMS Width Above Threshold Text
+        g.drawRect(1560, 2110, 155, 105, 0);       //Right Up Button
+        g.drawRect(1560, 2220, 155, 105, 0);       //Right Down Button
+        g.drawRect(720, 2600, 470, 100, 0);       //Event Log
+        g.drawRect(25, 2580, 650, 200, 0);       //Manual Patient Event
+
+     //   g.drawRect(725, 2400, 285, 150, 0);       //True Positive
+        g.drawText("50", 880, 2480);    //True Positive Text
+     //   g.drawRect(1055, 2400, 285, 150, 0);       //False Positive
+        g.drawText("50", 1235, 2480);       //False Positive Text
+     //   g.drawRect(1400, 2400, 285, 150, 0);       //False Negative
+        g.drawText("50", 1560, 2480);       //False Negative Text
+
+
+
         String eventCountStr = String.valueOf(eventCount);
         g.drawText(eventCountStr, 1550, 4800);
         ////////////////// Start / Stop Recording //////////////////////////////////////////
@@ -357,7 +372,7 @@ public class GameScreen extends Screen implements Input {
 
         // ++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
         //double[] signal = {1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0}; // Example data
-        double fs = 10.0; // Example sampling frequency (Hz)
+        double fs = 125.0; // Example sampling frequency (Hz)
 
         //     PowerSpectralDensityCalculator psdCalc = new PowerSpectralDensityCalculator(sineWave, fs);
         //   psdResult = psdCalc.calculatePSD(sineWave, fs);
@@ -368,7 +383,7 @@ public class GameScreen extends Screen implements Input {
         //  psdResult = psdCalc.calculatePSD(sineWave, fs);
 
         for (int i = 0; i < psdResult.length; i++) {
-            psdResult[i] = psdResult[i] * -0.01 + 3575;
+            psdResult[i] = psdResult[i] * -0.15 + 3575;
             // Red line (PSD result) is drawn later as psdResult[i] - 1695.
             // If we want the drawn y-value to not go above 1460, then psdResult[i] - 1695 >= 1460
             // Because screen coordinates are 0 at the top, "above" 1460 means y < 1460.
