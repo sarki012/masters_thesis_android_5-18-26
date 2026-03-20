@@ -81,18 +81,19 @@ public class GameScreen extends Screen implements Input {
         for (int i = 0; i < len; i++) {
             TouchEvent event = touchEvents.get(i);
             if (event.type == TouchEvent.TOUCH_DRAGGED || event.type == TouchEvent.TOUCH_DOWN) {
-                if (event.x > 1750 && event.x < 3300 && event.y > 4600 && event.y < 5000) {
-                    //Back Button Code Here
+                if (event.x > 1245 && event.x < 1715 && event.y > 2610 && event.y < 2710) {
+                    //Back to Bluetooth Connect Screen
                     Intent intent2 = new Intent(context.getApplicationContext(), GaspSemg.class);
                     context.startActivity(intent2);
                     return;
                 }
-                else if (event.x > 185 && event.x < 1735 && event.y > 3500 && event.y < 3775) {
+                //Start Recording Buttono
+                else if (event.x > 45 && event.x < 1240 && event.y > 1240 && event.y < 3775) {
                     //Start
                     startTimeMillis = System.currentTimeMillis();
                     startRecording = 1;
                 }
-                else if (event.x > 1400 && event.x < 1675 && event.y > 3745 && event.y < 4020) {
+                else if (event.x > 685 && event.x < 840 && event.y > 2110 && event.y < 2215) {
                     //RMS threshold amplitude to trigger event. Left Up Button.
                     rmsThresholdTouch = 1;
                     if (leftUpCount == 0) {       //Flag so we only increment the delay by 5 once per touch
@@ -100,7 +101,7 @@ public class GameScreen extends Screen implements Input {
                         leftUpCount = 1;
                     }
                 }
-                else if (event.x > 1400 && event.x < 1675 && event.y > 4030 && event.y < 4305) {
+                else if (event.x > 685 && event.x < 840 && event.y > 2220 && event.y < 2325) {
                     //RMS threshold amplitude to trigger event. Left Down Button.
                     rmsThresholdTouch = 1;
                     if (leftDownCount == 0) {       //Flag so we only increment the delay by 5 once per touch
@@ -108,16 +109,16 @@ public class GameScreen extends Screen implements Input {
                         leftDownCount = 1;
                     }
                 }
-                else if (event.x > 185 && event.x < 1735 && event.y > 4300 && event.y < 4599) {
+                else if (event.x > 720 && event.x < 1190 && event.y > 2600 && event.y < 2700) {
                     //Event Log Screen
                     game.setScreen(gameScreenEventLog);
                 }
-                else if (event.x > 1750 && event.x < 3300 && event.y > 4300 && event.y < 4599) {
-                    //Last Event. (Now clear events
+                else if (event.x > 1315 && event.x < 1660 && event.y > 2000 && event.y < 2100) {
+                    //Stop Now clear events
                     //game.setScreen(gameScreenLastEvent);
                     eventCount = 0;
                 }
-                else if (event.x > 185 && event.x < 1735 && event.y > 4600 && event.y < 5000) {
+                else if (event.x > 25 && event.x < 675 && event.y > 2583 && event.y < 2780) {
                     //Manual Patient Event
                     if (manualPatientEventUpCount == 0) {       //Flag so we only increment the delay by 5 once per touch
                         for(int r = 0; r < 2048; r++){
@@ -138,15 +139,15 @@ public class GameScreen extends Screen implements Input {
                 //else if (landscape == 1 && event.x < 100 && event.y > 230)
             }
             else if(event.type == TouchEvent.TOUCH_UP){
-                if (event.x > 1400 && event.x < 1675 && event.y > 3745 && event.y < 4020) {
+                if (event.x > 685 && event.x < 840 && event.y > 2110 && event.y < 2215) {
                     //RMS threshold amplitude to trigger event. Left up button.
                     leftUpCount = 0;       //Flag so we only increment the delay by 5 once per touch
                 }
-                else if (event.x > 1400 && event.x < 1675 && event.y > 4030 && event.y < 4305) {
-                    //RMS threshold amplitude to trigger event
+                else if (event.x > 685 && event.x < 840 && event.y > 2220 && event.y < 2325) {
+                    //RMS threshold amplitude to trigger event. Left Down Button.
                     leftDownCount = 0;       //Flag so we only increment the delay by 5 once per touch
                 }
-                else if(event.x > 185 && event.x < 1735 && event.y > 4600 && event.y < 5000) {
+                else if(event.x > 25 && event.x < 675 && event.y > 2583 && event.y < 2780){
                     //Manual Patient Event
                     manualPatientEventUpCount = 0;
                 }
@@ -155,6 +156,7 @@ public class GameScreen extends Screen implements Input {
 
         //   if(landscape == 0) {
 
+        /*
         g.drawRect(1245, 2610, 470, 100, 0);       //Bluetooth Connect
         g.drawRect(45, 2000, 1195, 100, 0);       //Start
         g.drawRect(1315, 2000, 345, 100, 0);       //Stop
@@ -177,7 +179,7 @@ public class GameScreen extends Screen implements Input {
         g.drawText("50", 1235, 2480);       //False Positive Text
      //   g.drawRect(1400, 2400, 285, 150, 0);       //False Negative
         g.drawText("50", 1560, 2480);       //False Negative Text
-
+*/
 
 
         String eventCountStr = String.valueOf(eventCount);
@@ -189,7 +191,7 @@ public class GameScreen extends Screen implements Input {
             seconds = 0;
             remainingMilliseconds = 0;
             String formattedTime = String.format("%02d:%02d:%03d", minutes, seconds, remainingMilliseconds);
-            g.drawText(formattedTime, 1000, 3700);
+            g.drawText(formattedTime, 840, 2070);
         }
         else if(startRecording == 1){
             currentTimeMillis = System.currentTimeMillis();
@@ -198,16 +200,16 @@ public class GameScreen extends Screen implements Input {
             seconds = (int) recDeltaTimeMillis/1000;
             remainingMilliseconds = (int) recDeltaTimeMillis % 1000;
             String formattedTime = String.format("%02d:%02d:%03d", minutes, seconds, remainingMilliseconds);
-            g.drawText(formattedTime, 1000, 3700);
+            g.drawText(formattedTime, 840, 2070);
         }
 
         //////////////////// RMS Threshold to Trigger Event //////////////////////////////////
         if(rmsThresholdTouch == 0) {
-            g.drawText("50", 940, 4090);
+            g.drawText("50", 395, 2235);    //Manual RMS Height Above Threshold Text
         }
         else if(rmsThresholdTouch == 1){
             String rmsAmpThreshStr = String.valueOf(rmsAmpThresh);
-            g.drawText(rmsAmpThreshStr, 940, 4090);
+            g.drawText(rmsAmpThreshStr, 395, 2235);    //Manual RMS Height Above Threshold Text
         }
 
         //////////////////////////////////////////////////////////////////////////////////////
