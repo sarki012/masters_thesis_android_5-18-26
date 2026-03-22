@@ -28,10 +28,10 @@ public class GameScreen extends Screen implements Input {
     double[] psd = new double[2048];
 
     double[] sineWave = new double[2048];
-    public static double[][] eventArray = new double [20][2048];
+    public static double[][] eventArray = new double [50][2048];
     public static double[] lastEventArray = new double[2048];
     double[] psdResult = new double[2048];
-    public static double[][] PSDArray = new double[20][2048];
+    public static double[][] PSDArray = new double[50][2048];
     public static double[] lastEventPSDArray = new double[2048];
     int freq = 0;
 
@@ -141,15 +141,13 @@ public class GameScreen extends Screen implements Input {
                     //game.setScreen(gameScreenLastEvent);
                     eventCount = 0;
                 }
-                else if (event.x > 25 && event.x < 675 && event.y > 2583 && event.y < 2780) {
+                else if (event.x > 10 && event.x < 675 && event.y > 2450 && event.y < 2800) {
                     //Manual Patient Event
-                    if (manualPatientEventUpCount == 0) {       //Flag so we only increment the delay by 5 once per touch
-                        for(int r = 0; r < signalBufferLen; r++){
-                            eventArray[eventCount][r] = A2DVal[r];
-                        }
-                        for(int w = 0; w < psdResult.length; w++){
-                            PSDArray[eventCount][w] = psdResult[w];
-                        }
+                    if (manualPatientEventUpCount == 0 && eventCount < 50) {
+                        // Fast array copy instead of loop
+                        System.arraycopy(A2DVal, 0, eventArray[eventCount], 0, Math.min(signalBufferLen, 2048));
+                        System.arraycopy(psdResult, 0, PSDArray[eventCount], 0, psdResult.length);
+                        
                         SimpleDateFormat dateFormat = new SimpleDateFormat("HH:mm:ss");
                         timeStamp[eventCount]  = dateFormat.format(new Date());
                         eventCount++;
@@ -162,30 +160,12 @@ public class GameScreen extends Screen implements Input {
                 //else if (landscape == 1 && event.x < 100 && event.y > 230)
             }
             else if(event.type == TouchEvent.TOUCH_UP){
-                /// ////////////////// Left Up Button //////////////////////////////////////////////
-                if (event.x > 685 && event.x < 840 && event.y > 2110 && event.y < 2215) {
-                    //RMS threshold amplitude to trigger event. Left up button.
-                    leftUpCount = 0;       //Flag so we only increment the delay by 5 once per touch
-                }
-                ////////////////////// Left Down Button ////////////////////////////////////////////
-                else if (event.x > 685 && event.x < 840 && event.y > 2220 && event.y < 2325) {
-                    //RMS threshold amplitude to trigger event. Left Down Button.
-                    leftDownCount = 0;       //Flag so we only increment the delay by 5 once per touch
-                }
-                ///////////////////// Right Up Button //////////////////////////////////////////////
-                if (event.x > 1560 && event.x < 1715 && event.y > 2110 && event.y < 2215) {
-                    //RMS threshold amplitude to trigger event. Left up button.
-                    rightUpCount = 0;       //Flag so we only increment the delay by 5 once per touch
-                }
-                /// ///////////////// Right Down Button ////////////////////////////////////////////
-                else if (event.x > 1560 && event.x < 1715 && event.y > 2220 && event.y < 2325) {
-                    //RMS threshold amplitude to trigger event. Left Down Button.
-                    rightDownCount = 0;       //Flag so we only increment the delay by 5 once per touch
-                }
-                else if(event.x > 25 && event.x < 675 && event.y > 2583 && event.y < 2780){
-                    //Manual Patient Event
-                    manualPatientEventUpCount = 0;
-                }
+                // Reset flags on any lift to ensure buttons remain responsive
+                leftUpCount = 0;
+                leftDownCount = 0;
+                rightUpCount = 0;
+                rightDownCount = 0;
+                manualPatientEventUpCount = 0;
             }
         }
 

@@ -1,10 +1,6 @@
 package com.esark.gasp;
 
-//import static com.esark.gasp.GameScreen.lastEventArray;
 import static com.esark.gasp.GameScreen.eventCount;
-import static com.esark.gasp.GameScreen.lastEventArray;
-import static com.esark.gasp.GameScreen.lastEventPSDArray;
-import static com.esark.gasp.GameScreen.len;
 import static com.esark.gasp.GameScreen.timeStamp;
 
 import android.content.Context;
@@ -12,177 +8,114 @@ import android.content.Context;
 import com.esark.framework.Game;
 import com.esark.framework.Graphics;
 import com.esark.framework.Input;
+import com.esark.framework.Input.TouchEvent;
 import com.esark.framework.Screen;
 
-import java.text.SimpleDateFormat;
-import java.util.Date;
 import java.util.List;
-import java.util.concurrent.TimeUnit;
 
 public class GameScreenEventLog extends Screen implements Input {
     Context context = null;
 
-    int xStart = 0, xStop = 0;
-    //public static double[] A2DVal = new double[3500];
-    public static double[] A2DVal = new double[3500];
-    double[] psd = new double[2048];
+    // Grid layout parameters for 3x12 grid
+    private final int cols = 3;
+    private final int rows = 12;
+    private final int startX = 50;
+    private final int startY = 300;
+    private final int buttonWidth = 500;
+    private final int buttonHeight = 150;
+    private final int spacingX = 50;
+    private final int spacingY = 30;
 
-    double[] sineWave = new double[2048];
-
-    double[] psdResult = new double[2048];
-    private static final int INVALID_POINTER_ID = -1;
-    // The ‘active pointer’ is the one currently moving our object.
-    private int mActivePointerId = INVALID_POINTER_ID;
-
-
-    //Constructor
     public GameScreenEventLog(Game game) {
         super(game);
     }
+
     public GameScreenEvent gameScreenEvent = new GameScreenEvent(game);
+
     @Override
     public void update(float deltaTime, Context context) {
-        //framework.input
         List<TouchEvent> touchEvents = game.getInput().getTouchEvents();
         updateRunning(touchEvents, deltaTime, context);
     }
 
     private void updateRunning(List<TouchEvent> touchEvents, float deltaTime, Context context) {
-        //updateRunning() contains controller code of our MVC scheme
         Graphics g = game.getGraphics();
+        
+        // Re-load pixmaps (should ideally be done once in Assets class)
         Assets.eventLogBackground = g.newPixmap("eventLogBackground.png", Graphics.PixmapFormat.ARGB4444);
         Assets.eventLogButton = g.newPixmap("eventLogButton.png", Graphics.PixmapFormat.ARGB4444);
-        len = touchEvents.size();
-        //Check to see if paused
-        for (int i = 0; i < len; i++) {
+
+        int tLen = touchEvents.size();
+        for (int i = 0; i < tLen; i++) {
             TouchEvent event = touchEvents.get(i);
-           // if (event.type == TouchEvent.TOUCH_UP) {
-           // }
             if (event.type == TouchEvent.TOUCH_UP || event.type == TouchEvent.TOUCH_DRAGGED || event.type == TouchEvent.TOUCH_DOWN) {
-                if(event.x > 25 && event.x < 675 && event.y > 2583 && event.y < 2780) {
-                    //Artifact/PSD Screen
+                // Back button to Artifact/PSD screen
+                if (event.x > 25 && event.x < 675 && event.y > 2583 && event.y < 2780) {
                     game.setScreen(game.getStartScreen());
+                    return;
                 }
-                //Button 1
-                if (event.x > 50 && event.x < 500 && event.y > 300 && event.y < 400) {
-                    eventCount = 0;
-                    game.setScreen(gameScreenEvent);
-                }
-                //Button 2
-                if (event.x > 600 && event.x < 950 && event.y > 300 && event.y < 400) {
-                    eventCount = 1;
-                    game.setScreen(gameScreenEvent);
-                }
-                //Button 3
-                if (event.x > 1150 && event.x < 1500 && event.y > 300 && event.y < 400) {
-                    eventCount = 2;
-                    game.setScreen(gameScreenEvent);
-                }
-                //Button 4
-                if (event.x > 1900 && event.x < 3300 && event.y > 1050 && event.y < 1550) {
-                    eventCount = 3;
-                    game.setScreen(gameScreenEvent);
+
+                // Check if any event button in the grid was pressed
+                for (int j = 0; j < eventCount; j++) {
+                    if (j >= cols * rows) break; // Don't exceed grid bounds
+
+                    int row = j / cols;
+                    int col = j % cols;
+                    int x = startX + col * (buttonWidth + spacingX);
+                    int y = startY + row * (buttonHeight + spacingY);
+
+                    if (event.x > x && event.x < x + buttonWidth && event.y > y && event.y < y + buttonHeight) {
+                        gameScreenEvent.selectedEventIdx = j;
+                        game.setScreen(gameScreenEvent);
+                        return;
+                    }
                 }
             }
         }
+
+        // Draw background
         g.drawPortraitPixmap(Assets.eventLogBackground, 0, 0);
 
-      //  long tsLong = System.currentTimeMillis() / 1000;
-        //String ts = tsLong.toString();
-      //  String timeStamp = String.valueOf(TimeUnit.MILLISECONDS.toSeconds(System.currentTimeMillis()));
+        // Draw event buttons and timestamps in a grid
+        for (int i = 0; i < eventCount; i++) {
+            if (i >= cols * rows) break;
 
-        switch (eventCount) {
-            case 1:
-                g.drawEventLogButtonPixmap(Assets.eventLogButton, 50, 300);
-                g.drawText(timeStamp[0], 150, 375);
-                break; // Optional: exits the switch statement
-            case 2:
-                g.drawEventLogButtonPixmap(Assets.eventLogButton, 50, 300);
-                g.drawText(timeStamp[0], 150, 375);
+            int row = i / cols;
+            int col = i % cols;
+            int x = startX + col * (buttonWidth + spacingX);
+            int y = startY + row * (buttonHeight + spacingY);
 
-                g.drawEventLogButtonPixmap(Assets.eventLogButton, 600, 300);
-                g.drawText(timeStamp[1], 700, 375);
-                break;
-            case 3:
-                g.drawEventLogButtonPixmap(Assets.eventLogButton, 50, 300);
-                g.drawText(timeStamp[0], 150, 375);
+            // Draw button pixmap
+            g.drawEventLogButtonPixmap(Assets.eventLogButton, x, y);
 
-                g.drawEventLogButtonPixmap(Assets.eventLogButton, 600, 300);
-                g.drawText(timeStamp[1], 700, 375);
-
-                g.drawEventLogButtonPixmap(Assets.eventLogButton, 1150, 300);
-                g.drawText(timeStamp[2], 1300, 375);
-                break; // Optional: exits the switch statement
-            case 4:
-                g.drawEventLogButtonPixmap(Assets.eventLogButton, 150, 500);
-                g.drawText(timeStamp[0], 250, 800);
-
-                g.drawEventLogButtonPixmap(Assets.eventLogButton, 1900, 500);
-                g.drawText(timeStamp[1], 2050, 800);
-
-                g.drawEventLogButtonPixmap(Assets.eventLogButton, 150, 1050);
-                g.drawText(timeStamp[2], 250, 1350);
-
-                g.drawEventLogButtonPixmap(Assets.eventLogButton, 1900, 1050);
-                g.drawText(timeStamp[3], 2050, 1350);
-                break;
-            default:
-                // Code to execute if no case matches (optional)
-                break;
+            // Draw timestamp text on the button
+            // Adjusted coordinates to center the timestamp and move it up slightly
+            if (timeStamp[i] != null) {
+                g.drawText(timeStamp[i], x + 135, y + 85);
+            }
         }
     }
 
     @Override
-    public void present ( float deltaTime){
-        Graphics g = game.getGraphics();
-    }
-
+    public void present(float deltaTime) {}
     @Override
-    public void pause () {
-
-    }
-
+    public void pause() {}
     @Override
-    public void resume () {
-
-    }
-
+    public void resume() {}
     @Override
-    public void dispose () {
-    }
-
+    public void dispose() {}
     @Override
-    public boolean isTouchDown(int pointer) {
-        return false;
-    }
-
+    public boolean isTouchDown(int pointer) { return false; }
     @Override
-    public int getTouchX(int pointer) {
-        return 0;
-    }
-
+    public int getTouchX(int pointer) { return 0; }
     @Override
-    public int getTouchY(int pointer) {
-        return 0;
-    }
-
+    public int getTouchY(int pointer) { return 0; }
     @Override
-    public float getAccelX() {
-        return 0;
-    }
-
+    public float getAccelX() { return 0; }
     @Override
-    public float getAccelY() {
-        return 0;
-    }
-
+    public float getAccelY() { return 0; }
     @Override
-    public float getAccelZ() {
-        return 0;
-    }
-
+    public float getAccelZ() { return 0; }
     @Override
-    public List<TouchEvent> getTouchEvents() {
-        return null;
-    }
+    public List<TouchEvent> getTouchEvents() { return null; }
 }

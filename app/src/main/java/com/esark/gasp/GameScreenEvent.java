@@ -25,6 +25,9 @@ public class GameScreenEvent extends Screen implements Input {
     double[] psd = new double[2048];
     double[] sineWave = new double[2048];
     double[] psdResult = new double[2048];
+    
+    // Field to track which event we are currently viewing
+    public int selectedEventIdx = 0;
 
     private static final int INVALID_POINTER_ID = -1;
     private int mActivePointerId = INVALID_POINTER_ID;
@@ -41,23 +44,29 @@ public class GameScreenEvent extends Screen implements Input {
 
     private void updateRunning(List<TouchEvent> touchEvents, float deltaTime, Context context) {
         Graphics g = game.getGraphics();
-        Assets.gaspMainBackground = g.newPixmap("gaspMainBackground.png", Graphics.PixmapFormat.ARGB4444);
+        
+        // Background loading should ideally be done once, but we'll leave it for now or ensure it's referenced
+        if (Assets.gaspMainBackground == null) {
+            Assets.gaspMainBackground = g.newPixmap("gaspMainBackground.png", Graphics.PixmapFormat.ARGB4444);
+        }
+        
         len = touchEvents.size();
         
         for (int i = 0; i < len; i++) {
             TouchEvent event = touchEvents.get(i);
             if (event.type == TouchEvent.TOUCH_UP || event.type == TouchEvent.TOUCH_DRAGGED || event.type == TouchEvent.TOUCH_DOWN) {
                 if (event.x > 25 && event.x < 675 && event.y > 2583 && event.y < 2780) {
-                    game.setScreen(game.getStartScreen());
+                    game.setScreen(new GameScreenEventLog(game));
+                    return;
                 }
             }
         }
         g.drawPortraitPixmap(Assets.gaspMainBackground, 0, 0);
 
-        // Use index of the most recently recorded event
-        int idx = (eventCount > 0) ? eventCount - 1 : 0;
-        // Clamp to maximum allowed index
-        if (idx >= 20) idx = 19;
+        // Safety check for the index - updated to 50
+        int idx = selectedEventIdx;
+        if (idx < 0) idx = 0;
+        if (idx >= 50) idx = 49;
 
         // Draw Black Line Signal
         xStart = 1600;
@@ -79,15 +88,11 @@ public class GameScreenEvent extends Screen implements Input {
             for (int n = smoothedRMS.length - 1; n > 1; n--) {
                 double val1 = smoothedRMS[n];
                 double val2 = smoothedRMS[n-1];
-                
-                // Clamping for visualization
                 if(val1 > 423) val1 = 423;
                 if(val2 > 423) val2 = 423;
                 if(val1 < 273) val1 = 273;
                 if(val2 < 273) val2 = 273;
-
                 g.drawBlueLine(xStart, (int) (3 * val1), xStop, (int) (3 * val2), 0);
-
                 xStart = xStop;
                 xStop -= 15;
                 if (xStop <= 180) {
@@ -99,9 +104,7 @@ public class GameScreenEvent extends Screen implements Input {
         // Draw Red PSD Lines
         xStart = 170;
         xStop = 180;
-        // PSDArray has 2048 frequency bins
         for (int i = 1; i < 2048; i++) {
-            // Apply the -1695 offset to bring the PSD into the screen view
             g.drawRedLine(xStart, (int) PSDArray[idx][i - 1] - 1695, xStop, (int) PSDArray[idx][i] - 1695, 0);
             xStart = xStop;
             xStop += 10;
@@ -113,34 +116,24 @@ public class GameScreenEvent extends Screen implements Input {
 
     @Override
     public void present ( float deltaTime){ }
-
     @Override
     public void pause () { }
-
     @Override
     public void resume () { }
-
     @Override
     public void dispose () { }
-
     @Override
     public boolean isTouchDown(int pointer) { return false; }
-
     @Override
     public int getTouchX(int pointer) { return 0; }
-
     @Override
     public int getTouchY(int pointer) { return 0; }
-
     @Override
     public float getAccelX() { return 0; }
-
     @Override
     public float getAccelY() { return 0; }
-
     @Override
     public float getAccelZ() { return 0; }
-
     @Override
     public List<TouchEvent> getTouchEvents() { return null; }
 }
