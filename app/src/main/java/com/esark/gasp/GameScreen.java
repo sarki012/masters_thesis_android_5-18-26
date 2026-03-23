@@ -238,19 +238,42 @@ public class GameScreen extends Screen implements Input {
         //  xStop = 301;
         int u = 0;
 
+        int rawCenterY = 480; // The vertical center where you want the black line
+        int rawBaseline = 410; // The DC offset of your actual data
+        float rawGain = 1.0f;  // Increase this (e.g., 2.0f) if the signal is too small
+
+        xStart = 1600;
+        int xStep = 2;
+        xStop = xStart - xStep;
+
+        for (int n = signalBufferLen - 1; n > 0; n--) {
+            // Formula to flip: CenterY - (Value - Baseline)
+            // If A2DVal[n] is 420, result is 410 - (10) = 400 (higher on screen)
+            int y1 = (int) (rawCenterY - (A2DVal[n] - rawBaseline) * rawGain);
+            int y2 = (int) (rawCenterY - (A2DVal[n - 1] - rawBaseline) * rawGain);
+
+            g.drawBlackLine(xStart, y1, xStop, y2, 0);
+
+            xStart = xStop;
+            xStop -= xStep;
+            if (xStop <= 165) break;
+        }
+
+
+        /*
         xStart = 1600;
         int xStep = 2;      // Increase this to make the signal move faster across the screen (pixels per sample)
         xStop = xStart - xStep;
         for (int n = signalBufferLen - 1; n > 0; n--) {
             // Using n-- (step of 1) makes the signal much smoother
-            g.drawBlackLine(xStart, (int) A2DVal[n] - 50, xStop, (int) (A2DVal[n - 1]) - 50, 0);
+            g.drawBlackLine(xStart, (int) (-1*(A2DVal[n]) - 50), xStop, (int) (-1*(A2DVal[n - 1]) - 50), 0);
             xStart = xStop;
             xStop -= xStep;
             if (xStop <= 165) {
                 break;
             }
         }
-
+*/
         /*
         xStart = 1600;
         int xStopLimit = 165;
@@ -352,6 +375,43 @@ public class GameScreen extends Screen implements Input {
         //   PowerSpectralDensityCalculator psdCalc = new PowerSpectralDensityCalculator(sineWave, fs);
         //  psdResult = psdCalc.calculatePSD(sineWave, fs);
 
+        // --- 1. PSD Post-Processing ---
+        for (int i = 0; i < psdResult.length; i++) {
+            // Increase the gain (-1.5 instead of -0.25) to see harmonics
+            // Adjusted offset (2800) to bring the graph higher up the screen
+            psdResult[i] = psdResult[i] * -20 + 3600;
+
+            // Relaxed clamping so peaks aren't cut off (2200 is near top of PSD area)
+            if (psdResult[i] < 3165) {
+                psdResult[i] = 3165;
+            }
+
+        }
+
+        // --- 2. PSD Drawing Logic ---
+        // Start at i=1 to capture the 2Hz signal (Bin 0 is DC offset, usually skipped)
+        float currentXpsd = 170;
+
+        // Target: 250Hz at x=861.
+        // 250Hz is approx bin 51. (861-170)/51 = ~13.5
+        float xStepPsd = 13.5f;
+
+        for (int i = 1; i < psdResult.length; i++) {
+            float nextXpsd = 170 + (i * xStepPsd);
+
+            // We subtract 1200 instead of 1695 to keep the baseline around y=1600
+            g.drawRedLine((int) currentXpsd, (int) psdResult[i - 1] - 1695, (int) nextXpsd, (int) psdResult[i] - 1695, 0);
+
+            currentXpsd = nextXpsd;
+
+            // Stop at the right edge of the graph
+            if (currentXpsd >= 1600) {
+                break;
+            }
+        }
+
+
+        /*
         for (int i = 0; i < psdResult.length; i++) {
             psdResult[i] = psdResult[i] * -0.25 + 3575;
             // Red line (PSD result) is drawn later as psdResult[i] - 1695.
@@ -363,6 +423,7 @@ public class GameScreen extends Screen implements Input {
             }
             // System.out.println("Frequency Bin " + i + ": PSD = " + psdResult[i]);
         }
+
         xStartPSD = 170;
         xStopPSD = 172;
         for (int i = 10; i < psdResult.length; i++) {
@@ -372,7 +433,7 @@ public class GameScreen extends Screen implements Input {
             if(xStopPSD >= 1600){
                 break;
             }
-        }
+        }*/
     }
 
 
