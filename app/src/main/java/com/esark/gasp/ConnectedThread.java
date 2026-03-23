@@ -52,6 +52,7 @@ public class ConnectedThread extends Thread {
                 // Send the full 24-byte buffer to the UI handler
                 mHandler.obtainMessage(AndroidGame.MESSAGE_READ, 24, -1, buffer)
                         .sendToTarget();
+
             } catch (IOException e) {
                 // Connection was likely lost
                 e.printStackTrace();

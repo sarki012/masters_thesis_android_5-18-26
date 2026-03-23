@@ -21,10 +21,10 @@ public class GameScreen extends Screen implements Input {
     private static final String TAG = "GameScreen";
     int xStart = 0, xStop = 0;
     //public static double[] A2DVal = new double[3500];
-    public static double[] A2DVal = new double[287];   //was 1435
-    public double[] A2DValCopy = new double[287];
-    public static double[] movingRMS = new double[287];
-    public static double[] smoothedRMS = new double[287];
+    public static double[] A2DVal = new double[signalBufferLen];   //was 1435
+    public double[] A2DValCopy = new double[signalBufferLen];
+    public static double[] movingRMS = new double[signalBufferLen];
+    public static double[] smoothedRMS = new double[signalBufferLen];
     double[] psd = new double[2048];
 
     double[] sineWave = new double[2048];
@@ -147,7 +147,7 @@ public class GameScreen extends Screen implements Input {
                         // Fast array copy instead of loop
                         System.arraycopy(A2DVal, 0, eventArray[eventCount], 0, Math.min(signalBufferLen, 2048));
                         System.arraycopy(psdResult, 0, PSDArray[eventCount], 0, psdResult.length);
-                        
+
                         SimpleDateFormat dateFormat = new SimpleDateFormat("HH:mm:ss");
                         timeStamp[eventCount]  = dateFormat.format(new Date());
                         eventCount++;
@@ -244,7 +244,7 @@ public class GameScreen extends Screen implements Input {
         int u = 0;
 
         xStart = 1600;
-        int xStep = 5;      // Increase this to make the signal move faster across the screen (pixels per sample)
+        int xStep = 2;      // Increase this to make the signal move faster across the screen (pixels per sample)
         xStop = xStart - xStep;
         for (int n = signalBufferLen - 1; n > 0; n--) {
             // Using n-- (step of 1) makes the signal much smoother
@@ -314,10 +314,10 @@ public class GameScreen extends Screen implements Input {
                 // 1. Calculate the RMS amplitude (deviation from the 1360 baseline)
                 // 2. Plot it relative to your target y = 1050 (Centered symmetrically)
                 //double rmsAmplitude = Math.abs(smoothedRMS[n]);
-              //  double rmsAmplitudeNext = Math.abs(smoothedRMS[n - 1]);
+                //  double rmsAmplitudeNext = Math.abs(smoothedRMS[n - 1]);
 
-                Log.d(TAG, "rmsAmplitude: " + smoothedRMS[n]);
-                Log.d(TAG, "rmsAmplitudeNext: " + smoothedRMS[n-1]);
+             //   Log.d(TAG, "rmsAmplitude: " + smoothedRMS[n]);
+              //  Log.d(TAG, "rmsAmplitudeNext: " + smoothedRMS[n-1]);
 
                 if(smoothedRMS[n] > 423){
                     smoothedRMS[n] = 423;
@@ -383,7 +383,7 @@ public class GameScreen extends Screen implements Input {
                 // Draw centered at blueCenterY
                 int y1 = (int) (blueCenterY - rmsAmplitude);
                 int y2 = (int) (blueCenterY - rmsAmplitudeNext);
-                
+
                 // Draw the blue line
                 g.drawBlueLine(xStart, y1, xStop, y2, 0);
 
@@ -400,8 +400,10 @@ public class GameScreen extends Screen implements Input {
 
         // ++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
         //double[] signal = {1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0}; // Example data
-        double fs = 125.0; // Example sampling frequency (Hz)
-
+      //  double fs = 125.0; // Sampling frequency (Hz)
+        //double fs = 1000;
+        double fs = 62.5;
+      //  double fs = 500.0;
         //     PowerSpectralDensityCalculator psdCalc = new PowerSpectralDensityCalculator(sineWave, fs);
         //   psdResult = psdCalc.calculatePSD(sineWave, fs);
 

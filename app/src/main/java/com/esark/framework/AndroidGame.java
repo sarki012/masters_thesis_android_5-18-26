@@ -22,6 +22,7 @@ import android.os.Handler;
 import android.os.Looper;
 import android.os.Message;
 import android.util.DisplayMetrics;
+import android.util.Log;
 import android.view.Display;
 import android.view.View;
 import android.widget.AdapterView;
@@ -103,7 +104,8 @@ public abstract class AndroidGame extends Activity implements Game {
     public static int height = 0;
 
     public static int bufferFlag = 0;
-    public static int signalBufferLen = 287;
+    //public static int signalBufferLen = 287;
+    public static int signalBufferLen = 2048;
 
     @Override
     public void onCreate(Bundle savedInstanceState) {
@@ -173,7 +175,7 @@ public abstract class AndroidGame extends Activity implements Game {
                                         // room for the new one at the end.
                                         System.arraycopy(A2DVal, 1, A2DVal, 0, signalBufferLen - 1);
                                         A2DVal[signalBufferLen - 1] = ((double) totalA2DVal / 3.0);
-
+                                        Log.d(TAG, "A2DVal: " + A2DVal[signalBufferLen - 1]);
                                         
                                         // Clamping
                                         if(A2DVal[signalBufferLen - 1] < 180) A2DVal[signalBufferLen - 1] = 180;
