@@ -1,6 +1,7 @@
 package com.esark.gasp;
 
 import com.esark.framework.Pixmap;
+import com.esark.framework.Sound;
 
 public class Assets {
     public static Pixmap gaspMainBackground;
@@ -12,5 +13,6 @@ public class Assets {
     public static Pixmap eventLogButtonBrown;
     public static Pixmap eventLogButtonPurple;
     public static Pixmap eventLogButtonOrange;
+    public static Sound ringtone;
 }
 
