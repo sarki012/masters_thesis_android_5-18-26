@@ -402,8 +402,9 @@ public class GameScreen extends Screen implements Input {
         //double[] signal = {1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0}; // Example data
       //  double fs = 125.0; // Sampling frequency (Hz)
         //double fs = 1000;
-        double fs = 62.5;
+      //  double fs = 62.5;
       //  double fs = 500.0;
+        double fs = 10000;
         //     PowerSpectralDensityCalculator psdCalc = new PowerSpectralDensityCalculator(sineWave, fs);
         //   psdResult = psdCalc.calculatePSD(sineWave, fs);
 
