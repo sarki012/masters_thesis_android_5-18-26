@@ -49,7 +49,7 @@ public class GameScreen extends Screen implements Input {
     long seconds = 0;
     long remainingMilliseconds = 0;
     int rmsThresholdTouch = 0;
-    int rmsAmpThresh = 50, rmsWidthThresh = 0;
+    int rmsAmpThresh = 100, rmsWidthThresh = 0;
     int leftUpCount = 0, leftDownCount = 0, rightUpCount = 0, rightDownCount = 0;
     private static final double PI = 3.1415927;
 
@@ -105,6 +105,7 @@ public class GameScreen extends Screen implements Input {
                     if (leftUpCount == 0) {       //Flag so we only increment the delay by 5 once per touch
                         rmsAmpThresh += 5;
                         leftUpCount = 1;
+
                     }
                 }
                 //////////////////// Left Down Button ////////////////////////////////////////////////
@@ -217,10 +218,11 @@ public class GameScreen extends Screen implements Input {
 
         //////////////////// RMS Threshold to Trigger Event //////////////////////////////////
         if (rmsThresholdTouch == 0) {
-            g.drawText("50", 395, 2235);    //Manual RMS Height Above Threshold Text
+            g.drawText("95", 395, 2235);    //Manual RMS Height Above Threshold Text
         } else if (rmsThresholdTouch == 1) {
             String rmsAmpThreshStr = String.valueOf(rmsAmpThresh);
             g.drawText(rmsAmpThreshStr, 395, 2235);    //Manual RMS Height Above Threshold Text
+
         }
 
         //////////////////////////////////////////////////////////////////////////////////////
@@ -409,31 +411,18 @@ public class GameScreen extends Screen implements Input {
                 break;
             }
         }
+        // Use 1100 as the baseline (the center of your blue RMS graph)
+        // Subtracting the threshold makes it move UP as the value increases
+        int thresholdY = (int) (1000 - (rmsAmpThresh * 1.0f));
 
+        // Clamping to keep it within the same bounds as your blue line (869 to 1308)
+        //if (thresholdY < 869) thresholdY = 869;
+      //
+        //  if (thresholdY > 1308) thresholdY = 1308;
 
-        /*
-        for (int i = 0; i < psdResult.length; i++) {
-            psdResult[i] = psdResult[i] * -0.25 + 3575;
-            // Red line (PSD result) is drawn later as psdResult[i] - 1695.
-            // If we want the drawn y-value to not go above 1460, then psdResult[i] - 1695 >= 1460
-            // Because screen coordinates are 0 at the top, "above" 1460 means y < 1460.
-            // So we want psdResult[i] - 1695 >= 1460 => psdResult[i] >= 3155
-            if(psdResult[i] < 3155){
-                psdResult[i] = 3155;
-            }
-            // System.out.println("Frequency Bin " + i + ": PSD = " + psdResult[i]);
-        }
+        g.drawRedLine(155, thresholdY, 1590, thresholdY, 0);
 
-        xStartPSD = 170;
-        xStopPSD = 172;
-        for (int i = 10; i < psdResult.length; i++) {
-            g.drawRedLine((int)xStartPSD, (int) psdResult[i - 1] - 1695, (int)xStopPSD, (int) psdResult[i] - 1695, 0);
-            xStartPSD = xStopPSD;
-            xStopPSD += 1.35;        //Was 10
-            if(xStopPSD >= 1600){
-                break;
-            }
-        }*/
+       // g.drawRedLine(155, (rmsAmpThresh*100/445 + 877), 1590, (rmsAmpThresh*100/445 + 877), 0);
     }
 
 
