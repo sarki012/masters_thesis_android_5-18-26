@@ -20,11 +20,13 @@ public class GameScreen extends Screen implements Input {
     Context context = null;
     private static final String TAG = "GameScreen";
     int xStart = 0, xStop = 0;
+    double xStartPSD = 0, xStopPSD = 0;
     //public static double[] A2DVal = new double[3500];
     public static double[] A2DVal = new double[signalBufferLen];   //was 1435
     public double[] A2DValCopy = new double[signalBufferLen];
     public static double[] movingRMS = new double[signalBufferLen];
     public static double[] smoothedRMS = new double[signalBufferLen];
+    double rmsScale = 0;
     double[] psd = new double[2048];
 
     double[] sineWave = new double[2048];
@@ -78,7 +80,7 @@ public class GameScreen extends Screen implements Input {
     private void updateRunning(List<TouchEvent> touchEvents, float deltaTime, Context context) {
         //updateRunning() contains controller code of our MVC scheme
         Graphics g = game.getGraphics();
-        g.drawPortraitPixmap(Assets.laryngospasmBackgroundMain , 0, 0);
+        g.drawPortraitPixmap(Assets.laryngospasmBackgroundMain, 0, 0);
         len = touchEvents.size();
         //Check to see if paused
         for (int i = 0; i < len; i++) {
@@ -131,17 +133,14 @@ public class GameScreen extends Screen implements Input {
                         rmsWidthThresh -= 5;
                         rightDownCount = 1;
                     }
-                }
-                else if (event.x > 720 && event.x < 1190 && event.y > 2600 && event.y < 2700) {
+                } else if (event.x > 720 && event.x < 1190 && event.y > 2600 && event.y < 2700) {
                     //Event Log Screen
                     game.setScreen(gameScreenEventLog);
-                }
-                else if (event.x > 1315 && event.x < 1660 && event.y > 2000 && event.y < 2100) {
+                } else if (event.x > 1315 && event.x < 1660 && event.y > 2000 && event.y < 2100) {
                     //Stop Now clear events
                     //game.setScreen(gameScreenLastEvent);
                     eventCount = 0;
-                }
-                else if (event.x > 10 && event.x < 675 && event.y > 2450 && event.y < 2800) {
+                } else if (event.x > 10 && event.x < 675 && event.y > 2450 && event.y < 2800) {
                     //Manual Patient Event
                     if (manualPatientEventUpCount == 0 && eventCount < 50) {
                         // Fast array copy instead of loop
@@ -149,17 +148,16 @@ public class GameScreen extends Screen implements Input {
                         System.arraycopy(psdResult, 0, PSDArray[eventCount], 0, psdResult.length);
 
                         SimpleDateFormat dateFormat = new SimpleDateFormat("HH:mm:ss");
-                        timeStamp[eventCount]  = dateFormat.format(new Date());
+                        timeStamp[eventCount] = dateFormat.format(new Date());
                         eventCount++;
                         manualPatientEventUpCount = 1;
                     }
                 }
-                if(rmsAmpThresh < 0){
+                if (rmsAmpThresh < 0) {
                     rmsAmpThresh = 0;
                 }
                 //else if (landscape == 1 && event.x < 100 && event.y > 230)
-            }
-            else if(event.type == TouchEvent.TOUCH_UP){
+            } else if (event.type == TouchEvent.TOUCH_UP) {
                 // Reset flags on any lift to ensure buttons remain responsive
                 leftUpCount = 0;
                 leftDownCount = 0;
@@ -200,29 +198,27 @@ public class GameScreen extends Screen implements Input {
         String eventCountStr = String.valueOf(eventCount);
         g.drawText(eventCountStr, 570, 2660);
         ////////////////// Start / Stop Recording //////////////////////////////////////////
-        if(startRecording == 0){
+        if (startRecording == 0) {
             recDeltaTimeMillis = 0;
             minutes = 0;
             seconds = 0;
             remainingMilliseconds = 0;
             String formattedTime = String.format("%02d:%02d:%03d", minutes, seconds, remainingMilliseconds);
             g.drawText(formattedTime, 840, 2070);
-        }
-        else if(startRecording == 1){
+        } else if (startRecording == 1) {
             currentTimeMillis = System.currentTimeMillis();
             recDeltaTimeMillis = (int) (currentTimeMillis - startTimeMillis);
-            minutes = (int) recDeltaTimeMillis/60000;
-            seconds = (int) recDeltaTimeMillis/1000;
+            minutes = (int) recDeltaTimeMillis / 60000;
+            seconds = (int) recDeltaTimeMillis / 1000;
             remainingMilliseconds = (int) recDeltaTimeMillis % 1000;
             String formattedTime = String.format("%02d:%02d:%03d", minutes, seconds, remainingMilliseconds);
             g.drawText(formattedTime, 840, 2070);
         }
 
         //////////////////// RMS Threshold to Trigger Event //////////////////////////////////
-        if(rmsThresholdTouch == 0) {
+        if (rmsThresholdTouch == 0) {
             g.drawText("50", 395, 2235);    //Manual RMS Height Above Threshold Text
-        }
-        else if(rmsThresholdTouch == 1){
+        } else if (rmsThresholdTouch == 1) {
             String rmsAmpThreshStr = String.valueOf(rmsAmpThresh);
             g.drawText(rmsAmpThreshStr, 395, 2235);    //Manual RMS Height Above Threshold Text
         }
@@ -230,10 +226,9 @@ public class GameScreen extends Screen implements Input {
         //////////////////////////////////////////////////////////////////////////////////////
 
         //////////////////// Manual RMS Width Above Threshold to Trigger Event //////////////////////
-        if(rmsWidthThresh == 0) {
+        if (rmsWidthThresh == 0) {
             g.drawText("0", 1330, 2235);    //Manual RMS Height Above Threshold Text
-        }
-        else if(rmsWidthThresh == 1){
+        } else if (rmsWidthThresh == 1) {
             String rmsWidthThreshStr = String.valueOf(rmsWidthThresh);
             g.drawText(rmsWidthThreshStr, 1330, 2235);    //Manual RMS Height Above Threshold Text
         }
@@ -296,116 +291,21 @@ public class GameScreen extends Screen implements Input {
         // Subtract DC offset (410) so RMS represents actual signal strength fluctuations
 
 
-
-
         // ++++++++++++++++++ RMS (Root-Mean Square) Visualization ++++++++++++++++++++++++++
         movingRMS = RMSCalculator.calculateMovingRMS(A2DValCopy, 20);
         smoothedRMS = MovingAverageCalculator.calculateMovingAverage(movingRMS, 10);        // +++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
 
-        // Baseline for RMS values (DC offset)
-        double rmsBaseline = 410.0;
-        // Target center on the screen
-        int centerY = 1100;
-        if (smoothedRMS.length > 2) {
-            xStart = 1600;
-            xStop = 1585;
-            //xStop = 3235;
-            for (int n = smoothedRMS.length - 1; n > 1; n--) {
-                // Calculate position relative to 1100
-                int y1 = (int) (centerY + (smoothedRMS[n] - rmsBaseline));
-                int y2 = (int) (centerY + (smoothedRMS[n - 1] - rmsBaseline));
 
-                // Optional: Clamp values if you want to keep the line within a specific graph box
-                // For example, if the box height is 300 pixels (1100 +/- 150):
-                if (y1 < 950) y1 = 950;
-                if (y1 > 1250) y1 = 1250;
-                if (y2 < 950) y2 = 950;
-                if (y2 > 1250) y2 = 1250;
-
-                g.drawBlueLine(xStart, y1, xStop, y2, 0);
-                xStart = xStop;
-                xStop -= 15;
-                if (xStop <= 180) {
-                    break;
-                }
-            }
-        }
-        /*
-        for (int i = 0; i < smoothedRMS.length; i++) {
-            smoothedRMS[i] = 410.0 - smoothedRMS[i];
-        }
-*/
-        /*
-        if (smoothedRMS.length > 2) {
-            xStart = 1600;
-            xStop = 1585;
-            //xStop = 3235;
-            for (int n = smoothedRMS.length - 1; n > 1; n--) {
-                // 1. Calculate the RMS amplitude (deviation from the 1360 baseline)
-                // 2. Plot it relative to your target y = 1050 (Centered symmetrically)
-                //double rmsAmplitude = Math.abs(smoothedRMS[n]);
-                //  double rmsAmplitudeNext = Math.abs(smoothedRMS[n - 1]);
-
-             //   Log.d(TAG, "rmsAmplitude: " + smoothedRMS[n]);
-              //  Log.d(TAG, "rmsAmplitudeNext: " + smoothedRMS[n-1]);
-
-                if(smoothedRMS[n] > 423){
-                    smoothedRMS[n] = 423;
-                }
-                if(smoothedRMS[n-1] > 423){
-                    smoothedRMS[n-1] = 423;
-                }
-                if(smoothedRMS[n] < 273){
-                    smoothedRMS[n] = 273;
-                }
-                if(smoothedRMS[n-1] < 273){
-                    smoothedRMS[n-1] = 273;
-                }
-
-                g.drawBlueLine(xStart, (int) ((smoothedRMS[n])), xStop, (int) ((smoothedRMS[n-1])), 0);
-
-                xStart = xStop;
-                xStop -= 15;
-                if (xStop <= 180) {
-                    break;
-                }
-            }
-        }
-        */
-
-
-        /*
-        if (smoothedRMS.length > 2) {
-            xStart = 1600;
-            xStop = 1585;
-            //xStop = 3235;
-            for (int n = smoothedRMS.length - 1; n > 1; n--) {
-                // 1. Calculate the RMS amplitude (deviation from the 1360 baseline)
-                // 2. Plot it relative to your target y = 1050 (Centered symmetrically)
-                double rmsAmplitude = Math.abs(smoothedRMS[n] - 500);
-                double rmsAmplitudeNext = Math.abs(smoothedRMS[n - 1] - 500);
-
-                g.drawBlueLine(xStart, (int) (rmsAmplitude), xStop, (int) (rmsAmplitudeNext), 0);
-
-                xStart = xStop;
-                xStop -= 15;
-                if (xStop <= 180) {
-                    break;
-                }
-            }
-        }
-*/
-        /*
         if (smoothedRMS.length > 2) {
             xStart = 1600;
             xStop = 1585;
             // Target center for the blue line
-            int blueCenterY = -500;
+            int blueCenterY = 1100;
             // Baseline for RMS values when the signal is centered at 410
             // The RMS of a constant signal 410 is 410.
             double rmsBaseline = 410.0;
             // Scale factor to make the line move visibly
-            float rmsYScale = 15.0f;
+            float rmsYScale = 0.75f;
 
             for (int n = smoothedRMS.length - 1; n > 1; n--) {
                 // Calculate deviation from baseline and scale it
@@ -415,6 +315,13 @@ public class GameScreen extends Screen implements Input {
                 // Draw centered at blueCenterY
                 int y1 = (int) (blueCenterY - rmsAmplitude);
                 int y2 = (int) (blueCenterY - rmsAmplitudeNext);
+
+                // 4. Clamping: Keep the line within a visible "box" around 1100
+                // This prevents the line from shooting off the top or bottom of the screen.
+                if (y1 < 869) y1 = 869;
+                if (y1 > 1308) y1 = 1308;
+                if (y2 < 869) y2 = 869;
+                if (y2 > 1308) y2 = 1308;
 
                 // Draw the blue line
                 g.drawBlueLine(xStart, y1, xStop, y2, 0);
@@ -427,15 +334,15 @@ public class GameScreen extends Screen implements Input {
                 }
             }
         }
-        */
+
 
 
         // ++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
         //double[] signal = {1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0}; // Example data
-      //  double fs = 125.0; // Sampling frequency (Hz)
+        //  double fs = 125.0; // Sampling frequency (Hz)
         //double fs = 1000;
-      //  double fs = 62.5;
-      //  double fs = 500.0;
+        //  double fs = 62.5;
+        //  double fs = 500.0;
         double fs = 10000;
         //     PowerSpectralDensityCalculator psdCalc = new PowerSpectralDensityCalculator(sineWave, fs);
         //   psdResult = psdCalc.calculatePSD(sineWave, fs);
@@ -446,7 +353,7 @@ public class GameScreen extends Screen implements Input {
         //  psdResult = psdCalc.calculatePSD(sineWave, fs);
 
         for (int i = 0; i < psdResult.length; i++) {
-            psdResult[i] = psdResult[i] * -0.15 + 3575;
+            psdResult[i] = psdResult[i] * -0.25 + 3575;
             // Red line (PSD result) is drawn later as psdResult[i] - 1695.
             // If we want the drawn y-value to not go above 1460, then psdResult[i] - 1695 >= 1460
             // Because screen coordinates are 0 at the top, "above" 1460 means y < 1460.
@@ -456,17 +363,19 @@ public class GameScreen extends Screen implements Input {
             }
             // System.out.println("Frequency Bin " + i + ": PSD = " + psdResult[i]);
         }
-        xStart = 170;
-        xStop = 180;
-        for (int i = 1; i < psdResult.length; i++) {
-            g.drawRedLine(xStart, (int) psdResult[i - 1] - 1695, xStop, (int) psdResult[i] - 1695, 0);
-            xStart = xStop;
-            xStop += 10;
-            if(xStop >= 1600){
+        xStartPSD = 170;
+        xStopPSD = 172;
+        for (int i = 10; i < psdResult.length; i++) {
+            g.drawRedLine((int)xStartPSD, (int) psdResult[i - 1] - 1695, (int)xStopPSD, (int) psdResult[i] - 1695, 0);
+            xStartPSD = xStopPSD;
+            xStopPSD += 1.35;        //Was 10
+            if(xStopPSD >= 1600){
                 break;
             }
         }
     }
+
+
 
     @Override
     public void present ( float deltaTime){
