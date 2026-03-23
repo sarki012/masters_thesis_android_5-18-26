@@ -70,7 +70,7 @@ public class GameScreenEvent extends Screen implements Input {
 
         // Draw Black Line Signal
         xStart = 1600;
-        int xStep = 5;
+        int xStep = 2;
         xStop = xStart - xStep;
         for (int n = signalBufferLen - 1; n > 1; n--) {
             g.drawBlackLine(xStart, (int) eventArray[idx][n], xStop, (int) (eventArray[idx][n - 2]), 0);
