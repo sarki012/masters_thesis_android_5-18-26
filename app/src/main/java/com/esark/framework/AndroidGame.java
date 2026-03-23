@@ -106,6 +106,9 @@ public abstract class AndroidGame extends Activity implements Game {
     public static int bufferFlag = 0;
     //public static int signalBufferLen = 287;
     public static int signalBufferLen = 2048;
+    // In your class members
+    Sound alertSound;
+    boolean isAlertPlaying = false;
 
     @Override
     public void onCreate(Bundle savedInstanceState) {
@@ -263,6 +266,13 @@ public abstract class AndroidGame extends Activity implements Game {
         audio = new AndroidAudio(this);
         input = new AndroidInput(this, renderView, scaleX, scaleY);
         screen = getStartScreen();
+
+        // In your setup/onCreate
+        try {
+            alertSound = audio.newSound("ringtone.mp3");
+        } catch (Exception e) {
+            Log.e(TAG, "Failed to load ringtone.mp3: " + e.getMessage());
+        }
 
     }
 
