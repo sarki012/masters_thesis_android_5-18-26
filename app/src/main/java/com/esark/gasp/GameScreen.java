@@ -292,8 +292,8 @@ public class GameScreen extends Screen implements Input {
 
 
         // ++++++++++++++++++ RMS (Root-Mean Square) Visualization ++++++++++++++++++++++++++
-        movingRMS = RMSCalculator.calculateMovingRMS(A2DValCopy, 20);
-        smoothedRMS = MovingAverageCalculator.calculateMovingAverage(movingRMS, 10);        // +++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+        movingRMS = RMSCalculator.calculateMovingRMS(A2DValCopy, 5);
+        smoothedRMS = MovingAverageCalculator.calculateMovingAverage(movingRMS, 1);        // +++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
 
 
         if (smoothedRMS.length > 2) {
