@@ -301,11 +301,41 @@ public class GameScreen extends Screen implements Input {
         // ++++++++++++++++++ RMS (Root-Mean Square) Visualization ++++++++++++++++++++++++++
         movingRMS = RMSCalculator.calculateMovingRMS(A2DValCopy, 20);
         smoothedRMS = MovingAverageCalculator.calculateMovingAverage(movingRMS, 10);        // +++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
-/*
+
+        // Baseline for RMS values (DC offset)
+        double rmsBaseline = 410.0;
+        // Target center on the screen
+        int centerY = 1100;
+        if (smoothedRMS.length > 2) {
+            xStart = 1600;
+            xStop = 1585;
+            //xStop = 3235;
+            for (int n = smoothedRMS.length - 1; n > 1; n--) {
+                // Calculate position relative to 1100
+                int y1 = (int) (centerY + (smoothedRMS[n] - rmsBaseline));
+                int y2 = (int) (centerY + (smoothedRMS[n - 1] - rmsBaseline));
+
+                // Optional: Clamp values if you want to keep the line within a specific graph box
+                // For example, if the box height is 300 pixels (1100 +/- 150):
+                if (y1 < 950) y1 = 950;
+                if (y1 > 1250) y1 = 1250;
+                if (y2 < 950) y2 = 950;
+                if (y2 > 1250) y2 = 1250;
+
+                g.drawBlueLine(xStart, y1, xStop, y2, 0);
+                xStart = xStop;
+                xStop -= 15;
+                if (xStop <= 180) {
+                    break;
+                }
+            }
+        }
+        /*
         for (int i = 0; i < smoothedRMS.length; i++) {
             smoothedRMS[i] = 410.0 - smoothedRMS[i];
         }
 */
+        /*
         if (smoothedRMS.length > 2) {
             xStart = 1600;
             xStop = 1585;
@@ -332,7 +362,7 @@ public class GameScreen extends Screen implements Input {
                     smoothedRMS[n-1] = 273;
                 }
 
-                g.drawBlueLine(xStart, (int) ((3*smoothedRMS[n])), xStop, (int) ((3*smoothedRMS[n-1])), 0);
+                g.drawBlueLine(xStart, (int) ((smoothedRMS[n])), xStop, (int) ((smoothedRMS[n-1])), 0);
 
                 xStart = xStop;
                 xStop -= 15;
@@ -341,6 +371,8 @@ public class GameScreen extends Screen implements Input {
                 }
             }
         }
+        */
+
 
         /*
         if (smoothedRMS.length > 2) {
