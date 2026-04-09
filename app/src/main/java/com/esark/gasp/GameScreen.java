@@ -127,16 +127,95 @@ public class GameScreen extends Screen implements Input {
         }
 
         // 4. Draw Raw Signal (Black)
-        int rawCenterY = 480;
+        int screenCenterY = 460;
+        int topLimit = 230;
+        int bottomLimit = 690;
+
+        // Calculate dynamic baseline to center the signal regardless of DC offset
+        double sum = 0;
+        int nonZeroCount = 0;
+        for (double v : A2DValCopy) {
+            if (v != 0) {
+                sum += v;
+                nonZeroCount++;
+            }
+        }
+
+        // This calculates the actual "resting" center of your data
+        double dataBaseline = (nonZeroCount > 0) ? (sum / nonZeroCount) : 410;
+
         xStart = 1600;
         int xStep = 2;
+
+        // Gain/Multiplier: 1.0f is standard. If the signal is too large,
+        // decrease this (e.g., 0.5f). If too small, increase it (e.g., 2.0f).
+        float gain = 0.1f;
+
         for (int n = signalBufferLen - 1; n > 0; n--) {
-            int y1 = (int) (rawCenterY - (A2DValCopy[n] - 410));
-            int y2 = (int) (rawCenterY - (A2DValCopy[n - 1] - 410));
+            // Formula: Center - (CurrentValue - DynamicBaseline) * Gain
+            int y1 = (int) (screenCenterY - (A2DValCopy[n] - dataBaseline) * gain);
+            int y2 = (int) (screenCenterY - (A2DValCopy[n - 1] - dataBaseline) * gain);
+
+            // CLAMPING: Prevent the line from going off the top (245) or bottom (695)
+            if (y1 < topLimit) y1 = topLimit;
+            if (y1 > bottomLimit) y1 = bottomLimit;
+            if (y2 < topLimit) y2 = topLimit;
+            if (y2 > bottomLimit) y2 = bottomLimit;
+
+            g.drawBlackLine(xStart, y1, xStart - xStep, y2, 0);
+
+            xStart -= xStep;
+            if (xStart <= 165) break;
+        }
+
+
+        /*
+        // Baseline of your actual raw data (DC offset)
+    //    int dataBaseline = 480;
+        int dataBaseline = 1000;
+        xStart = 1600;
+        int xStep = 2;
+        // Target Y-coordinate on the screen where you want the line to sit
+        int screenCenterY = 480;
+
+        // Gain/Multiplier: Increase this to make the wiggles/noise bigger
+        float gain = 1.0f;
+
+        for (int n = signalBufferLen - 1; n > 0; n--) {
+            // Formula: Center - (CurrentValue - RestingValue)
+            // We subtract from Center because in Android, smaller Y is HIGHER on screen.
+            // This ensures upward spikes in data go UP on the screen.
+            int y1 = (int) (screenCenterY - (A2DValCopy[n] - dataBaseline) * gain);
+            int y2 = (int) (screenCenterY - (A2DValCopy[n - 1] - dataBaseline) * gain);
+
+            g.drawBlackLine(xStart, y1, xStart - xStep, y2, 0);
+
+            xStart -= xStep;
+            if (xStart <= 165) break;
+        }
+
+        */
+        /*
+        double baseline = (nonZeroCount > 0) ? (sum / nonZeroCount) : 410;
+
+        xStart = 1600;
+        int xStep = 2;
+        float rawScale = 2.0f; // Increase scale for better visibility of oscillations
+        for (int n = signalBufferLen - 1; n > 0; n--) {
+            // Signal spikes above/below center
+            int y1 = (int) (rawCenterY - (A2DValCopy[n] - baseline) * rawScale);
+            int y2 = (int) (rawCenterY - (A2DValCopy[n - 1] - baseline) * rawScale);
+            
+            // Constrain to drawing area
+            if (y1 < 150) y1 = 150; if (y1 > 810) y1 = 810;
+            if (y2 < 150) y2 = 150; if (y2 > 810) y2 = 810;
+
             g.drawBlackLine(xStart, y1, xStart - xStep, y2, 0);
             xStart -= xStep;
             if (xStart <= 165) break;
         }
+        */
+
 
         // 5. RMS Logic & Drawing (Blue)
         movingRMS = RMSCalculator.calculateMovingRMS(A2DValCopy, 40);
@@ -158,7 +237,7 @@ public class GameScreen extends Screen implements Input {
                 if (xStart <= 180) break;
             }
 
-            // --- FIXED ALERT LOGIC ---
+            // --- ALERT LOGIC ---
             int latestY = (int) (blueCenterY - (smoothedRMS[smoothedRMS.length - 1] - 410.0) * rmsYScale);
             if (latestY < thresholdY) {
                 if (!isAlertPlaying && alertSound != null) {
