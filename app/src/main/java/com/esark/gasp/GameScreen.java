@@ -307,30 +307,33 @@ public class GameScreen extends Screen implements Input {
 
 
         // ++++++++++++++++++ RMS (Root-Mean Square) Visualization ++++++++++++++++++++++++++
-        movingRMS = RMSCalculator.calculateMovingRMS(A2DValCopy, 5);
-        smoothedRMS = MovingAverageCalculator.calculateMovingAverage(movingRMS, 1);        // +++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+        movingRMS = RMSCalculator.calculateMovingRMS(A2DVal, 20);
+        smoothedRMS = MovingAverageCalculator.calculateMovingAverage(movingRMS, 20);        // +++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
 
 
         if (smoothedRMS.length > 2) {
             xStart = 1600;
-            xStop = 1585;
+            xStop = 1598;
             // Target center for the blue line
-            int blueCenterY = 1100;
+            int blueCenterY = 1090;     //Was 1100
             // Baseline for RMS values when the signal is centered at 410
             // The RMS of a constant signal 410 is 410.
             double rmsBaseline = 410.0;
             // Scale factor to make the line move visibly
-            float rmsYScale = 0.75f;
+            float rmsYScale = 200.0f;     //Was 0.75
 
             for (int n = smoothedRMS.length - 1; n > 1; n--) {
                 // Calculate deviation from baseline and scale it
-                double rmsAmplitude = (smoothedRMS[n] - rmsBaseline) * rmsYScale;
-                double rmsAmplitudeNext = (smoothedRMS[n - 1] - rmsBaseline) * rmsYScale;
+               // double rmsAmplitude = (smoothedRMS[n] - rmsBaseline) * rmsYScale;
+                //double rmsAmplitudeNext = (smoothedRMS[n - 1] - rmsBaseline) * rmsYScale;
 
                 // Draw centered at blueCenterY
-                int y1 = (int) (blueCenterY - rmsAmplitude);
-                int y2 = (int) (blueCenterY - rmsAmplitudeNext);
-
+                //int y1 = (int) (blueCenterY + rmsAmplitude);
+                //int y2 = (int) (blueCenterY + rmsAmplitudeNext);
+                // INVERSION MATH:
+                // blueCenterY MINUS (difference) makes the line go UP as RMS increases
+                int y1 = (int) (blueCenterY - (smoothedRMS[n] - rmsBaseline) * rmsYScale);
+                int y2 = (int) (blueCenterY - (smoothedRMS[n - 1] - rmsBaseline) * rmsYScale);
                 // 4. Clamping: Keep the line within a visible "box" around 1100
                 // This prevents the line from shooting off the top or bottom of the screen.
                 if (y1 < 869) y1 = 869;
@@ -343,7 +346,7 @@ public class GameScreen extends Screen implements Input {
 
 
                 xStart = xStop;
-                xStop -= 15;
+                xStop -= 2;
                 if (xStop <= 180) {
                     break;
                 }
