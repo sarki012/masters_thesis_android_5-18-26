@@ -106,6 +106,7 @@ public abstract class AndroidGame extends Activity implements Game {
     public static int bufferFlag = 0;
     //public static int signalBufferLen = 287;
     public static int signalBufferLen = 2048;
+    //public static int signalBufferLen = 1024;
     // In your class members
     Sound alertSound;
     boolean isAlertPlaying = false;
@@ -179,10 +180,15 @@ public abstract class AndroidGame extends Activity implements Game {
                                         System.arraycopy(A2DVal, 1, A2DVal, 0, signalBufferLen - 1);
                                         A2DVal[signalBufferLen - 1] = ((double) totalA2DVal / 3.0);
                                         Log.d(TAG, "A2DVal: " + A2DVal[signalBufferLen - 1]);
-                                        
+
+                                        /*
                                         // Clamping
-                                        if(A2DVal[signalBufferLen - 1] < 180) A2DVal[signalBufferLen - 1] = 180;
-                                        else if(A2DVal[signalBufferLen - 1] > 640) A2DVal[signalBufferLen - 1] = 640;
+                                        if(A2DVal[signalBufferLen - 1] < 180)
+                                            A2DVal[signalBufferLen - 1] = 180;
+                                        else if(A2DVal[signalBufferLen - 1] > 640)
+                                            A2DVal[signalBufferLen - 1] = 640;
+
+                                         */
                                     }
                                 }
                             }
