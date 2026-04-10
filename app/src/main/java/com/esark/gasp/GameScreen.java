@@ -307,10 +307,47 @@ public class GameScreen extends Screen implements Input {
 
 
         // ++++++++++++++++++ RMS (Root-Mean Square) Visualization ++++++++++++++++++++++++++
-        movingRMS = RMSCalculator.calculateMovingRMS(A2DVal, 20);
-        smoothedRMS = MovingAverageCalculator.calculateMovingAverage(movingRMS, 20);        // +++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+        movingRMS = RMSCalculator.calculateMovingRMS(A2DVal, 5);
+        smoothedRMS = MovingAverageCalculator.calculateMovingAverage(movingRMS, 5);        // +++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
 
+        if (smoothedRMS.length > 2) {
+            xStart = 1600;
+            // Target center for the blue line
+            int blueCenterY = 1090;
 
+            //double rmsBaseline = 410.0;
+            double rmsBaseline = 1500.0;
+
+            // REDUCED SCALE: 1000.0f was too high, causing it to hit the clamp instantly.
+            // Try 20.0f for visible fluctuations.
+            float rmsYScale = 10.0f;
+
+            for (int n = smoothedRMS.length - 1; n > 1; n--) {
+                // INVERSION MATH:
+                // blueCenterY MINUS (difference) moves the line UP as signal strength increases
+                int y1 = (int) (blueCenterY - (smoothedRMS[n] - rmsBaseline) * rmsYScale);
+                int y2 = (int) (blueCenterY - (smoothedRMS[n - 1] - rmsBaseline) * rmsYScale);
+
+                // Clamping: Keep the line within the visible graph box (869 to 1308)
+                if (y1 < 869) y1 = 869;
+                if (y1 > 1308) y1 = 1308;
+                if (y2 < 869) y2 = 869;
+                if (y2 > 1308) y2 = 1308;
+
+                // Draw the blue line
+                // Use a consistent step of 15 pixels so the wave is readable
+                g.drawBlueLine(xStart, y1, xStart - 15, y2, 0);
+
+                xStart -= 2;
+
+                // Stop drawing when hitting the left edge
+                if (xStart <= 180) {
+                    break;
+                }
+            }
+        }
+
+        /*
         if (smoothedRMS.length > 2) {
             xStart = 1600;
             xStop = 1598;
@@ -320,7 +357,7 @@ public class GameScreen extends Screen implements Input {
             // The RMS of a constant signal 410 is 410.
             double rmsBaseline = 410.0;
             // Scale factor to make the line move visibly
-            float rmsYScale = 200.0f;     //Was 0.75
+            float rmsYScale = 1000.0f;     //Was 0.75
 
             for (int n = smoothedRMS.length - 1; n > 1; n--) {
                 // Calculate deviation from baseline and scale it
@@ -352,6 +389,7 @@ public class GameScreen extends Screen implements Input {
                 }
             }
         }
+        */
 
 
 
