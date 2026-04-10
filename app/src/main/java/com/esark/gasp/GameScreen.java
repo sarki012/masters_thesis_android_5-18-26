@@ -279,7 +279,7 @@ public class GameScreen extends Screen implements Input {
             A2DValCopy[j] = A2DVal[j] - A2DValMean;
         }
         movingRMS = RMSCalculator.calculateMovingRMS(A2DValCopy, 10);
-        smoothedRMS = MovingAverageCalculator.calculateMovingAverage(movingRMS, 10);
+        smoothedRMS = MovingAverageCalculator.calculateMovingAverage(movingRMS, 20);
         //&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&77
 
         // This calculates the actual "resting" center of your data
@@ -360,7 +360,8 @@ public class GameScreen extends Screen implements Input {
         // %%%%%%%%%%%%%%%%%%%% Sound Code %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
         // Use 1100 as the baseline (the center of your blue RMS graph)
         // Subtracting the threshold makes it move UP as the value increases
-        thresholdY = (int) (1900 - (rmsAmpThresh * 2.0f));
+        //thresholdY = (int) (1900 - (rmsAmpThresh * 2.0f));
+        thresholdY = (int) (1050 - (rmsAmpThresh * 2.0f));
        // int thresholdY = (int) (1100 - (rmsAmpThresh * 2.0f));
 
         // thresholdY = (int) (1000 - (rmsAmpThresh * 1.0f));
@@ -378,7 +379,7 @@ public class GameScreen extends Screen implements Input {
         // int latestY = (int) (blueCenterY - (smoothedRMS[smoothedRMS.length - 1] - 410.0) * rmsYScale);
         if (latestY < thresholdY) {
             if (!isAlertPlaying && alertSound != null) {
-                alertSound.play(1.0f);
+                alertSound.play(10.0f);
                 isAlertPlaying = true;
             }
         } else {
