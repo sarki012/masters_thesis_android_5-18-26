@@ -334,6 +334,31 @@ public class GameScreen extends Screen implements Input {
                 int y2 = (int) (blueCenterY - smoothedRMS[n - 1] * rmsYScale);
                 latestY = y2;
 
+                //%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+                // %%%%%%%%%%%%%%%%%%%% Sound Code %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+                // Use 1100 as the baseline (the center of your blue RMS graph)
+                // Subtracting the threshold makes it move UP as the value increases
+                //thresholdY = (int) (1900 - (rmsAmpThresh * 2.0f));
+                thresholdY = (int) (1050 - (rmsAmpThresh * 2.0f));
+                // int thresholdY = (int) (1100 - (rmsAmpThresh * 2.0f));
+
+                // thresholdY = (int) (1000 - (rmsAmpThresh * 1.0f));
+
+                // Clamping to keep it within the same bounds as your blue line (869 to 1308)
+                //if (thresholdY < 869) thresholdY = 869;
+                //
+                //  if (thresholdY > 1308) thresholdY = 1308;
+
+                g.drawRedLine(155, thresholdY, 1590, thresholdY, 0);
+
+                // g.drawRedLine(155, (rmsAmpThresh*100/445 + 877), 1590, (rmsAmpThresh*100/445 + 877), 0);
+                // --- FIXED ALERT LOGIC ---
+
+                // int latestY = (int) (blueCenterY - (smoothedRMS[smoothedRMS.length - 1] - 410.0) * rmsYScale);
+
+                //%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+               // latestY = (int) (blueCenterY - smoothedRMS[0] * rmsYScale);
+
                 //int y1 = (int) (blueCenterY - (smoothedRMS[n] - rmsBaseline) * rmsYScale);
                 //int y2 = (int) (blueCenterY - (smoothedRMS[n - 1] - rmsBaseline) * rmsYScale);
 
@@ -353,38 +378,23 @@ public class GameScreen extends Screen implements Input {
                 if (xStart <= 180) {
                     break;
                 }
-                A2DValMean = 0;
+
             }
+
+            // Get the very latest Y position
+            latestY = (int) (blueCenterY - smoothedRMS[smoothedRMS.length - 1] * rmsYScale);
+            if (latestY < thresholdY) {
+                if (!isAlertPlaying && alertSound != null) {
+                    alertSound.play(5.0f);
+                    isAlertPlaying = true;
+                }
+            } else {
+                isAlertPlaying = false;
+            }
+            A2DValMean = 0;
         }
 
-        // %%%%%%%%%%%%%%%%%%%% Sound Code %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-        // Use 1100 as the baseline (the center of your blue RMS graph)
-        // Subtracting the threshold makes it move UP as the value increases
-        //thresholdY = (int) (1900 - (rmsAmpThresh * 2.0f));
-        thresholdY = (int) (1050 - (rmsAmpThresh * 2.0f));
-       // int thresholdY = (int) (1100 - (rmsAmpThresh * 2.0f));
 
-        // thresholdY = (int) (1000 - (rmsAmpThresh * 1.0f));
-
-        // Clamping to keep it within the same bounds as your blue line (869 to 1308)
-        //if (thresholdY < 869) thresholdY = 869;
-        //
-        //  if (thresholdY > 1308) thresholdY = 1308;
-
-        g.drawRedLine(155, thresholdY, 1590, thresholdY, 0);
-
-        // g.drawRedLine(155, (rmsAmpThresh*100/445 + 877), 1590, (rmsAmpThresh*100/445 + 877), 0);
-        // --- FIXED ALERT LOGIC ---
-
-        // int latestY = (int) (blueCenterY - (smoothedRMS[smoothedRMS.length - 1] - 410.0) * rmsYScale);
-        if (latestY < thresholdY) {
-            if (!isAlertPlaying && alertSound != null) {
-                alertSound.play(10.0f);
-                isAlertPlaying = true;
-            }
-        } else {
-            isAlertPlaying = false;
-        }
 
 
         // ++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
@@ -406,7 +416,7 @@ public class GameScreen extends Screen implements Input {
         for (int i = 0; i < psdResult.length; i++) {
             // Increase the gain (-1.5 instead of -0.25) to see harmonics
             // Adjusted offset (2800) to bring the graph higher up the screen
-            psdResult[i] = psdResult[i] * -20 + 3600;
+            psdResult[i] = psdResult[i] * -1+ 3600;
 
             // Relaxed clamping so peaks aren't cut off (2200 is near top of PSD area)
             if (psdResult[i] < 3165) {
@@ -421,7 +431,8 @@ public class GameScreen extends Screen implements Input {
 
         // Target: 250Hz at x=861.
         // 250Hz is approx bin 51. (861-170)/51 = ~13.5
-        float xStepPsd = 13.5f;
+        //float xStepPsd = 13.5f;
+        float xStepPsd = 2.0f;
 
         for (int i = 1; i < psdResult.length; i++) {
             float nextXpsd = 170 + (i * xStepPsd);
