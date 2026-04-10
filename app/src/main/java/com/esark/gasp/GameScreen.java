@@ -23,6 +23,8 @@ public class GameScreen extends Screen implements Input {
     double xStartPSD = 0, xStopPSD = 0;
     //public static double[] A2DVal = new double[3500];
     public static double[] A2DVal = new double[signalBufferLen];   //was 1435
+  //  public double[] A2DValMean = new double[signalBufferLen];
+    public double A2DValMean = 0;
     public double[] A2DValCopy = new double[signalBufferLen];
     public static double[] movingRMS = new double[signalBufferLen];
     public static double[] smoothedRMS = new double[signalBufferLen];
@@ -307,7 +309,15 @@ public class GameScreen extends Screen implements Input {
 
 
         // ++++++++++++++++++ RMS (Root-Mean Square) Visualization ++++++++++++++++++++++++++
-        movingRMS = RMSCalculator.calculateMovingRMS(A2DVal, 5);
+        for(int i = 0; i < signalBufferLen - 1; i++) {
+            A2DValMean += A2DVal[i];
+        }
+        A2DValMean = A2DValMean/signalBufferLen;
+
+        for(int j = 0; j < signalBufferLen - 1; j++) {
+            A2DValCopy[j] = A2DVal[j] - A2DValMean;
+        }
+        movingRMS = RMSCalculator.calculateMovingRMS(A2DValCopy, 5);
         smoothedRMS = MovingAverageCalculator.calculateMovingAverage(movingRMS, 5);        // +++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
 
         if (smoothedRMS.length > 2) {
@@ -316,17 +326,21 @@ public class GameScreen extends Screen implements Input {
             int blueCenterY = 1090;
 
             //double rmsBaseline = 410.0;
-            double rmsBaseline = 1500.0;
+         //   double rmsBaseline = 1500.0;
 
             // REDUCED SCALE: 1000.0f was too high, causing it to hit the clamp instantly.
             // Try 20.0f for visible fluctuations.
-            float rmsYScale = 10.0f;
+           // float rmsYScale = 10.0f;
+            float rmsYScale = 0.75f;
 
             for (int n = smoothedRMS.length - 1; n > 1; n--) {
                 // INVERSION MATH:
                 // blueCenterY MINUS (difference) moves the line UP as signal strength increases
-                int y1 = (int) (blueCenterY - (smoothedRMS[n] - rmsBaseline) * rmsYScale);
-                int y2 = (int) (blueCenterY - (smoothedRMS[n - 1] - rmsBaseline) * rmsYScale);
+                int y1 = (int) (blueCenterY - smoothedRMS[n] * rmsYScale);
+                int y2 = (int) (blueCenterY - smoothedRMS[n - 1] * rmsYScale);
+
+                //int y1 = (int) (blueCenterY - (smoothedRMS[n] - rmsBaseline) * rmsYScale);
+                //int y2 = (int) (blueCenterY - (smoothedRMS[n - 1] - rmsBaseline) * rmsYScale);
 
                 // Clamping: Keep the line within the visible graph box (869 to 1308)
                 if (y1 < 869) y1 = 869;
@@ -344,6 +358,7 @@ public class GameScreen extends Screen implements Input {
                 if (xStart <= 180) {
                     break;
                 }
+                A2DValMean = 0;
             }
         }
 
