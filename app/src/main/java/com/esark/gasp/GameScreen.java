@@ -11,12 +11,17 @@ import com.esark.framework.Graphics;
 import com.esark.framework.Input;
 import com.esark.framework.Input.TouchEvent;
 import com.esark.framework.Screen;
+import com.esark.framework.AndroidAudio;
+import com.esark.framework.Sound;
 
 import java.text.SimpleDateFormat;
 import java.util.Date;
 import java.util.List;
 
 public class GameScreen extends Screen implements Input {
+    boolean isAlertPlaying = false;
+    Sound alertSound;
+    int thresholdY = 0;
     Context context = null;
     private static final String TAG = "GameScreen";
     int xStart = 0, xStop = 0;
@@ -69,6 +74,12 @@ public class GameScreen extends Screen implements Input {
     //Constructor
     public GameScreen(Game game) {
         super(game);
+        try {
+            alertSound = game.getAudio().newSound("ringtone.mp3");
+        } catch (Exception e) {
+            Log.e(TAG, "Failed to load ringtone.mp3: " + e.getMessage());
+            alertSound = null; // Ensure it's null so the check in updateRunning works
+        }
     }
     public GameScreenLastEvent gameScreenLastEvent = new GameScreenLastEvent(game);
     public GameScreenEventLog gameScreenEventLog = new GameScreenEventLog(game);
@@ -259,12 +270,12 @@ public class GameScreen extends Screen implements Input {
 
 
         // ++++++++++++++++++ RMS (Root-Mean Square) Visualization ++++++++++++++++++++++++++
-        for(int i = 0; i < signalBufferLen - 1; i++) {
+        for (int i = 0; i < signalBufferLen - 1; i++) {
             A2DValMean += A2DVal[i];
         }
-        A2DValMean = A2DValMean/signalBufferLen;
+        A2DValMean = A2DValMean / signalBufferLen;
 
-        for(int j = 0; j < signalBufferLen - 1; j++) {
+        for (int j = 0; j < signalBufferLen - 1; j++) {
             A2DValCopy[j] = A2DVal[j] - A2DValMean;
         }
         movingRMS = RMSCalculator.calculateMovingRMS(A2DValCopy, 10);
@@ -299,12 +310,13 @@ public class GameScreen extends Screen implements Input {
         }
 
 
-      // +++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+        // +++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
 
+        int latestY = 0;
         if (smoothedRMS.length > 2) {
             xStart = 1600;
             // Target center for the blue line
-          //  int blueCenterY = 800;
+            //  int blueCenterY = 800;
             int blueCenterY = 1300;
 
             //double rmsBaseline = 410.0;
@@ -320,6 +332,7 @@ public class GameScreen extends Screen implements Input {
                 // blueCenterY MINUS (difference) moves the line UP as signal strength increases
                 int y1 = (int) (blueCenterY - smoothedRMS[n] * rmsYScale);
                 int y2 = (int) (blueCenterY - smoothedRMS[n - 1] * rmsYScale);
+                latestY = y2;
 
                 //int y1 = (int) (blueCenterY - (smoothedRMS[n] - rmsBaseline) * rmsYScale);
                 //int y2 = (int) (blueCenterY - (smoothedRMS[n - 1] - rmsBaseline) * rmsYScale);
@@ -344,50 +357,33 @@ public class GameScreen extends Screen implements Input {
             }
         }
 
-        /*
-        if (smoothedRMS.length > 2) {
-            xStart = 1600;
-            xStop = 1598;
-            // Target center for the blue line
-            int blueCenterY = 1090;     //Was 1100
-            // Baseline for RMS values when the signal is centered at 410
-            // The RMS of a constant signal 410 is 410.
-            double rmsBaseline = 410.0;
-            // Scale factor to make the line move visibly
-            float rmsYScale = 1000.0f;     //Was 0.75
+        // %%%%%%%%%%%%%%%%%%%% Sound Code %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
+        // Use 1100 as the baseline (the center of your blue RMS graph)
+        // Subtracting the threshold makes it move UP as the value increases
+        thresholdY = (int) (1900 - (rmsAmpThresh * 2.0f));
+       // int thresholdY = (int) (1100 - (rmsAmpThresh * 2.0f));
 
-            for (int n = smoothedRMS.length - 1; n > 1; n--) {
-                // Calculate deviation from baseline and scale it
-               // double rmsAmplitude = (smoothedRMS[n] - rmsBaseline) * rmsYScale;
-                //double rmsAmplitudeNext = (smoothedRMS[n - 1] - rmsBaseline) * rmsYScale;
+        // thresholdY = (int) (1000 - (rmsAmpThresh * 1.0f));
 
-                // Draw centered at blueCenterY
-                //int y1 = (int) (blueCenterY + rmsAmplitude);
-                //int y2 = (int) (blueCenterY + rmsAmplitudeNext);
-                // INVERSION MATH:
-                // blueCenterY MINUS (difference) makes the line go UP as RMS increases
-                int y1 = (int) (blueCenterY - (smoothedRMS[n] - rmsBaseline) * rmsYScale);
-                int y2 = (int) (blueCenterY - (smoothedRMS[n - 1] - rmsBaseline) * rmsYScale);
-                // 4. Clamping: Keep the line within a visible "box" around 1100
-                // This prevents the line from shooting off the top or bottom of the screen.
-                if (y1 < 869) y1 = 869;
-                if (y1 > 1308) y1 = 1308;
-                if (y2 < 869) y2 = 869;
-                if (y2 > 1308) y2 = 1308;
+        // Clamping to keep it within the same bounds as your blue line (869 to 1308)
+        //if (thresholdY < 869) thresholdY = 869;
+        //
+        //  if (thresholdY > 1308) thresholdY = 1308;
 
-                // Draw the blue line
-                g.drawBlueLine(xStart, y1, xStop, y2, 0);
+        g.drawRedLine(155, thresholdY, 1590, thresholdY, 0);
 
+        // g.drawRedLine(155, (rmsAmpThresh*100/445 + 877), 1590, (rmsAmpThresh*100/445 + 877), 0);
+        // --- FIXED ALERT LOGIC ---
 
-                xStart = xStop;
-                xStop -= 2;
-                if (xStop <= 180) {
-                    break;
-                }
+        // int latestY = (int) (blueCenterY - (smoothedRMS[smoothedRMS.length - 1] - 410.0) * rmsYScale);
+        if (latestY < thresholdY) {
+            if (!isAlertPlaying && alertSound != null) {
+                alertSound.play(1.0f);
+                isAlertPlaying = true;
             }
+        } else {
+            isAlertPlaying = false;
         }
-        */
-
 
 
         // ++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
@@ -439,18 +435,6 @@ public class GameScreen extends Screen implements Input {
                 break;
             }
         }
-        // Use 1100 as the baseline (the center of your blue RMS graph)
-        // Subtracting the threshold makes it move UP as the value increases
-        int thresholdY = (int) (1000 - (rmsAmpThresh * 1.0f));
-
-        // Clamping to keep it within the same bounds as your blue line (869 to 1308)
-        //if (thresholdY < 869) thresholdY = 869;
-        //
-        //  if (thresholdY > 1308) thresholdY = 1308;
-
-        g.drawRedLine(155, thresholdY, 1590, thresholdY, 0);
-
-        // g.drawRedLine(155, (rmsAmpThresh*100/445 + 877), 1590, (rmsAmpThresh*100/445 + 877), 0);
     }
 
 
