@@ -23,7 +23,7 @@ public class GameScreen extends Screen implements Input {
     double xStartPSD = 0, xStopPSD = 0;
     //public static double[] A2DVal = new double[3500];
     public static double[] A2DVal = new double[signalBufferLen];   //was 1435
-  //  public double[] A2DValMean = new double[signalBufferLen];
+    //  public double[] A2DValMean = new double[signalBufferLen];
     public double A2DValMean = 0;
     public double[] A2DValCopy = new double[signalBufferLen];
     public static double[] movingRMS = new double[signalBufferLen];
@@ -237,7 +237,7 @@ public class GameScreen extends Screen implements Input {
             g.drawText(rmsWidthThreshStr, 1330, 2235);    //Manual RMS Height Above Threshold Text
         }
 
-       ////////////////////////////////////////////////////////////////////////
+        ////////////////////////////////////////////////////////////////////////
         // 4. Draw Raw Signal (Black)
         int screenCenterY = 460;
         int topLimit = 230;
@@ -252,6 +252,24 @@ public class GameScreen extends Screen implements Input {
                 nonZeroCount++;
             }
         }
+
+        //&&&&&&&&&&&&&&& RMS &&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&
+        System.arraycopy(A2DVal, 0, A2DValCopy, 0, A2DVal.length);
+        // Subtract DC offset (410) so RMS represents actual signal strength fluctuations
+
+
+        // ++++++++++++++++++ RMS (Root-Mean Square) Visualization ++++++++++++++++++++++++++
+        for(int i = 0; i < signalBufferLen - 1; i++) {
+            A2DValMean += A2DVal[i];
+        }
+        A2DValMean = A2DValMean/signalBufferLen;
+
+        for(int j = 0; j < signalBufferLen - 1; j++) {
+            A2DValCopy[j] = A2DVal[j] - A2DValMean;
+        }
+        movingRMS = RMSCalculator.calculateMovingRMS(A2DValCopy, 5);
+        smoothedRMS = MovingAverageCalculator.calculateMovingAverage(movingRMS, 5);
+        //&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&77
 
         // This calculates the actual "resting" center of your data
         double dataBaseline = (nonZeroCount > 0) ? (sum / nonZeroCount) : 410;
@@ -280,58 +298,22 @@ public class GameScreen extends Screen implements Input {
             if (xStart <= 165) break;
         }
 
-        /*
-        int rawCenterY = 480; // The vertical center where you want the black line
-        int rawBaseline = 410; // The DC offset of your actual data
-        float rawGain = 1.0f;  // Increase this (e.g., 2.0f) if the signal is too small
 
-        xStart = 1600;
-        int xStep = 2;
-        xStop = xStart - xStep;
-
-        for (int n = signalBufferLen - 1; n > 0; n--) {
-            // Formula to flip: CenterY - (Value - Baseline)
-            // If A2DVal[n] is 420, result is 410 - (10) = 400 (higher on screen)
-            int y1 = (int) (rawCenterY - (A2DVal[n] - rawBaseline) * rawGain);
-            int y2 = (int) (rawCenterY - (A2DVal[n - 1] - rawBaseline) * rawGain);
-
-            g.drawBlackLine(xStart, y1, xStop, y2, 0);
-
-            xStart = xStop;
-            xStop -= xStep;
-            if (xStop <= 165) break;
-        }
-
-*/
-
-        System.arraycopy(A2DVal, 0, A2DValCopy, 0, A2DVal.length);
-        // Subtract DC offset (410) so RMS represents actual signal strength fluctuations
-
-
-        // ++++++++++++++++++ RMS (Root-Mean Square) Visualization ++++++++++++++++++++++++++
-        for(int i = 0; i < signalBufferLen - 1; i++) {
-            A2DValMean += A2DVal[i];
-        }
-        A2DValMean = A2DValMean/signalBufferLen;
-
-        for(int j = 0; j < signalBufferLen - 1; j++) {
-            A2DValCopy[j] = A2DVal[j] - A2DValMean;
-        }
-        movingRMS = RMSCalculator.calculateMovingRMS(A2DValCopy, 5);
-        smoothedRMS = MovingAverageCalculator.calculateMovingAverage(movingRMS, 5);        // +++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+      // +++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
 
         if (smoothedRMS.length > 2) {
             xStart = 1600;
             // Target center for the blue line
-            int blueCenterY = 1090;
+          //  int blueCenterY = 800;
+            int blueCenterY = 1300;
 
             //double rmsBaseline = 410.0;
-         //   double rmsBaseline = 1500.0;
+            //   double rmsBaseline = 1500.0;
 
             // REDUCED SCALE: 1000.0f was too high, causing it to hit the clamp instantly.
             // Try 20.0f for visible fluctuations.
-           // float rmsYScale = 10.0f;
-            float rmsYScale = 0.75f;
+            // float rmsYScale = 10.0f;
+            float rmsYScale = 0.3f;
 
             for (int n = smoothedRMS.length - 1; n > 1; n--) {
                 // INVERSION MATH:
@@ -350,9 +332,9 @@ public class GameScreen extends Screen implements Input {
 
                 // Draw the blue line
                 // Use a consistent step of 15 pixels so the wave is readable
-                g.drawBlueLine(xStart, y1, xStart - 15, y2, 0);
+                g.drawBlueLine(xStart, y1, xStart - 3, y2, 0);
 
-                xStart -= 2;
+                xStart -= 3;
 
                 // Stop drawing when hitting the left edge
                 if (xStart <= 180) {
