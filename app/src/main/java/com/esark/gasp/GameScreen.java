@@ -267,8 +267,8 @@ public class GameScreen extends Screen implements Input {
         for(int j = 0; j < signalBufferLen - 1; j++) {
             A2DValCopy[j] = A2DVal[j] - A2DValMean;
         }
-        movingRMS = RMSCalculator.calculateMovingRMS(A2DValCopy, 5);
-        smoothedRMS = MovingAverageCalculator.calculateMovingAverage(movingRMS, 5);
+        movingRMS = RMSCalculator.calculateMovingRMS(A2DValCopy, 10);
+        smoothedRMS = MovingAverageCalculator.calculateMovingAverage(movingRMS, 10);
         //&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&77
 
         // This calculates the actual "resting" center of your data
@@ -332,9 +332,9 @@ public class GameScreen extends Screen implements Input {
 
                 // Draw the blue line
                 // Use a consistent step of 15 pixels so the wave is readable
-                g.drawBlueLine(xStart, y1, xStart - 3, y2, 0);
+                g.drawBlueLine(xStart, y1, xStart - 2, y2, 0);
 
-                xStart -= 3;
+                xStart -= 2;
 
                 // Stop drawing when hitting the left edge
                 if (xStart <= 180) {
