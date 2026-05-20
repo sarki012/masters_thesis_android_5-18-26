@@ -27,19 +27,22 @@ public class GameScreen extends Screen implements Input {
     int xStart = 0, xStop = 0;
     double xStartPSD = 0, xStopPSD = 0;
     //public static double[] A2DVal = new double[3500];
-    public static double[] A2DVal = new double[signalBufferLen];   //was 1435
+    public static volatile double[] A2DVal = new double[signalBufferLen];   //was 1435
     //  public double[] A2DValMean = new double[signalBufferLen];
     public double A2DValMean = 0;
-    public double[] A2DValCopy = new double[signalBufferLen];
-    public static double[] movingRMS = new double[signalBufferLen];
-    public static double[] smoothedRMS = new double[signalBufferLen];
+
+    public static volatile double[] movingRMS = new double[signalBufferLen];
+    public static volatile double[] smoothedRMS = new double[signalBufferLen];
     double rmsScale = 0;
     double[] psd = new double[2048];
 
     double[] sineWave = new double[2048];
     public static double[][] eventArray = new double [50][2048];
     public static double[] lastEventArray = new double[2048];
-    double[] psdResult = new double[2048];
+
+    // Remove volatile, use final to keep the reference stable
+// Ensure the size matches what your PSD calculator actually outputs
+    public static volatile double[] psdResult = new double[2048];
     public static double[][] PSDArray = new double[50][2048];
     public static double[] lastEventPSDArray = new double[2048];
     int freq = 0;
@@ -264,27 +267,46 @@ public class GameScreen extends Screen implements Input {
             }
         }
 
-        //&&&&&&&&&&&&&&& RMS &&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&
-        System.arraycopy(A2DVal, 0, A2DValCopy, 0, A2DVal.length);
-        // Subtract DC offset (410) so RMS represents actual signal strength fluctuations
 
 
-        // ++++++++++++++++++ RMS (Root-Mean Square) Visualization ++++++++++++++++++++++++++
-        for (int i = 0; i < signalBufferLen - 1; i++) {
-            A2DValMean += A2DVal[i];
-        }
-        A2DValMean = A2DValMean / signalBufferLen;
 
-        for (int j = 0; j < signalBufferLen - 1; j++) {
-            A2DValCopy[j] = A2DVal[j] - A2DValMean;
-        }
-        movingRMS = RMSCalculator.calculateMovingRMS(A2DValCopy, 10);
-        smoothedRMS = MovingAverageCalculator.calculateMovingAverage(movingRMS, 20);
         //&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&77
+
+        //&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&77
+
 
         // This calculates the actual "resting" center of your data
         double dataBaseline = (nonZeroCount > 0) ? (sum / nonZeroCount) : 410;
+        // --- 1. Draw Raw Signal (Smooth Sliding Window) ---
+        xStart = 1600;      // Start at the right edge
+        int xStep = 20;      // Distance between drawn points (wider = smoother)
+        int drawSkip = 10;  // ONLY DRAW EVERY 10th SAMPLE (Effective 200Hz view)
+        float gain = 0.2f;  // Adjust vertical height
 
+        // We iterate backwards through the buffer, skipping 'drawSkip' samples
+        // signalBufferLen should be at least 4000 to show 2 seconds of 2000Hz data
+        for (int n = signalBufferLen - 1; n > drawSkip; n -= drawSkip) {
+
+            // Formula: Center - (CurrentValue - DynamicBaseline) * Gain
+            int y1 = (int) (screenCenterY - (A2DVal[n] - dataBaseline) * gain);
+            int y2 = (int) (screenCenterY - (A2DVal[n - drawSkip] - dataBaseline) * gain);
+
+            // CLAMPING
+            if (y1 < topLimit) y1 = topLimit;
+            if (y1 > bottomLimit) y1 = bottomLimit;
+            if (y2 < topLimit) y2 = topLimit;
+            if (y2 > bottomLimit) y2 = bottomLimit;
+
+            // Draw line from current x to the next x-step to the left
+            g.drawBlackLine(xStart, y1, xStart - xStep, y2, 0);
+
+            xStart -= xStep;
+
+            // Stop when we hit the left border of the graph
+            if (xStart <= 165) break;
+        }
+
+        /*
         xStart = 1600;
         int xStep = 2;
 
@@ -309,6 +331,26 @@ public class GameScreen extends Screen implements Input {
             if (xStart <= 165) break;
         }
 
+*/
+        // +++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
+        /*
+        for (int n = signalBufferLen - 1; n > 0; n--) {
+            // Formula: Center - (CurrentValue - DynamicBaseline) * Gain
+            int y1 = (int) (screenCenterY - (A2DVal[n] - dataBaseline) * gain);
+            int y2 = (int) (screenCenterY - (A2DVal[n - 1] - dataBaseline) * gain);
+
+            // CLAMPING: Prevent the line from going off the top (245) or bottom (695)
+            if (y1 < topLimit) y1 = topLimit;
+            if (y1 > bottomLimit) y1 = bottomLimit;
+            if (y2 < topLimit) y2 = topLimit;
+            if (y2 > bottomLimit) y2 = bottomLimit;
+
+            g.drawBlackLine(xStart, y1, xStart - xStep, y2, 0);
+
+            xStart -= xStep;
+            if (xStart <= 165) break;
+        }
+*/
 
         // +++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
 
@@ -394,37 +436,6 @@ public class GameScreen extends Screen implements Input {
             A2DValMean = 0;
         }
 
-
-
-
-        // ++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
-        //double[] signal = {1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0}; // Example data
-        //  double fs = 125.0; // Sampling frequency (Hz)
-        //double fs = 1000;
-        //  double fs = 62.5;
-        //  double fs = 500.0;
-        double fs = 10000;
-        //     PowerSpectralDensityCalculator psdCalc = new PowerSpectralDensityCalculator(sineWave, fs);
-        //   psdResult = psdCalc.calculatePSD(sineWave, fs);
-
-        PowerSpectralDensityCalculator psdCalc = new PowerSpectralDensityCalculator(A2DVal, fs);
-        psdResult = psdCalc.calculatePSD(A2DVal, fs);
-        //   PowerSpectralDensityCalculator psdCalc = new PowerSpectralDensityCalculator(sineWave, fs);
-        //  psdResult = psdCalc.calculatePSD(sineWave, fs);
-
-        // --- 1. PSD Post-Processing ---
-        for (int i = 0; i < psdResult.length; i++) {
-            // Increase the gain (-1.5 instead of -0.25) to see harmonics
-            // Adjusted offset (2800) to bring the graph higher up the screen
-            psdResult[i] = psdResult[i] * -1+ 3600;
-
-            // Relaxed clamping so peaks aren't cut off (2200 is near top of PSD area)
-            if (psdResult[i] < 3165) {
-                psdResult[i] = 3165;
-            }
-
-        }
-
         // --- 2. PSD Drawing Logic ---
         // Start at i=1 to capture the 2Hz signal (Bin 0 is DC offset, usually skipped)
         float currentXpsd = 170;
@@ -448,6 +459,7 @@ public class GameScreen extends Screen implements Input {
             }
         }
     }
+
 
 
 
