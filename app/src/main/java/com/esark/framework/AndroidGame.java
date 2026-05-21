@@ -50,7 +50,7 @@ import java.util.UUID;
 
 public abstract class AndroidGame extends Activity implements Game {
     Bundle newBundy = new Bundle();
-    AndroidFastRenderView renderView;
+    protected AndroidFastRenderView renderView;
     Graphics graphics;
     Audio audio;
     Input input;
@@ -110,10 +110,13 @@ public abstract class AndroidGame extends Activity implements Game {
     // In your class members
     Sound alertSound;
     boolean isAlertPlaying = false;
+    // Inside AndroidGame.java
+    private static AndroidGame instance;
 
     @Override
     public void onCreate(Bundle savedInstanceState) {
         super.onCreate(savedInstanceState);
+        instance = this;
 
         setContentView(R.layout.activity_main);
 
@@ -280,6 +283,14 @@ public abstract class AndroidGame extends Activity implements Game {
             Log.e(TAG, "Failed to load ringtone.mp3: " + e.getMessage());
         }
 
+    }
+
+    // This method allows the background thread to find the UI
+    public static View getGameView() {
+        if (instance != null) {
+            return instance.renderView;
+        }
+        return null;
     }
 
     private void checkPermissions() {
@@ -546,6 +557,14 @@ public abstract class AndroidGame extends Activity implements Game {
     public Screen getCurrentScreen() {
         return screen;
     }
-
-
 }
+
+/*
+// Add this specific method:
+public static android.view.View getGameView() {
+    if (AndroidGame.instance != null) {// Replace 'renderView' with whatever your view variable is named in this class
+        return (android.view.View) AndroidGame.instance.renderView;
+    }
+    return null;
+}
+*/
