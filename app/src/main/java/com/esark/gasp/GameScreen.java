@@ -258,7 +258,8 @@ public class GameScreen extends Screen implements Input {
         int bottomLimit = 690;
 
         // Calculate dynamic baseline to center the signal regardless of DC offset
-        double sum = 0;
+
+        /*double sum = 0;
         int nonZeroCount = 0;
         for (double v : A2DVal) {
             if (v != 0) {
@@ -266,7 +267,7 @@ public class GameScreen extends Screen implements Input {
                 nonZeroCount++;
             }
         }
-
+*/
 
 
 
@@ -276,11 +277,13 @@ public class GameScreen extends Screen implements Input {
 
 
         // This calculates the actual "resting" center of your data
-        double dataBaseline = (nonZeroCount > 0) ? (sum / nonZeroCount) : 410;
+       // double dataBaseline = (nonZeroCount > 0) ? (sum / nonZeroCount) : 410;
+
+        double dataBaseline = 410;
 
         // --- FIXED: 2000Hz -> 1Hz Smooth Visualization ---
         xStart = 1600;
-        int xStep = 2;      // REDUCED: Smaller steps make the wave narrower and smoother
+        int xStep = 10;      // REDUCED: Smaller steps make the wave narrower and smoother
         int drawSkip = 6;   // INCREASED: Skipping more samples fits more "time" on screen
         float gain = 0.2f;
 
