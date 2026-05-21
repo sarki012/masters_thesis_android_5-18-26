@@ -5,14 +5,14 @@ import android.util.LruCache;
 
 public final class GetLruCache extends LruCache<String, Bitmap> {
 
-    private static GetLruCache instance;
+    private static GetLruCache instance1;
 
     private GetLruCache(final int maxSize) {
         super(maxSize);
     }
 
     public static GetLruCache get() {
-        if (instance == null) {
+        if (instance1 == null) {
             // Get max available VM memory, exceeding this amount will throw an
             // OutOfMemory exception. Stored in kilobytes as LruCache takes an
             // int in its constructor.
@@ -21,9 +21,9 @@ public final class GetLruCache extends LruCache<String, Bitmap> {
             // Use 1/8th of the available memory for this memory cache.
             final int cacheSize = maxMemory / 7;        //Was 8
 
-            instance = new GetLruCache(cacheSize);
+            instance1 = new GetLruCache(cacheSize);
         }
-        return instance;
+        return instance1;
     }
     @Override
     protected int sizeOf(String key, Bitmap bitmap) {

@@ -73,7 +73,7 @@ public class GameScreen extends Screen implements Input {
     public static int eventCount = 0;
     public int manualPatientEventUpCount = 0;
     public int rmsWidthThreshTouch = 0;
-
+    public static android.view.View view;
     //Constructor
     public GameScreen(Game game) {
         super(game);
@@ -277,17 +277,21 @@ public class GameScreen extends Screen implements Input {
 
         // This calculates the actual "resting" center of your data
         double dataBaseline = (nonZeroCount > 0) ? (sum / nonZeroCount) : 410;
-        // --- 1. Draw Raw Signal (Smooth Sliding Window) ---
-        xStart = 1600;      // Start at the right edge
-        int xStep = 20;      // Distance between drawn points (wider = smoother)
-        int drawSkip = 10;  // ONLY DRAW EVERY 10th SAMPLE (Effective 200Hz view)
-        float gain = 0.2f;  // Adjust vertical height
 
-        // We iterate backwards through the buffer, skipping 'drawSkip' samples
-        // signalBufferLen should be at least 4000 to show 2 seconds of 2000Hz data
+        // --- FIXED: 2000Hz -> 1Hz Smooth Visualization ---
+        xStart = 1600;
+        int xStep = 2;      // REDUCED: Smaller steps make the wave narrower and smoother
+        int drawSkip = 6;   // INCREASED: Skipping more samples fits more "time" on screen
+        float gain = 0.2f;
+
+        // MATH:
+        // 1400 pixels / 2 (xStep) = 700 line segments.
+        // 700 segments * 6 (drawSkip) = 4200 samples.
+        // 4200 samples / 2000Hz = 2.1 seconds of data on screen.
+        // You will now see TWO full sine waves across the screen.
+
         for (int n = signalBufferLen - 1; n > drawSkip; n -= drawSkip) {
-
-            // Formula: Center - (CurrentValue - DynamicBaseline) * Gain
+            // Calculate Y positions
             int y1 = (int) (screenCenterY - (A2DVal[n] - dataBaseline) * gain);
             int y2 = (int) (screenCenterY - (A2DVal[n - drawSkip] - dataBaseline) * gain);
 
@@ -297,7 +301,7 @@ public class GameScreen extends Screen implements Input {
             if (y2 < topLimit) y2 = topLimit;
             if (y2 > bottomLimit) y2 = bottomLimit;
 
-            // Draw line from current x to the next x-step to the left
+            // Draw line
             g.drawBlackLine(xStart, y1, xStart - xStep, y2, 0);
 
             xStart -= xStep;
@@ -305,6 +309,7 @@ public class GameScreen extends Screen implements Input {
             // Stop when we hit the left border of the graph
             if (xStart <= 165) break;
         }
+
 
         /*
         xStart = 1600;
