@@ -170,6 +170,13 @@ public class GameScreen extends Screen implements Input {
                         manualPatientEventUpCount = 1;
                     }
                 }
+                else if (event.x > 1600 && event.x < 1700 && event.y > 1330 && event.y < 1600) {      //Start/Stop/Save Sample
+
+                }
+                else if (event.x > 1600 && event.x < 1700 && event.y > 1610 && event.y < 1920) {      //Replay)
+
+                }
+
                 if (rmsAmpThresh < 0) {
                     rmsAmpThresh = 0;
                 }
@@ -210,6 +217,8 @@ public class GameScreen extends Screen implements Input {
      //   g.drawRect(1400, 2400, 285, 150, 0);       //False Negative
         g.drawText("50", 1560, 2480);       //False Negative Text
 */
+        g.drawRect(1600, 1330, 100, 270, 0);       //Start/Stop Save a Sample
+        g.drawRect(1600, 1610, 100, 310, 0);       //Replay
 
 
         String eventCountStr = String.valueOf(eventCount);
