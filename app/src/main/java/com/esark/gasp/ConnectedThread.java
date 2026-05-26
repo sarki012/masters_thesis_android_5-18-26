@@ -19,6 +19,7 @@ import java.io.OutputStream;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import static com.esark.gasp.GameScreen.smoothedRMS;
+import static com.esark.gasp.GameScreen.writer;
 
 // ... (keep your imports at the top)
 
@@ -95,7 +96,20 @@ public class ConnectedThread extends Thread {private final BluetoothSocket mmSoc
                                 }
                             });
                         }
-                    }
+                        // --- RECORDING LOGIC ---
+                        // 2000Hz means data comes fast. We must loop through the 24-byte
+                        // buffer to extract and record every sample (2 bytes each).
+                        if (GameScreen.isRecording && writer != null) {
+                            for (int i = 0; i < buffer.length; i += 2) {
+                                // Convert 2 bytes to a 16-bit integer (Big Endian)
+                                // If your wave looks like noise, swap buffer[i] and buffer[i+1]
+                                int val = (int) (((buffer[i] & 0xFF) << 8) | (buffer[i + 1] & 0xFF));
+
+                                // Write to the CSV file
+                                writer.println(val);
+                            }
+                        }
+                    } // End of executor run()
                 });
 
             } catch (IOException e) {
