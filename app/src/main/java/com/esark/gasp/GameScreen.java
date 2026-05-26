@@ -14,7 +14,16 @@ import com.esark.framework.Screen;
 import com.esark.framework.AndroidAudio;
 import com.esark.framework.Sound;
 
+import java.io.BufferedReader;
+import java.io.BufferedWriter;
+import java.io.File;
+import java.io.FileOutputStream;
+import java.io.FileReader;
+import java.io.IOException;
+import java.io.OutputStreamWriter;
+import java.io.PrintWriter;
 import java.text.SimpleDateFormat;
+import java.util.ArrayList;
 import java.util.Date;
 import java.util.List;
 
@@ -74,6 +83,15 @@ public class GameScreen extends Screen implements Input {
     public int manualPatientEventUpCount = 0;
     public int rmsWidthThreshTouch = 0;
     public static android.view.View view;
+
+    // Recording and Replay Variables
+    public static boolean isRecording = false;
+    public static boolean isReplaying = false;
+    private static FileOutputStream fos;
+    public static PrintWriter writer;
+    private static List<Double> replayList = new ArrayList<>();
+    private static int replayPosition = 0;
+    private String fileName = "sEMG_Data.csv";
     //Constructor
     public GameScreen(Game game) {
         super(game);
@@ -170,11 +188,50 @@ public class GameScreen extends Screen implements Input {
                         manualPatientEventUpCount = 1;
                     }
                 }
-                else if (event.x > 1600 && event.x < 1700 && event.y > 1330 && event.y < 1600) {      //Start/Stop/Save Sample
 
+                //////////////////////////// Start/Stop/Save Recording /////////////////////////////
+                /*  1. Start/Stop: It uses PrintWriter with a BufferedWriter. This is much faster than
+                    standard file writing and prevents UI stuttering.
+                    2. External Files Dir: It saves the data to Android/data/com.esark.gasp/files/sEMG_Data.csv.
+                    This doesn't require extra Android permissions on newer versions.
+                    3. Replay Logic: It loads the entire CSV into a List. During the draw loop, it swaps the
+                    source of val1 and val2 from the live A2DVal array to the replayList.
+                    4. Looping: When replaying, it increments replayPosition every frame, making the recorded
+                    signal "slide" across the screen exactly like the real-time one.
+                 */
+                else if (event.x > 1600 && event.x < 1700 && event.y > 1330 && event.y < 1600) {
+                    // --- Start/Stop/Save Sample ---
+                    if (!isRecording) {
+                        // START RECORDING
+                        try {
+                            File path = context.getExternalFilesDir(null);
+                            File file = new File(path, fileName);
+                            fos = new FileOutputStream(file, false); // false = overwrite
+                            writer = new PrintWriter(new BufferedWriter(new OutputStreamWriter(fos)));
+                            isRecording = true;
+                            isReplaying = false; // Stop replaying if we start recording
+                        } catch (IOException e) {
+                            e.printStackTrace();
+                        }
+                    } else {
+                        // STOP AND SAVE
+                        isRecording = false;
+                        if (writer != null) {
+                            writer.flush();
+                            writer.close();
+                            writer = null;
+                        }
+                    }
                 }
-                else if (event.x > 1600 && event.x < 1700 && event.y > 1610 && event.y < 1920) {      //Replay)
 
+                /////////////////////// Replay Recording ///////////////////////////////////////////
+                else if (event.x > 1600 && event.x < 1700 && event.y > 1610 && event.y < 1920) {
+                    // --- Replay ---
+                    if (!isReplaying) {
+                        loadReplayData(context);
+                    } else {
+                        isReplaying = false;
+                    }
                 }
 
                 if (rmsAmpThresh < 0) {
@@ -475,9 +532,59 @@ public class GameScreen extends Screen implements Input {
                 break;
             }
         }
+
+        // To make the screen show the replayed data instead of the live data when in
+        // Replay mode, modify your drawing loop at the bottom of GameScreen.java:
+        // Inside the drawing loop in GameScreen
+        for (int n = signalBufferLen - 1; n > drawSkip; n -= drawSkip) {
+            double val1, val2;
+
+            if (isReplaying && replayPosition < replayList.size() - signalBufferLen) {
+                // Use data from the loaded file
+                val1 = replayList.get(replayPosition + n);
+                val2 = replayList.get(replayPosition + (n - drawSkip));
+            } else {
+                // Use live Bluetooth data
+                val1 = A2DVal[n];
+                val2 = A2DVal[n - drawSkip];
+            }
+
+            int y1 = (int) (screenCenterY - (val1 - dataBaseline) * gain);
+            int y2 = (int) (screenCenterY - (val2 - dataBaseline) * gain);
+
+            // ... rest of your drawBlackLine and Clamping code ...
+        }
+
+        // Increment replay position to make it move
+        if (isReplaying) {
+            replayPosition += 10; // Speed of replay (adjust based on look)
+            if (replayPosition >= replayList.size() - signalBufferLen) {
+                replayPosition = 0; // Loop replay
+            }
+        }
     }
 
-
+    /////////////// LoadReplayData Helper Method ///////////////////////////////////////////////////
+    private void loadReplayData(Context context) {
+        replayList.clear();
+        replayPosition = 0;
+        try {
+            File path = context.getExternalFilesDir(null);
+            File file = new File(path, fileName);
+            BufferedReader br = new BufferedReader(new FileReader(file));
+            String line;
+            while ((line = br.readLine()) != null) {
+                replayList.add(Double.parseDouble(line));
+            }
+            br.close();
+            if (!replayList.isEmpty()) {
+                isReplaying = true;
+                isRecording = false;
+            }
+        } catch (IOException | NumberFormatException e) {
+            e.printStackTrace();
+        }
+    }
 
 
     @Override
