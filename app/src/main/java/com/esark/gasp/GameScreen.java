@@ -85,10 +85,10 @@ public class GameScreen extends Screen implements Input {
     public static android.view.View view;
 
     // Recording and Replay Variables
-    public static boolean isRecording = false;
+    public static volatile boolean isRecording = false;
     public static boolean isReplaying = false;
     private static FileOutputStream fos;
-    public static PrintWriter writer;
+    public static volatile PrintWriter writer = null;
     private static List<Double> replayList = new ArrayList<>();
     private static int replayPosition = 0;
     private String fileName = "sEMG_Data.csv";
@@ -291,8 +291,8 @@ public class GameScreen extends Screen implements Input {
      //   g.drawRect(1400, 2400, 285, 150, 0);       //False Negative
         g.drawText("50", 1560, 2480);       //False Negative Text
 */
-        g.drawRect(1600, 1330, 100, 270, 0);       //Start/Stop Save a Sample
-        g.drawRect(1600, 1610, 100, 310, 0);       //Replay
+     //   g.drawRect(1600, 1330, 100, 270, 0);       //Start/Stop Save a Sample
+      //  g.drawRect(1600, 1610, 100, 310, 0);       //Replay
 
 
         String eventCountStr = String.valueOf(eventCount);
