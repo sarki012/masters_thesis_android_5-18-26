@@ -204,10 +204,27 @@ public class GameScreen extends Screen implements Input {
                     if (!isRecording) {
                         // START RECORDING
                         try {
+                            /* File path = context.getExternalFilesDir(null): It finds the safe, private
+                            folder on the Android device where the app is allowed to save files
+                            (usually /Android/data/com.esark.gasp/files).
+                             */
                             File path = context.getExternalFilesDir(null);
                             File file = new File(path, fileName);
+                            /* fos = new FileOutputStream(file, false): It opens the file for writing.
+                            The false tells Android to overwrite the file if it already exists
+                            (starting a fresh recording).
+                             */
                             fos = new FileOutputStream(file, false); // false = overwrite
+                            /* The "Writer" Chain: It creates a PrintWriter wrapped in a BufferedWriter.
+                            Why this is important: At 2000Hz, writing to a disk is very slow. The
+                            BufferedWriter collects data in RAM and writes it in "chunks" so your
+                            sine wave doesn't stutter or lag while recording.
+                             */
                             writer = new PrintWriter(new BufferedWriter(new OutputStreamWriter(fos)));
+                            /* Flags: It sets isRecording = true (which triggers the logic in your
+                            ConnectedThread to start saving samples) and isReplaying = false
+                            (to ensure you aren't trying to watch old data while recording new data).
+                             */
                             isRecording = true;
                             isReplaying = false; // Stop replaying if we start recording
                         } catch (IOException e) {

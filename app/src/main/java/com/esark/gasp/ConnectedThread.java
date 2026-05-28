@@ -82,14 +82,43 @@ public class ConnectedThread extends Thread {private final BluetoothSocket mmSoc
                         movingRMS = RMSCalculator.calculateMovingRMS(A2DVal, 10);
                         smoothedRMS = MovingAverageCalculator.calculateMovingAverage(movingRMS, 20);
 
-                        // FIX 2: Corrected Count and Redraw Logic
+                        /*  count++; and if (count % 10 == 0) (Throttling)
+                        Your Bluetooth data is arriving at 2000Hz. Even though you read 24 bytes
+                        at a time (12 samples), the executor is still running roughly 166 times per second.
+                        The Problem: Most Android screens only refresh at 60Hz (60 times per second). If you
+                        try to force the screen to redraw 166 times per second, you will overwhelm the RenderThread, leading to the "app crashes first time opening" issue you had earlier.
+                        The Solution: This code implements Throttling. By using the "modulo" operator (% 10), it
+                        only triggers a redraw every 10th packet. This reduces the refresh requests to about 16
+                        times per second, which is plenty for a smooth human-readable 1Hz sine wave while saving
+                        significant CPU and battery power.
+                         */
                         count++;
                         if (count % 10 == 0) {
-                            // We use the mHandler to "post" a redraw request to the UI thread
+                            /* mHandler.post(new Runnable() { ... }) (Thread Jumping)
+                             We use the mHandler to "post" a redraw request to the UI thread
+                             In Android, there is a strict rule: Background threads are forbidden
+                            from touching the UI.
+
+                            The Context: This code is currently running inside the executor
+                            (a background thread). If you tried to call GameScreen.view.invalidate()
+                            directly here, the app would crash immediately with a CalledFromWrongThreadException.
+
+                            The Action: mHandler.post takes a piece of code (the Runnable) and "posts"
+                            it into a queue that the Main UI Thread manages. It essentially says:
+                            "Hey UI thread, whenever you have a free millisecond, please run this code for me."
+                             */
                             mHandler.post(new Runnable() {
                                 @Override
                                 public void run() {
                                     // This checks if the view exists and refreshes it
+                                    /* GameScreen.view.invalidate(); (The Redraw Trigger)
+                                    The Action: This is the command that actually makes your sine wave
+                                    move. It tells Android: "The data in the A2DVal array has changed.
+                                    Please clear the old lines and call the draw method in GameScreen again."
+                                    The Result: This is what creates the "oscilloscope" effect. Without
+                                    this line, your math would happen in the background, but the screen
+                                    would remain a static, unmoving image.
+                                     */
                                     if (GameScreen.view != null) {
                                         GameScreen.view.invalidate();
                                     }
@@ -97,15 +126,49 @@ public class ConnectedThread extends Thread {private final BluetoothSocket mmSoc
                             });
                         }
                         // --- RECORDING LOGIC ---
+                        /* This code block is responsible for saving the raw sEMG sensor data to a
+                        file on your phone's storage in real-time.
+                        Since you are sampling at 2000Hz, this logic is designed to be highly efficient
+                        so it doesn't interrupt the smooth flow of the sine wave on your screen.
+                         */
                         // 2000Hz means data comes fast. We must loop through the 24-byte
                         // buffer to extract and record every sample (2 bytes each).
+                        /* The Guard Clause (if)
+                        What it does: It checks two things: 1) Has the user pressed the "Start/Save"
+                        button? 2) Is the file actually open and ready for writing? Why it's there:
+                        This ensures that you aren't wasting CPU power writing to a file that doesn't
+                        exist, and it prevents a NullPointerException crash.
+                         */
                         if (GameScreen.isRecording && writer != null) {
+                            /* The Step-Loop (for)
+                            What it does: Your Bluetooth packet is 24 bytes long. In standard sEMG systems,
+                            one data point (a "sample") is a 16-bit integer. Since 16 bits = 2 bytes, your
+                            24-byte packet actually contains 12 individual samples. Why it's there: This
+                            loop processes the bytes in pairs (0 & 1, 2 & 3, etc.) so that every single
+                            piece of data from the 2000Hz stream is saved, not just the first byte of
+                            the packet.
+                             */
                             for (int i = 0; i < buffer.length; i += 2) {
                                 // Convert 2 bytes to a 16-bit integer (Big Endian)
                                 // If your wave looks like noise, swap buffer[i] and buffer[i+1]
+                                /* Bitwise Reconstruction (int val = ...)
+                                The Problem: Bluetooth sends data as a stream of 8-bit bytes, but
+                                your signal is a 16-bit number. The Math: & 0xFF: Converts a signed
+                                Java byte (which can be negative) into an unsigned integer (0–255).
+                                << 8: Takes the first byte and slides it to the left to occupy the
+                                "thousands" place of the 16-bit number (High Byte). |: Glues the second
+                                byte onto the end (Low Byte). Result: It reconstructs the original raw
+                                voltage value (0–1023 or 0–4095) that the sensor originally measured.
+                                 */
                                 int val = (int) (((buffer[i] & 0xFF) << 8) | (buffer[i + 1] & 0xFF));
 
                                 // Write to the CSV file
+                                /* What it does: It saves the reconstructed number to a new line in
+                                your CSV/text file. Why it's in the Executor: Because writing to a
+                                physical SD card or phone memory is "slow" compared to the CPU. By
+                                putting this inside the executor.execute block, the file-saving happens
+                                in the background, preventing the UI (the Sine Wave) from stuttering or freezing.
+                                 */
                                 writer.println(val);
                             }
                         }
