@@ -334,193 +334,101 @@ public class GameScreen extends Screen implements Input {
             g.drawText(rmsWidthThreshStr, 1330, 2235);    //Manual RMS Height Above Threshold Text
         }
 
-        ////////////////////////////////////////////////////////////////////////
-        // 4. Draw Raw Signal (Black)
+///////////////////////////////////////////////////////////////////////////////////
+        // --- LIVE RMS & PSD (Only shows when NOT replaying) ---
+        if (!isReplaying) {
+            int latestY = 0;
+            if (smoothedRMS.length > 2) {
+                xStart = 1600;
+                int blueCenterY = 1300;
+                float rmsYScale = 0.3f;
+
+                for (int n = smoothedRMS.length - 1; n > 1; n--) {
+                    int y1 = (int) (blueCenterY - smoothedRMS[n] * rmsYScale);
+                    int y2 = (int) (blueCenterY - smoothedRMS[n - 1] * rmsYScale);
+
+                    thresholdY = (int) (1050 - (rmsAmpThresh * 2.0f));
+                    g.drawRedLine(155, thresholdY, 1590, thresholdY, 0);
+
+                    if (y1 < 869) y1 = 869;
+                    if (y1 > 1308) y1 = 1308;
+                    if (y2 < 869) y2 = 869;
+                    if (y2 > 1308) y2 = 1308;
+
+                    g.drawBlueLine(xStart, y1, xStart - 2, y2, 0);
+                    xStart -= 2;
+                    if (xStart <= 180) break;
+                }
+
+                latestY = (int) (blueCenterY - smoothedRMS[smoothedRMS.length - 1] * rmsYScale);
+                if (latestY < thresholdY) {
+                    if (!isAlertPlaying && alertSound != null) {
+                        alertSound.play(5.0f);
+                        isAlertPlaying = true;
+                    }
+                } else {
+                    isAlertPlaying = false;
+                }
+            }
+
+            // --- PSD Drawing Logic ---
+            float currentXpsd = 170;
+            float xStepPsd = 2.0f;
+            for (int i = 1; i < psdResult.length; i++) {
+                float nextXpsd = 170 + (i * xStepPsd);
+                g.drawRedLine((int) currentXpsd, (int) psdResult[i - 1] - 1695, (int) nextXpsd, (int) psdResult[i] - 1695, 0);
+                currentXpsd = nextXpsd;
+                if (currentXpsd >= 1600) break;
+            }
+        }
+
+        // --- 4. RAW SIGNAL DRAWING (Black for Live / Red for Replay) ---
+        double dataBaseline = 410;
         int screenCenterY = 460;
+        float gain = 0.2f;
         int topLimit = 230;
         int bottomLimit = 690;
 
-        //&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&77
-
-        // This calculates the actual "resting" center of your data
-       // double dataBaseline = (nonZeroCount > 0) ? (sum / nonZeroCount) : 410;
-
-        double dataBaseline = 410;
-
-        // --- FIXED: 2000Hz -> 1Hz Smooth Visualization ---
-        xStart = 1600;
-        int xStep = 10;      // REDUCED: Smaller steps make the wave narrower and smoother
-        int drawSkip = 6;   // INCREASED: Skipping more samples fits more "time" on screen
-        float gain = 0.2f;
-
-        // MATH:
-        // 1400 pixels / 2 (xStep) = 700 line segments.
-        // 700 segments * 6 (drawSkip) = 4200 samples.
-        // 4200 samples / 2000Hz = 2.1 seconds of data on screen.
-        // You will now see TWO full sine waves across the screen.
-        // Wrap Live-Only Raw Signal in if (!isReplaying)
         if (!isReplaying) {
+            // --- LIVE BLACK LINE ---
+            xStart = 1600;
+            int xStep = 10;
+            int drawSkip = 6;
             for (int n = signalBufferLen - 1; n > drawSkip; n -= drawSkip) {
-                // Calculate Y positions
                 int y1 = (int) (screenCenterY - (A2DVal[n] - dataBaseline) * gain);
                 int y2 = (int) (screenCenterY - (A2DVal[n - drawSkip] - dataBaseline) * gain);
 
-                // CLAMPING
                 if (y1 < topLimit) y1 = topLimit;
                 if (y1 > bottomLimit) y1 = bottomLimit;
                 if (y2 < topLimit) y2 = topLimit;
                 if (y2 > bottomLimit) y2 = bottomLimit;
 
-                // Draw line
                 g.drawBlackLine(xStart, y1, xStart - xStep, y2, 0);
-
                 xStart -= xStep;
-
-                // Stop when we hit the left border of the graph
                 if (xStart <= 165) break;
             }
-        }
-
-        int latestY = 0;
-        if (smoothedRMS.length > 2) {
+        } else if (isReplaying && !replayList.isEmpty()) {
+            // --- REPLAY RED LINE ---
             xStart = 1600;
-            // Target center for the blue line
-            //  int blueCenterY = 800;
-            int blueCenterY = 1300;
+            int xStepReplay = 10;
+            int drawSkipReplay = 6;
 
-            //double rmsBaseline = 410.0;
-            //   double rmsBaseline = 1500.0;
+            // Calculate how many segments we can fit on screen
+            int maxSegments = (1600 - 165) / xStepReplay;
 
-            // REDUCED SCALE: 1000.0f was too high, causing it to hit the clamp instantly.
-            // Try 20.0f for visible fluctuations.
-            // float rmsYScale = 10.0f;
-            float rmsYScale = 0.3f;
+            for (int k = 0; k < maxSegments; k++) {
+                // Map screen segments to file indices
+                // Pos1 is the "current" point, Pos2 is the "previous" point (further back in history)
+                int pos1 = replayPosition - (k * drawSkipReplay);
+                int pos2 = replayPosition - ((k + 1) * drawSkipReplay);
 
-            for (int n = smoothedRMS.length - 1; n > 1; n--) {
-                // INVERSION MATH:
-                // blueCenterY MINUS (difference) moves the line UP as signal strength increases
-                int y1 = (int) (blueCenterY - smoothedRMS[n] * rmsYScale);
-                int y2 = (int) (blueCenterY - smoothedRMS[n - 1] * rmsYScale);
-                latestY = y2;
+                // Bounds check
+                if (pos1 >= 0 && pos1 < replayList.size() && pos2 >= 0 && pos2 < replayList.size()) {
+                    double v1 = replayList.get(pos1);
+                    double v2 = replayList.get(pos2);
 
-                //%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-                // %%%%%%%%%%%%%%%%%%%% Sound Code %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-                // Use 1100 as the baseline (the center of your blue RMS graph)
-                // Subtracting the threshold makes it move UP as the value increases
-                //thresholdY = (int) (1900 - (rmsAmpThresh * 2.0f));
-                thresholdY = (int) (1050 - (rmsAmpThresh * 2.0f));
-                // int thresholdY = (int) (1100 - (rmsAmpThresh * 2.0f));
-
-                // thresholdY = (int) (1000 - (rmsAmpThresh * 1.0f));
-
-                // Clamping to keep it within the same bounds as your blue line (869 to 1308)
-                //if (thresholdY < 869) thresholdY = 869;
-                //
-                //  if (thresholdY > 1308) thresholdY = 1308;
-
-                g.drawRedLine(155, thresholdY, 1590, thresholdY, 0);
-
-                // g.drawRedLine(155, (rmsAmpThresh*100/445 + 877), 1590, (rmsAmpThresh*100/445 + 877), 0);
-                // --- FIXED ALERT LOGIC ---
-
-                // int latestY = (int) (blueCenterY - (smoothedRMS[smoothedRMS.length - 1] - 410.0) * rmsYScale);
-
-                //%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
-               // latestY = (int) (blueCenterY - smoothedRMS[0] * rmsYScale);
-
-                //int y1 = (int) (blueCenterY - (smoothedRMS[n] - rmsBaseline) * rmsYScale);
-                //int y2 = (int) (blueCenterY - (smoothedRMS[n - 1] - rmsBaseline) * rmsYScale);
-
-                // Clamping: Keep the line within the visible graph box (869 to 1308)
-                if (y1 < 869) y1 = 869;
-                if (y1 > 1308) y1 = 1308;
-                if (y2 < 869) y2 = 869;
-                if (y2 > 1308) y2 = 1308;
-
-                // Draw the blue line
-                // Use a consistent step of 15 pixels so the wave is readable
-                g.drawBlueLine(xStart, y1, xStart - 2, y2, 0);
-
-                xStart -= 2;
-
-                // Stop drawing when hitting the left edge
-                if (xStart <= 180) {
-                    break;
-                }
-
-            }
-
-            // Get the very latest Y position
-            latestY = (int) (blueCenterY - smoothedRMS[smoothedRMS.length - 1] * rmsYScale);
-            if (latestY < thresholdY) {
-                if (!isAlertPlaying && alertSound != null) {
-                    alertSound.play(5.0f);
-                    isAlertPlaying = true;
-                }
-            } else {
-                isAlertPlaying = false;
-            }
-            A2DValMean = 0;
-        }
-
-        // --- 2. PSD Drawing Logic ---
-        // Start at i=1 to capture the 2Hz signal (Bin 0 is DC offset, usually skipped)
-        float currentXpsd = 170;
-
-        // Target: 250Hz at x=861.
-        // 250Hz is approx bin 51. (861-170)/51 = ~13.5
-        //float xStepPsd = 13.5f;
-        float xStepPsd = 2.0f;
-
-        for (int i = 1; i < psdResult.length; i++) {
-            float nextXpsd = 170 + (i * xStepPsd);
-
-            // We subtract 1200 instead of 1695 to keep the baseline around y=1600
-            g.drawRedLine((int) currentXpsd, (int) psdResult[i - 1] - 1695, (int) nextXpsd, (int) psdResult[i] - 1695, 0);
-
-            currentXpsd = nextXpsd;
-
-            // Stop at the right edge of the graph
-            if (currentXpsd >= 1600) {
-                break;
-            }
-        }
-
-        // --- FIXED: Moving Replay & Live Logic ---
-        // --- FIXED: Moving Replay & Live Logic ---        // This loop handles BOTH. When replaying, it shows the file.
-        // When not replaying, it shows live data.
-        // We only use this one loop to avoid overlapping lines.
-        xStart = 1600;
-        int xStepReplay = 10;
-        int drawSkipReplay = 6;
-
-        for (int n = signalBufferLen - 1; n > drawSkipReplay; n -= drawSkipReplay) {
-            double val1, val2;
-            // --- 7. Moving Replay Logic (ONLY shows when isReplaying is true) ---
-            if (isReplaying && !replayList.isEmpty()) {
-                xStart = 1600;
-                //   int xStepReplay = 10;
-                // int drawSkipReplay = 6;
-
-                for (int k = signalBufferLen - 1; k > drawSkipReplay; k -= drawSkipReplay) {
-                    //   double val1, val2;
-
-                    // Calculate position in the large file list
-                    int pos1 = replayPosition - (signalBufferLen - 1 - k);
-                    int pos2 = replayPosition - (signalBufferLen - 1 - (k - drawSkipReplay));
-
-                    // Safe bounds checking for the replay list
-                    if (pos1 >= 0 && pos1 < replayList.size() && pos2 >= 0 && pos2 < replayList.size()) {
-                        val1 = replayList.get(pos1);
-                        val2 = replayList.get(pos2);
-                    } else {
-                        val1 = dataBaseline;
-                        val2 = dataBaseline;
-                    }
-
-                    // Draw the Replay signal in RED
-                    int y1 = (int) (screenCenterY - (val1 - dataBaseline) * gain);
-                    int y2 = (int) (screenCenterY - (val2 - dataBaseline) * gain);
+                    int y1 = (int) (screenCenterY - (v1 - dataBaseline) * gain);
+                    int y2 = (int) (screenCenterY - (v2 - dataBaseline) * gain);
 
                     if (y1 < topLimit) y1 = topLimit;
                     if (y1 > bottomLimit) y1 = bottomLimit;
@@ -528,57 +436,21 @@ public class GameScreen extends Screen implements Input {
                     if (y2 > bottomLimit) y2 = bottomLimit;
 
                     g.drawRedLine(xStart, y1, xStart - xStepReplay, y2, 0);
-                    xStart -= xStepReplay;
-
-                    if (xStart <= 165) break;
                 }
+                xStart -= xStepReplay;
             }
-        }
 
-
-        // --- Increment Replay Position ---
-        if (isReplaying && !replayList.isEmpty()) {
-            // Adjust this increment to match speed.
-            // Since draw runs ~60fps and you sample at 2000Hz,
-            // you need to skip approx 33 samples per frame to look real-time.
+            // Move the window forward: 2000Hz sampled data @ 60fps = ~33 samples per frame
             replayPosition += 33;
 
+            // Loop back to start if we reach the end
             if (replayPosition >= replayList.size()) {
-                replayPosition = signalBufferLen; // Loop back to start
+                replayPosition = signalBufferLen;
             }
         }
+        //////////////////////////////////////////////////////////////////////////
 
-        /*
-        // To make the screen show the replayed data instead of the live data when in
-        // Replay mode, modify your drawing loop at the bottom of GameScreen.java:
-        // Inside the drawing loop in GameScreen
-        for (int n = signalBufferLen - 1; n > drawSkip; n -= drawSkip) {
-            double val1, val2;
 
-            if (isReplaying && replayPosition < replayList.size() - signalBufferLen) {
-                // Use data from the loaded file
-                val1 = replayList.get(replayPosition + n);
-                val2 = replayList.get(replayPosition + (n - drawSkip));
-            } else {
-                // Use live Bluetooth data
-                val1 = A2DVal[n];
-                val2 = A2DVal[n - drawSkip];
-            }
-
-            int y1 = (int) (screenCenterY - (val1 - dataBaseline) * gain);
-            int y2 = (int) (screenCenterY - (val2 - dataBaseline) * gain);
-
-            // ... rest of your drawBlackLine and Clamping code ...
-        }
-
-        // Increment replay position to make it move
-        if (isReplaying) {
-            replayPosition += 10; // Speed of replay (adjust based on look)
-            if (replayPosition >= replayList.size() - signalBufferLen) {
-                replayPosition = 0; // Loop replay
-            }
-        }
-        */
     }
 
 
