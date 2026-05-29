@@ -340,24 +340,7 @@ public class GameScreen extends Screen implements Input {
         int topLimit = 230;
         int bottomLimit = 690;
 
-        // Calculate dynamic baseline to center the signal regardless of DC offset
-
-        /*double sum = 0;
-        int nonZeroCount = 0;
-        for (double v : A2DVal) {
-            if (v != 0) {
-                sum += v;
-                nonZeroCount++;
-            }
-        }
-*/
-
-
-
         //&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&77
-
-        //&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&&77
-
 
         // This calculates the actual "resting" center of your data
        // double dataBaseline = (nonZeroCount > 0) ? (sum / nonZeroCount) : 410;
@@ -375,75 +358,28 @@ public class GameScreen extends Screen implements Input {
         // 700 segments * 6 (drawSkip) = 4200 samples.
         // 4200 samples / 2000Hz = 2.1 seconds of data on screen.
         // You will now see TWO full sine waves across the screen.
+        // Wrap Live-Only Raw Signal in if (!isReplaying)
+        if (!isReplaying) {
+            for (int n = signalBufferLen - 1; n > drawSkip; n -= drawSkip) {
+                // Calculate Y positions
+                int y1 = (int) (screenCenterY - (A2DVal[n] - dataBaseline) * gain);
+                int y2 = (int) (screenCenterY - (A2DVal[n - drawSkip] - dataBaseline) * gain);
 
-        for (int n = signalBufferLen - 1; n > drawSkip; n -= drawSkip) {
-            // Calculate Y positions
-            int y1 = (int) (screenCenterY - (A2DVal[n] - dataBaseline) * gain);
-            int y2 = (int) (screenCenterY - (A2DVal[n - drawSkip] - dataBaseline) * gain);
+                // CLAMPING
+                if (y1 < topLimit) y1 = topLimit;
+                if (y1 > bottomLimit) y1 = bottomLimit;
+                if (y2 < topLimit) y2 = topLimit;
+                if (y2 > bottomLimit) y2 = bottomLimit;
 
-            // CLAMPING
-            if (y1 < topLimit) y1 = topLimit;
-            if (y1 > bottomLimit) y1 = bottomLimit;
-            if (y2 < topLimit) y2 = topLimit;
-            if (y2 > bottomLimit) y2 = bottomLimit;
+                // Draw line
+                g.drawBlackLine(xStart, y1, xStart - xStep, y2, 0);
 
-            // Draw line
-            g.drawBlackLine(xStart, y1, xStart - xStep, y2, 0);
+                xStart -= xStep;
 
-            xStart -= xStep;
-
-            // Stop when we hit the left border of the graph
-            if (xStart <= 165) break;
+                // Stop when we hit the left border of the graph
+                if (xStart <= 165) break;
+            }
         }
-
-
-        /*
-        xStart = 1600;
-        int xStep = 2;
-
-        // Gain/Multiplier: 1.0f is standard. If the signal is too large,
-        // decrease this (e.g., 0.5f). If too small, increase it (e.g., 2.0f).
-        float gain = 0.1f;
-
-        for (int n = signalBufferLen - 1; n > 0; n--) {
-            // Formula: Center - (CurrentValue - DynamicBaseline) * Gain
-            int y1 = (int) (screenCenterY - (A2DVal[n] - dataBaseline) * gain);
-            int y2 = (int) (screenCenterY - (A2DVal[n - 1] - dataBaseline) * gain);
-
-            // CLAMPING: Prevent the line from going off the top (245) or bottom (695)
-            if (y1 < topLimit) y1 = topLimit;
-            if (y1 > bottomLimit) y1 = bottomLimit;
-            if (y2 < topLimit) y2 = topLimit;
-            if (y2 > bottomLimit) y2 = bottomLimit;
-
-            g.drawBlackLine(xStart, y1, xStart - xStep, y2, 0);
-
-            xStart -= xStep;
-            if (xStart <= 165) break;
-        }
-
-*/
-        // +++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
-        /*
-        for (int n = signalBufferLen - 1; n > 0; n--) {
-            // Formula: Center - (CurrentValue - DynamicBaseline) * Gain
-            int y1 = (int) (screenCenterY - (A2DVal[n] - dataBaseline) * gain);
-            int y2 = (int) (screenCenterY - (A2DVal[n - 1] - dataBaseline) * gain);
-
-            // CLAMPING: Prevent the line from going off the top (245) or bottom (695)
-            if (y1 < topLimit) y1 = topLimit;
-            if (y1 > bottomLimit) y1 = bottomLimit;
-            if (y2 < topLimit) y2 = topLimit;
-            if (y2 > bottomLimit) y2 = bottomLimit;
-
-            g.drawBlackLine(xStart, y1, xStart - xStep, y2, 0);
-
-            xStart -= xStep;
-            if (xStart <= 165) break;
-        }
-*/
-
-        // +++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++++
 
         int latestY = 0;
         if (smoothedRMS.length > 2) {
@@ -550,6 +486,69 @@ public class GameScreen extends Screen implements Input {
             }
         }
 
+        // --- FIXED: Moving Replay & Live Logic ---
+        // --- FIXED: Moving Replay & Live Logic ---        // This loop handles BOTH. When replaying, it shows the file.
+        // When not replaying, it shows live data.
+        // We only use this one loop to avoid overlapping lines.
+        xStart = 1600;
+        int xStepReplay = 10;
+        int drawSkipReplay = 6;
+
+        for (int n = signalBufferLen - 1; n > drawSkipReplay; n -= drawSkipReplay) {
+            double val1, val2;
+            // --- 7. Moving Replay Logic (ONLY shows when isReplaying is true) ---
+            if (isReplaying && !replayList.isEmpty()) {
+                xStart = 1600;
+                //   int xStepReplay = 10;
+                // int drawSkipReplay = 6;
+
+                for (int k = signalBufferLen - 1; k > drawSkipReplay; k -= drawSkipReplay) {
+                    //   double val1, val2;
+
+                    // Calculate position in the large file list
+                    int pos1 = replayPosition - (signalBufferLen - 1 - k);
+                    int pos2 = replayPosition - (signalBufferLen - 1 - (k - drawSkipReplay));
+
+                    // Safe bounds checking for the replay list
+                    if (pos1 >= 0 && pos1 < replayList.size() && pos2 >= 0 && pos2 < replayList.size()) {
+                        val1 = replayList.get(pos1);
+                        val2 = replayList.get(pos2);
+                    } else {
+                        val1 = dataBaseline;
+                        val2 = dataBaseline;
+                    }
+
+                    // Draw the Replay signal in RED
+                    int y1 = (int) (screenCenterY - (val1 - dataBaseline) * gain);
+                    int y2 = (int) (screenCenterY - (val2 - dataBaseline) * gain);
+
+                    if (y1 < topLimit) y1 = topLimit;
+                    if (y1 > bottomLimit) y1 = bottomLimit;
+                    if (y2 < topLimit) y2 = topLimit;
+                    if (y2 > bottomLimit) y2 = bottomLimit;
+
+                    g.drawRedLine(xStart, y1, xStart - xStepReplay, y2, 0);
+                    xStart -= xStepReplay;
+
+                    if (xStart <= 165) break;
+                }
+            }
+        }
+
+
+        // --- Increment Replay Position ---
+        if (isReplaying && !replayList.isEmpty()) {
+            // Adjust this increment to match speed.
+            // Since draw runs ~60fps and you sample at 2000Hz,
+            // you need to skip approx 33 samples per frame to look real-time.
+            replayPosition += 33;
+
+            if (replayPosition >= replayList.size()) {
+                replayPosition = signalBufferLen; // Loop back to start
+            }
+        }
+
+        /*
         // To make the screen show the replayed data instead of the live data when in
         // Replay mode, modify your drawing loop at the bottom of GameScreen.java:
         // Inside the drawing loop in GameScreen
@@ -579,7 +578,10 @@ public class GameScreen extends Screen implements Input {
                 replayPosition = 0; // Loop replay
             }
         }
+        */
     }
+
+
 
     /////////////// LoadReplayData Helper Method ///////////////////////////////////////////////////
     private void loadReplayData(Context context) {
