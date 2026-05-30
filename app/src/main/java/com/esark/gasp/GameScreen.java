@@ -243,9 +243,16 @@ public class GameScreen extends Screen implements Input {
 
                 /////////////////////// Replay Recording ///////////////////////////////////////////
                 else if (event.x > 1600 && event.x < 1700 && event.y > 1610 && event.y < 1920) {
-                    // --- Replay ---
+                    // --- Replay Button ---
                     if (!isReplaying) {
                         loadReplayData(context);
+                        // FIX: Initialize replayPosition so we can "look back" one screen-width of data immediately
+                        if (!replayList.isEmpty()) {
+                            // Approximately 1000 samples are needed to fill the horizontal screen width
+                            replayPosition = 1000;
+                            isReplaying = true;
+                            isRecording = false;
+                        }
                     } else {
                         isReplaying = false;
                     }
@@ -412,6 +419,7 @@ public class GameScreen extends Screen implements Input {
             xStart = 1600;
             int xStepReplay = 10;
             int drawSkipReplay = 6;
+            double recordingGain = 2.0;
 
             // Calculate how many segments we can fit on screen
             int maxSegments = (1600 - 165) / xStepReplay;
@@ -427,8 +435,8 @@ public class GameScreen extends Screen implements Input {
                     double v1 = replayList.get(pos1);
                     double v2 = replayList.get(pos2);
 
-                    int y1 = (int) (screenCenterY - (v1 - dataBaseline) * gain);
-                    int y2 = (int) (screenCenterY - (v2 - dataBaseline) * gain);
+                    int y1 = (int) (screenCenterY - (v1 - dataBaseline) * recordingGain);
+                    int y2 = (int) (screenCenterY - (v2 - dataBaseline) * recordingGain);
 
                     if (y1 < topLimit) y1 = topLimit;
                     if (y1 > bottomLimit) y1 = bottomLimit;
@@ -445,7 +453,8 @@ public class GameScreen extends Screen implements Input {
 
             // Loop back to start if we reach the end
             if (replayPosition >= replayList.size()) {
-                replayPosition = signalBufferLen;
+              //  replayPosition = signalBufferLen;
+                replayPosition = 1000;
             }
         }
         //////////////////////////////////////////////////////////////////////////
@@ -465,7 +474,10 @@ public class GameScreen extends Screen implements Input {
             BufferedReader br = new BufferedReader(new FileReader(file));
             String line;
             while ((line = br.readLine()) != null) {
-                replayList.add(Double.parseDouble(line));
+                // Ensure we don't add empty lines
+                if (!line.trim().isEmpty()) {
+                    replayList.add(Double.parseDouble(line));
+                }
             }
             br.close();
             if (!replayList.isEmpty()) {

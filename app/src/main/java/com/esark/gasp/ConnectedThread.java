@@ -140,41 +140,30 @@ public class ConnectedThread extends Thread {private final BluetoothSocket mmSoc
                         exist, and it prevents a NullPointerException crash.
                          */
                         if (GameScreen.isRecording && writer != null) {
-                            /* The Step-Loop (for)
-                            What it does: Your Bluetooth packet is 24 bytes long. In standard sEMG systems,
-                            one data point (a "sample") is a 16-bit integer. Since 16 bits = 2 bytes, your
-                            24-byte packet actually contains 12 individual samples. Why it's there: This
-                            loop processes the bytes in pairs (0 & 1, 2 & 3, etc.) so that every single
-                            piece of data from the 2000Hz stream is saved, not just the first byte of
-                            the packet.
-                             */
-                            for (int i = 0; i < buffer.length; i += 2) {
-                                // Convert 2 bytes to a 16-bit integer (Big Endian)
-                                // If your wave looks like noise, swap buffer[i] and buffer[i+1]
-                                /* Bitwise Reconstruction (int val = ...)
-                                The Problem: Bluetooth sends data as a stream of 8-bit bytes, but
-                                your signal is a 16-bit number. The Math: & 0xFF: Converts a signed
-                                Java byte (which can be negative) into an unsigned integer (0–255).
-                                << 8: Takes the first byte and slides it to the left to occupy the
-                                "thousands" place of the 16-bit number (High Byte). |: Glues the second
-                                byte onto the end (Low Byte). Result: It reconstructs the original raw
-                                voltage value (0–1023 or 0–4095) that the sensor originally measured.
-                                 */
-                                int val = (int) (((buffer[i] & 0xFF) << 8) | (buffer[i + 1] & 0xFF));
+                            // A 24-byte packet usually contains a specific number of samples.
+                            // If your data is 2-bytes per sample, that's 12 samples.
+                            // If it's ASCII text, it might vary.
+                            // We will grab the last 'N' samples added to the A2DVal array.
+                            writer.println(A2DVal[signalBufferLen - 1]);
+                            /*
+                            int samplesInPacket = 12; // Was 12 Adjust this to match your sampling rate/packet size
 
-                                // Write to the CSV file
-                                /* What it does: It saves the reconstructed number to a new line in
-                                your CSV/text file. Why it's in the Executor: Because writing to a
-                                physical SD card or phone memory is "slow" compared to the CPU. By
-                                putting this inside the executor.execute block, the file-saving happens
-                                in the background, preventing the UI (the Sine Wave) from stuttering or freezing.
-                                 */
-                                writer.println(val);
+                            for (int i = signalBufferLen - samplesInPacket; i < signalBufferLen; i++) {
+                                // Double check index bounds to prevent crashing
+                                if (i >= 0 && i < A2DVal.length) {
+                                    double val = A2DVal[i];
+
+                                    // Write the actual parsed value from the array to the file
+                                    writer.println(val);
+                                }
                             }
+                            */
+                             
+                            writer.flush();
                         }
-                    } // End of executor run()
-                });
 
+                    }   // End of executor run()
+                });
             } catch (IOException e) {
                 e.printStackTrace();
                 break;
