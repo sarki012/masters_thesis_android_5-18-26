@@ -181,7 +181,7 @@ public abstract class AndroidGame extends Activity implements Game {
                                         // value in the array one index to the left. This discards the oldest data point (at index 0) to make
                                         // room for the new one at the end.
                                         System.arraycopy(A2DVal, 1, A2DVal, 0, signalBufferLen - 1);
-                                        A2DVal[signalBufferLen - 1] = ((double) totalA2DVal / 3.0);
+                                        A2DVal[signalBufferLen - 1] = (int) ((int) totalA2DVal / 3.0);
                                         Log.d(TAG, "A2DVal: " + A2DVal[signalBufferLen - 1]);
 
                                         /*
