@@ -410,16 +410,14 @@ public class GameScreen extends Screen implements Input {
         int bottomLimit = 690;
 
         if (!isReplaying) {
-            // --- LIVE BLACK LINE (REAL-TIME 1Hz SPEED) ---
+            // --- LIVE BLACK LINE ---
             xStart = 1600;
-            int xStep = 10;      // Move 10 pixels per line
-            int drawSkip = 14;   // Skip 14 samples per line
-
+            int xStep = 12;
+            int drawSkip = 20;
             for (int n = signalBufferLen - 1; n > drawSkip; n -= drawSkip) {
                 int y1 = (int) (screenCenterY - (A2DVal[n] - dataBaseline) * gain);
                 int y2 = (int) (screenCenterY - (A2DVal[n - drawSkip] - dataBaseline) * gain);
 
-                // Clamping
                 if (y1 < topLimit) y1 = topLimit;
                 if (y1 > bottomLimit) y1 = bottomLimit;
                 if (y2 < topLimit) y2 = topLimit;
@@ -430,23 +428,28 @@ public class GameScreen extends Screen implements Input {
                 if (xStart <= 165) break;
             }
         } else if (isReplaying && !replayList.isEmpty()) {
-            // --- REPLAY RED LINE (MATCHED SPEED) ---
+            // --- REPLAY RED LINE ---
             xStart = 1600;
             int xStepReplay = 10;
-            int drawSkipReplay = 14;
+            int drawSkipReplay = 6;
+            double recordingGain = 0.2;
 
+            // Calculate how many segments we can fit on screen
             int maxSegments = (1600 - 165) / xStepReplay;
 
             for (int k = 0; k < maxSegments; k++) {
+                // Map screen segments to file indices
+                // Pos1 is the "current" point, Pos2 is the "previous" point (further back in history)
                 int pos1 = replayPosition - (k * drawSkipReplay);
                 int pos2 = replayPosition - ((k + 1) * drawSkipReplay);
 
+                // Bounds check
                 if (pos1 >= 0 && pos1 < replayList.size() && pos2 >= 0 && pos2 < replayList.size()) {
                     double v1 = replayList.get(pos1);
                     double v2 = replayList.get(pos2);
 
-                    int y1 = (int) (screenCenterY - (v1 - dataBaseline) * gain);
-                    int y2 = (int) (screenCenterY - (v2 - dataBaseline) * gain);
+                    int y1 = (int) (screenCenterY - (v1 - dataBaseline) * recordingGain);
+                    int y2 = (int) (screenCenterY - (v2 - dataBaseline) * recordingGain);
 
                     if (y1 < topLimit) y1 = topLimit;
                     if (y1 > bottomLimit) y1 = bottomLimit;
@@ -458,13 +461,13 @@ public class GameScreen extends Screen implements Input {
                 xStart -= xStepReplay;
             }
 
-            // ADVANCE REPLAY POSITION
-            // 2000Hz / 60fps = 33.3 samples per frame.
-            // Increase to 35-40 if it still feels slow due to hardware lag.
-            replayPosition += 34;
+            // Move the window forward: 2000Hz sampled data @ 60fps = ~33 samples per frame
+            replayPosition += 33;
 
+            // Loop back to start if we reach the end
             if (replayPosition >= replayList.size()) {
-                replayPosition = 2000; // Loop back
+                //  replayPosition = signalBufferLen;
+                replayPosition = 1000;
             }
         }
         //////////////////////////////////////////////////////////////////////////
