@@ -30,6 +30,7 @@ public class ConnectedThread extends Thread {private final BluetoothSocket mmSoc
 
     // FIX 1: Move count here so it can be accessed inside the Runnable
     private int count = 0;
+    public static int finalSamples = 0;
 
     public ConnectedThread(BluetoothSocket socket, Handler handler) {
         mmSocket = socket;
@@ -49,112 +50,79 @@ public class ConnectedThread extends Thread {private final BluetoothSocket mmSoc
         mmInStream = tmpIn;
         mmOutStream = tmpOut;
     }
-
     @Override
     public void run() {
         ExecutorService executor = Executors.newSingleThreadExecutor();
-        DataInputStream dataIn = new DataInputStream(mmInStream);
-
-        double fs = 2000;
+        // FIX: Define buffer OUTSIDE the loop to stop memory/crash issues
+        byte[] buffer = new byte[1024];
+        double fs = 1000;
         PowerSpectralDensityCalculator psdCalc = new PowerSpectralDensityCalculator(A2DVal, fs);
-
-        // REMOVED 'int count = 0' from here
 
         while (true) {
             try {
-                byte[] buffer = new byte[24];
-                dataIn.readFully(buffer);
+                // FIX: Removed the redundant 'try' that was causing the crash
+                int bytesRead = mmInStream.read(buffer);
 
-                mHandler.obtainMessage(AndroidGame.MESSAGE_READ, 24, -1, buffer).sendToTarget();
+                if (bytesRead > 0) {
+                    String msg = new String(buffer, 0, bytesRead);
 
-                executor.execute(new Runnable() {
-                    @Override
-                    public void run() {
-                        // ... (Keep your PSD and RMS math here) ...
-                        double[] tempResult = psdCalc.calculatePSD(A2DVal, fs);
-                        if (tempResult != null && tempResult.length <= psdResult.length) {
-                            System.arraycopy(tempResult, 0, psdResult, 0, tempResult.length);
-                        }
-                        for (int i = 0; i < psdResult.length; i++) {
-                            psdResult[i] = psdResult[i] * -1 + 3600;
-                            if (psdResult[i] < 3165) psdResult[i] = 3165;
-                        }
-                        movingRMS = RMSCalculator.calculateMovingRMS(A2DVal, 10);
-                        smoothedRMS = MovingAverageCalculator.calculateMovingAverage(movingRMS, 20);
+                    // We need to know how many samples were in THIS string.
+                    // Usually, you count the newlines '\n' in the string.
+                    int samplesFound = msg.length() - msg.replace("\n", "a").length();
+                    if (samplesFound == 0) samplesFound = 1; // Fallback
 
-                        /*  count++; and if (count % 10 == 0) (Throttling)
-                        Your Bluetooth data is arriving at 2000Hz. Even though you read 24 bytes
-                        at a time (12 samples), the executor is still running roughly 166 times per second.
-                        The Problem: Most Android screens only refresh at 60Hz (60 times per second). If you
-                        try to force the screen to redraw 166 times per second, you will overwhelm the RenderThread, leading to the "app crashes first time opening" issue you had earlier.
-                        The Solution: This code implements Throttling. By using the "modulo" operator (% 10), it
-                        only triggers a redraw every 10th packet. This reduces the refresh requests to about 16
-                        times per second, which is plenty for a smooth human-readable 1Hz sine wave while saving
-                        significant CPU and battery power.
-                         */
-                        count++;
-                        if (count % 10 == 0) {
-                            /* mHandler.post(new Runnable() { ... }) (Thread Jumping)
-                             We use the mHandler to "post" a redraw request to the UI thread
-                             In Android, there is a strict rule: Background threads are forbidden
-                            from touching the UI.
+                    // We pass the sample count into the executor
+                    finalSamples = samplesFound;
 
-                            The Context: This code is currently running inside the executor
-                            (a background thread). If you tried to call GameScreen.view.invalidate()
-                            directly here, the app would crash immediately with a CalledFromWrongThreadException.
+                    mHandler.obtainMessage(AndroidGame.MESSAGE_READ, bytesRead, -1, msg).sendToTarget();
 
-                            The Action: mHandler.post takes a piece of code (the Runnable) and "posts"
-                            it into a queue that the Main UI Thread manages. It essentially says:
-                            "Hey UI thread, whenever you have a free millisecond, please run this code for me."
-                             */
-                            mHandler.post(new Runnable() {
-                                @Override
-                                public void run() {
-                                    // This checks if the view exists and refreshes it
-                                    /* GameScreen.view.invalidate(); (The Redraw Trigger)
-                                    The Action: This is the command that actually makes your sine wave
-                                    move. It tells Android: "The data in the A2DVal array has changed.
-                                    Please clear the old lines and call the draw method in GameScreen again."
-                                    The Result: This is what creates the "oscilloscope" effect. Without
-                                    this line, your math would happen in the background, but the screen
-                                    would remain a static, unmoving image.
-                                     */
-                                    if (GameScreen.view != null) {
-                                        GameScreen.view.invalidate();
+
+
+                    executor.execute(new Runnable() {
+                        @Override
+                        public void run() {
+                            // --- MATH SECTION ---
+                            double[] tempResult = psdCalc.calculatePSD(A2DVal, fs);
+                            if (tempResult != null && tempResult.length <= psdResult.length) {
+                                System.arraycopy(tempResult, 0, psdResult, 0, tempResult.length);
+                            }
+                            for (int i = 0; i < psdResult.length; i++) {
+                                psdResult[i] = psdResult[i] * -1 + 3600;
+                                if (psdResult[i] < 3165) psdResult[i] = 3165;
+                            }
+                            movingRMS = RMSCalculator.calculateMovingRMS(A2DVal, 10);
+                            smoothedRMS = MovingAverageCalculator.calculateMovingAverage(movingRMS, 20);
+
+                            // --- UI THROTTLING ---
+                            count++;
+                            if (count % 10 == 0) {
+                                mHandler.post(new Runnable() {
+                                    @Override
+                                    public void run() {
+                                        if (GameScreen.view != null) {
+                                            GameScreen.view.invalidate();
+                                        }
+                                    }
+                                });
+                            }
+
+                            // --- RECORDING LOGIC (FIXED) ---
+                            if (GameScreen.isRecording && writer != null) {
+                                // Record ONLY the new samples that just arrived
+                                for (int i = signalBufferLen - finalSamples; i < signalBufferLen; i++) {
+                                    if (i >= 0) {
+                                        writer.println(A2DVal[i]);
                                     }
                                 }
-                            });
-                        }
-                        // --- RECORDING LOGIC ---
-                        /* This code block is responsible for saving the raw sEMG sensor data to a
-                        file on your phone's storage in real-time.
-                        Since you are sampling at 2000Hz, this logic is designed to be highly efficient
-                        so it doesn't interrupt the smooth flow of the sine wave on your screen.
-                         */
-                        // 2000Hz means data comes fast. We must loop through the 24-byte
-                        // buffer to extract and record every sample (2 bytes each).
-                        /* The Guard Clause (if)
-                        What it does: It checks two things: 1) Has the user pressed the "Start/Save"
-                        button? 2) Is the file actually open and ready for writing? Why it's there:
-                        This ensures that you aren't wasting CPU power writing to a file that doesn't
-                        exist, and it prevents a NullPointerException crash.
-                         */
-                        if (GameScreen.isRecording && writer != null) {
-                            // Record only the 3 newest samples added to the array per packet.
-                            // Recording all 2048 values every time causes a Disk I/O crash.
-                            // Since each packet adds 3 values to the end of A2DVal, this captures the full stream.
-                            for (int i = signalBufferLen - 3; i < signalBufferLen; i++) {
-                                writer.println(A2DVal[i]);
+                                writer.flush();
                             }
                         }
-
-                    }   // End of executor run()
-                });
+                    });
+                }
             } catch (IOException e) {
                 e.printStackTrace();
                 break;
             }
         }
     }
-    // ... (keep write and cancel methods)
 }

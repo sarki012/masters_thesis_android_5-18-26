@@ -1,5 +1,6 @@
 package com.esark.framework;
 
+import static com.esark.gasp.ConnectedThread.finalSamples;
 import static com.esark.gasp.GameScreen.A2DVal;
 
 import android.Manifest;
@@ -105,7 +106,7 @@ public abstract class AndroidGame extends Activity implements Game {
 
     public static int bufferFlag = 0;
     //public static int signalBufferLen = 287;
-    public static int signalBufferLen = 2048;
+    public static int signalBufferLen = 1024;
     //public static int signalBufferLen = 1024;
     // In your class members
     Sound alertSound;
@@ -144,63 +145,54 @@ public abstract class AndroidGame extends Activity implements Game {
         checkPermissions();
 
         //Message from run() in ConnectedThread mHandler.obtain message
-        mHandler = new Handler(Looper.getMainLooper()){
+        mHandler = new Handler(Looper.getMainLooper()) {
             @Override
-            public void handleMessage(Message msg){
-                if(msg.what == MESSAGE_READ){
-                    String readMessage = null;
+            public void handleMessage(Message msg) {
+                if (A2DVal == null) {
+                    Log.e("CRASH_PREVENT", "A2DVal is null. Waiting for GameScreen...");
+                    return;
+                }
+                if (msg.what == MESSAGE_READ) {
                     try {
-                        readMessage = new String((byte[]) msg.obj, "UTF-8");
-                        t = 0;
-                        // Search for the first 'a'
-                        while (t < readMessage.length() && readMessage.charAt(t) != 'a') {
-                            t++;
+                        // Determine if we received a String or a byte[] to avoid ClassCastException
+                        String readMessage;
+                        if (msg.obj instanceof String) {
+                            readMessage = (String) msg.obj;
+                        } else {
+                            readMessage = new String((byte[]) msg.obj, "UTF-8");
                         }
-                        
-                        // Parse up to 3 values in the 24-byte packet (format: a12345a12345...)
-                        for(i = 0; i < 3; i++) {
-                            if (t < readMessage.length() && readMessage.charAt(t) == 'a') {
-                                t++; // move past 'a'
-                                if (t + 4 < readMessage.length()) {
-                                    bluetoothVal4 = readMessage.charAt(t++);
-                                    bluetoothVal3 = readMessage.charAt(t++);
-                                    bluetoothVal2 = readMessage.charAt(t++);
-                                    bluetoothVal1 = readMessage.charAt(t++);
-                                    bluetoothVal0 = readMessage.charAt(t++);
-                                    
-                                    number10000 = (Character.getNumericValue(bluetoothVal4)) * 10000;
-                                    number1000 = (Character.getNumericValue(bluetoothVal3)) * 1000;
-                                    number100 = (Character.getNumericValue(bluetoothVal2)) * 100;
-                                    number10 = (Character.getNumericValue(bluetoothVal1)) * 10;
-                                    number1 = Character.getNumericValue(bluetoothVal0);
-                                    
-                                    totalA2DVal = number10000 + number1000 + number100 + number10 + number1;
-                                    
+
+                        if (readMessage == null || readMessage.isEmpty()) return;
+
+                        // Split the string by 'a' to get individual samples safely
+                        String[] samples = readMessage.split("a");
+
+                        for (String sample : samples) {
+                            // Each valid sample should be 5 digits (e.g., "12345")
+                            if (sample.length() >= 5) {
+                                try {
+                                    // Extract the first 5 characters and convert to integer
+                                    String valStr = sample.substring(0, 5);
+                                    totalA2DVal = Integer.parseInt(valStr);
+
                                     if (totalA2DVal >= 0 && totalA2DVal <= 99999) {
-                                        // Shift buffer Buffer Shifting: System.arraycopy(A2DVal, 1, A2DVal, 0, signalBufferLen) moves every
-                                        // value in the array one index to the left. This discards the oldest data point (at index 0) to make
-                                        // room for the new one at the end.
-                                        System.arraycopy(A2DVal, 1, A2DVal, 0, signalBufferLen - 1);
-                                        A2DVal[signalBufferLen - 1] = (int) ((int) totalA2DVal / 3.0);
-                                        Log.d(TAG, "A2DVal: " + A2DVal[signalBufferLen - 1]);
-
-                                        /*
-                                        // Clamping
-                                        if(A2DVal[signalBufferLen - 1] < 180)
-                                            A2DVal[signalBufferLen - 1] = 180;
-                                        else if(A2DVal[signalBufferLen - 1] > 640)
-                                            A2DVal[signalBufferLen - 1] = 640;
-
-                                         */
+                                        // Ensure A2DVal array is not null before copying
+                                        if (A2DVal != null) {
+                                            System.arraycopy(A2DVal, 1, A2DVal, 0, signalBufferLen - 1);
+                                            // Divide by 3.0 as per your logic
+                                            A2DVal[signalBufferLen - 1] = (double) (totalA2DVal / 3.0);
+                                        }
                                     }
+                                } catch (NumberFormatException nfe) {
+                                    // Skip this specific sample if it's not a valid number
                                 }
                             }
                         }
-                    } catch (UnsupportedEncodingException e) {
-                        e.printStackTrace();
+                    } catch (Exception e) {
+                        Log.e("BT_HANDLER", "Error parsing Bluetooth data", e);
                     }
                 }
-
+                // ... rest of your status message logic ...
                 if(msg.what == CONNECTING_STATUS){
                     if(msg.arg1 == 1)
                         mBluetoothStatus.setText("Connected to Device: " + msg.obj);
