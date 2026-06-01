@@ -412,7 +412,7 @@ public class GameScreen extends Screen implements Input {
         if (!isReplaying) {
             // --- LIVE BLACK LINE ---
             xStart = 1600;
-            int xStep = 2;
+            int xStep = 3;
             int drawSkip = 1;
             for (int n = signalBufferLen - 1; n > drawSkip; n -= drawSkip) {
                 int y1 = (int) (screenCenterY - (A2DVal[n] - dataBaseline) * gain);

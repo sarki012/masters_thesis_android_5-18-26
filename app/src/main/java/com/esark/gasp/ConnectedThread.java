@@ -74,32 +74,19 @@ public class ConnectedThread extends Thread {private final BluetoothSocket mmSoc
                         public void run() {
                             // ADD TO ACCUMULATOR
                             dataAccumulator.append(msg);
-
-                            // PROCESS ALL COMPLETE PACKETS
+                            // 1. Collect all waiting samples into a temporary list first
+                            java.util.List<Double> newSamples = new java.util.ArrayList<>();
                             int firstA;
                             while ((firstA = dataAccumulator.indexOf("a")) != -1) {
                                 int nextA = dataAccumulator.indexOf("a", firstA + 1);
-
                                 if (nextA != -1) {
                                     String sampleStr = dataAccumulator.substring(firstA + 1, nextA);
-
                                     if (sampleStr.length() >= 5) {
                                         try {
                                             int val = Integer.parseInt(sampleStr.substring(0, 5));
-
-                                            if (GameScreen.A2DVal != null) {
-                                                // SHIFT ARRAY
-                                                System.arraycopy(GameScreen.A2DVal, 1, GameScreen.A2DVal, 0, AndroidGame.signalBufferLen - 1);
-                                                // NEW VALUE
-                                                double parsedVal = (double) (val / 3.0);
-                                                GameScreen.A2DVal[AndroidGame.signalBufferLen - 1] = parsedVal;
-
-                                                // RECORD IMMEDIATELY IF ENABLED
-                                                if (GameScreen.isRecording && GameScreen.writer != null) {
-                                                    GameScreen.writer.println(parsedVal);
-                                                }
-                                            }
-                                        } catch (NumberFormatException e) { }
+                                            newSamples.add(val / 3.0);
+                                        } catch (NumberFormatException e) {
+                                        }
                                     }
                                     dataAccumulator.delete(0, nextA);
                                 } else {
@@ -107,21 +94,26 @@ public class ConnectedThread extends Thread {private final BluetoothSocket mmSoc
                                 }
                             }
 
-                            // 3. HEAVY MATH (ONLY DO THIS ONCE IN THE BACKGROUND)
-                            double[] tempResult = psdCalc.calculatePSD(A2DVal, fs);
-                            if (tempResult != null && tempResult.length <= psdResult.length) {
-                                System.arraycopy(tempResult, 0, psdResult, 0, tempResult.length);
-                            }
-                            for (int i = 0; i < psdResult.length; i++) {
-                                psdResult[i] = psdResult[i] * -1 + 3600;
-                                if (psdResult[i] < 3165) psdResult[i] = 3165;
-                            }
-                            movingRMS = RMSCalculator.calculateMovingRMS(A2DVal, 10);
-                            smoothedRMS = MovingAverageCalculator.calculateMovingAverage(movingRMS, 20);
+                            // 2. Shift the main array ONCE for the whole block
+                            int numNew = newSamples.size();
+                            if (numNew > 0 && GameScreen.A2DVal != null) {
+                                int len = AndroidGame.signalBufferLen;
 
-                            // 4. TRIGGER REDRAW (THROTTLED)
-                            count++;
-                            if (count % 3 == 0) { // Throttled to every 5 packets for speed
+                                // Move existing data left by 'numNew' spaces
+                                System.arraycopy(GameScreen.A2DVal, numNew, GameScreen.A2DVal, 0, len - numNew);
+
+                                // Copy the new block of samples into the end of the array
+                                for (int i = 0; i < numNew; i++) {
+                                    double val = newSamples.get(i);
+                                    GameScreen.A2DVal[len - numNew + i] = val;
+
+                                    // Record to file
+                                    if (GameScreen.isRecording && GameScreen.writer != null) {
+                                        GameScreen.writer.println(val);
+                                    }
+                                }
+                                // 3. Trigger Redraw - No need for modulo 'count' anymore
+                                // because we are now naturally updating in "packets"
                                 mHandler.post(new Runnable() {
                                     @Override
                                     public void run() {
@@ -130,6 +122,19 @@ public class ConnectedThread extends Thread {private final BluetoothSocket mmSoc
                                         }
                                     }
                                 });
+                                if (numNew > 0) {
+                                    // 3. HEAVY MATH (ONLY DO THIS ONCE IN THE BACKGROUND)
+                                    double[] tempResult = psdCalc.calculatePSD(A2DVal, fs);
+                                    if (tempResult != null && tempResult.length <= psdResult.length) {
+                                        System.arraycopy(tempResult, 0, psdResult, 0, tempResult.length);
+                                    }
+                                    for (int i = 0; i < psdResult.length; i++) {
+                                        psdResult[i] = psdResult[i] * -1 + 3600;
+                                        if (psdResult[i] < 3165) psdResult[i] = 3165;
+                                    }
+                                    movingRMS = RMSCalculator.calculateMovingRMS(A2DVal, 10);
+                                    smoothedRMS = MovingAverageCalculator.calculateMovingAverage(movingRMS, 20);
+                                }
                             }
                         }
                     });
