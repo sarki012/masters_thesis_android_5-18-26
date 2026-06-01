@@ -140,26 +140,12 @@ public class ConnectedThread extends Thread {private final BluetoothSocket mmSoc
                         exist, and it prevents a NullPointerException crash.
                          */
                         if (GameScreen.isRecording && writer != null) {
-                            // A 24-byte packet usually contains a specific number of samples.
-                            // If your data is 2-bytes per sample, that's 12 samples.
-                            // If it's ASCII text, it might vary.
-                            // We will grab the last 'N' samples added to the A2DVal array.
-                            writer.println(A2DVal[signalBufferLen - 1]);
-                            /*
-                            int samplesInPacket = 12; // Was 12 Adjust this to match your sampling rate/packet size
-
-                            for (int i = signalBufferLen - samplesInPacket; i < signalBufferLen; i++) {
-                                // Double check index bounds to prevent crashing
-                                if (i >= 0 && i < A2DVal.length) {
-                                    double val = A2DVal[i];
-
-                                    // Write the actual parsed value from the array to the file
-                                    writer.println(val);
-                                }
+                            // Record only the 3 newest samples added to the array per packet.
+                            // Recording all 2048 values every time causes a Disk I/O crash.
+                            // Since each packet adds 3 values to the end of A2DVal, this captures the full stream.
+                            for (int i = signalBufferLen - 3; i < signalBufferLen; i++) {
+                                writer.println(A2DVal[i]);
                             }
-                            */
-                             
-                            writer.flush();
                         }
 
                     }   // End of executor run()
