@@ -244,6 +244,19 @@ public class GameScreen extends Screen implements Input {
                 /////////////////////// Replay Recording ///////////////////////////////////////////
                 else if (event.x > 1600 && event.x < 1700 && event.y > 1610 && event.y < 1920) {
                     // --- Replay Button ---
+                    /*
+                    1. loadReplayData(context);: This calls a helper method that opens your sEMG_Data.csv
+                    file, reads every line (which contains a sensor value), converts it to a number, and
+                    stores it in the replayList array.
+                    2. replayPosition = 1000;: This sets the starting point (the "playhead") in your
+                    recorded data. It starts at index 1000 so that when the drawing loop draws "backwards"
+                    from that point to fill the screen (which is about 1000 pixels wide), there is enough
+                    historical data to show a full screen of the waveform immediately.
+                    3. isReplaying = true;: This is a flag that tells the rest of the app to stop drawing
+                    live data from the sensor and start drawing the data from the replayList instead.
+                    4. isRecording = false;: This ensures that if you were currently recording, it stops.
+                    This prevents the app from trying to read and write to the same file at the same time.
+                     */
                     if (!isReplaying) {
                         loadReplayData(context);
                         // FIX: Initialize replayPosition so we can "look back" one screen-width of data immediately
@@ -419,7 +432,7 @@ public class GameScreen extends Screen implements Input {
             xStart = 1600;
             int xStepReplay = 10;
             int drawSkipReplay = 6;
-            double recordingGain = 2.0;
+            double recordingGain = 0.2;
 
             // Calculate how many segments we can fit on screen
             int maxSegments = (1600 - 165) / xStepReplay;
