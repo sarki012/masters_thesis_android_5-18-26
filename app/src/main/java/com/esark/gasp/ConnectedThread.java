@@ -8,11 +8,9 @@ import static com.esark.gasp.GameScreen.psdResult;
 
 import android.bluetooth.BluetoothSocket;
 import android.os.Handler;
-import android.os.SystemClock;
 
 import com.esark.framework.AndroidGame;
 
-import java.io.DataInputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
@@ -31,6 +29,7 @@ public class ConnectedThread extends Thread {private final BluetoothSocket mmSoc
     // FIX 1: Move count here so it can be accessed inside the Runnable
     private int count = 0;
     public static int finalSamples = 0;
+    private StringBuilder dataAccumulator = new StringBuilder();
 
     public ConnectedThread(BluetoothSocket socket, Handler handler) {
         mmSocket = socket;
@@ -77,47 +76,106 @@ public class ConnectedThread extends Thread {private final BluetoothSocket mmSoc
                     mHandler.obtainMessage(AndroidGame.MESSAGE_READ, bytesRead, -1, msg).sendToTarget();
 
 
+                    // Inside the run() method, inside the while(true) loop:
+                    if (bytesRead > 0) {
+                        // We already defined 'msg' above, let's use it.
+                        // No need for a second 'if (bytesRead > 0)' here.
 
-                    executor.execute(new Runnable() {
-                        @Override
-                        public void run() {
-                            // --- MATH SECTION ---
-                            double[] tempResult = psdCalc.calculatePSD(A2DVal, fs);
-                            if (tempResult != null && tempResult.length <= psdResult.length) {
-                                System.arraycopy(tempResult, 0, psdResult, 0, tempResult.length);
-                            }
-                            for (int i = 0; i < psdResult.length; i++) {
-                                psdResult[i] = psdResult[i] * -1 + 3600;
-                                if (psdResult[i] < 3165) psdResult[i] = 3165;
-                            }
-                            movingRMS = RMSCalculator.calculateMovingRMS(A2DVal, 10);
-                            smoothedRMS = MovingAverageCalculator.calculateMovingAverage(movingRMS, 20);
+                        executor.execute(new Runnable() {
+                            @Override
+                            public void run() {
+                                // 1. Add new data to the persistent accumulator
+                                dataAccumulator.append(msg);
 
-                            // --- UI THROTTLING ---
-                            count++;
-                            if (count % 10 == 0) {
-                                mHandler.post(new Runnable() {
-                                    @Override
-                                    public void run() {
-                                        if (GameScreen.view != null) {
-                                            GameScreen.view.invalidate();
+                                // 2. Process all complete "aXXXXXa" packets in the buffer
+                                int firstA;
+                                while ((firstA = dataAccumulator.indexOf("a")) != -1) {
+                                    int nextA = dataAccumulator.indexOf("a", firstA + 1);
+
+                                    if (nextA != -1) {
+                                        // We found a complete segment between two 'a's
+                                        String sampleStr = dataAccumulator.substring(firstA + 1, nextA);
+
+                                        if (sampleStr.length() >= 5) {
+                                            try {
+                                                // Extract digits and parse
+                                                int val = Integer.parseInt(sampleStr.substring(0, 5));
+
+                                                // 3. Update the shared A2DVal array immediately
+                                                if (GameScreen.A2DVal != null) {
+                                                    System.arraycopy(GameScreen.A2DVal, 1, GameScreen.A2DVal, 0, AndroidGame.signalBufferLen - 1);
+                                                    // Applying your specific logic (val / 3.0)
+                                                    GameScreen.A2DVal[AndroidGame.signalBufferLen - 1] = (double) (val / 3.0);
+                                                }
+
+                                                // Recording logic
+                                                if (GameScreen.isRecording && GameScreen.writer != null) {
+                                                    GameScreen.writer.println(val / 3.0);
+                                                }
+
+                                            } catch (NumberFormatException e) {
+                                                // Skip garbled data
+                                            }
                                         }
-                                    }
-                                });
-                            }
-
-                            // --- RECORDING LOGIC (FIXED) ---
-                            if (GameScreen.isRecording && writer != null) {
-                                // Record ONLY the new samples that just arrived
-                                for (int i = signalBufferLen - finalSamples; i < signalBufferLen; i++) {
-                                    if (i >= 0) {
-                                        writer.println(A2DVal[i]);
+                                        // Delete the processed segment (up to the second 'a')
+                                        dataAccumulator.delete(0, nextA);
+                                    } else {
+                                        // Fragmented data: wait for more Bluetooth data.
+                                        break;
                                     }
                                 }
-                                writer.flush();
+
+                                // 4. Heavy Math (Moved INSIDE the executor to stop UI lag)
+                                double[] tempResult = psdCalc.calculatePSD(A2DVal, fs);
+                                if (tempResult != null && tempResult.length <= psdResult.length) {
+                                    System.arraycopy(tempResult, 0, psdResult, 0, tempResult.length);
+                                }
+                                for (int i = 0; i < psdResult.length; i++) {
+                                    psdResult[i] = psdResult[i] * -1 + 3600;
+                                    if (psdResult[i] < 3165) psdResult[i] = 3165;
+                                }
+                                movingRMS = RMSCalculator.calculateMovingRMS(A2DVal, 10);
+                                smoothedRMS = MovingAverageCalculator.calculateMovingAverage(movingRMS, 20);
+
+                                // 5. Trigger Redraw every 10 samples
+                                count++;
+                                if (count % 10 == 0) {
+                                    mHandler.post(new Runnable() {
+                                        @Override
+                                        public void run() {
+                                            if (GameScreen.view != null) {
+                                                GameScreen.view.invalidate();
+                                            }
+                                        }
+                                    });
+                                }
+                            }
+                        });
+                    }
+                    // --- MATH SECTION ---
+                    double[] tempResult = psdCalc.calculatePSD(A2DVal, fs);
+                    if (tempResult != null && tempResult.length <= psdResult.length) {
+                        System.arraycopy(tempResult, 0, psdResult, 0, tempResult.length);
+                    }
+                    for (int i = 0; i < psdResult.length; i++) {
+                        psdResult[i] = psdResult[i] * -1 + 3600;
+                        if (psdResult[i] < 3165) psdResult[i] = 3165;
+                    }
+                    movingRMS = RMSCalculator.calculateMovingRMS(A2DVal, 10);
+                    smoothedRMS = MovingAverageCalculator.calculateMovingAverage(movingRMS, 20);
+
+
+
+                    // --- RECORDING LOGIC (FIXED) ---
+                    if (GameScreen.isRecording && writer != null) {
+                        // Record ONLY the new samples that just arrived
+                        for (int i = signalBufferLen - finalSamples; i < signalBufferLen; i++) {
+                            if (i >= 0) {
+                                writer.println(A2DVal[i]);
                             }
                         }
-                    });
+                        writer.flush();
+                    }
                 }
             } catch (IOException e) {
                 e.printStackTrace();

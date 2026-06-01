@@ -148,56 +148,12 @@ public abstract class AndroidGame extends Activity implements Game {
         mHandler = new Handler(Looper.getMainLooper()) {
             @Override
             public void handleMessage(Message msg) {
-                if (A2DVal == null) {
-                    Log.e("CRASH_PREVENT", "A2DVal is null. Waiting for GameScreen...");
-                    return;
-                }
-                if (msg.what == MESSAGE_READ) {
-                    try {
-                        // Determine if we received a String or a byte[] to avoid ClassCastException
-                        String readMessage;
-                        if (msg.obj instanceof String) {
-                            readMessage = (String) msg.obj;
-                        } else {
-                            readMessage = new String((byte[]) msg.obj, "UTF-8");
-                        }
-
-                        if (readMessage == null || readMessage.isEmpty()) return;
-
-                        // Split the string by 'a' to get individual samples safely
-                        String[] samples = readMessage.split("a");
-
-                        for (String sample : samples) {
-                            // Each valid sample should be 5 digits (e.g., "12345")
-                            if (sample.length() >= 5) {
-                                try {
-                                    // Extract the first 5 characters and convert to integer
-                                    String valStr = sample.substring(0, 5);
-                                    totalA2DVal = Integer.parseInt(valStr);
-
-                                    if (totalA2DVal >= 0 && totalA2DVal <= 99999) {
-                                        // Ensure A2DVal array is not null before copying
-                                        if (A2DVal != null) {
-                                            System.arraycopy(A2DVal, 1, A2DVal, 0, signalBufferLen - 1);
-                                            // Divide by 3.0 as per your logic
-                                            A2DVal[signalBufferLen - 1] = (double) (totalA2DVal / 3.0);
-                                        }
-                                    }
-                                } catch (NumberFormatException nfe) {
-                                    // Skip this specific sample if it's not a valid number
-                                }
-                            }
-                        }
-                    } catch (Exception e) {
-                        Log.e("BT_HANDLER", "Error parsing Bluetooth data", e);
-                    }
-                }
-                // ... rest of your status message logic ...
-                if(msg.what == CONNECTING_STATUS){
-                    if(msg.arg1 == 1)
+                if (msg.what == CONNECTING_STATUS) {
+                    if (msg.arg1 == 1) {
                         mBluetoothStatus.setText("Connected to Device: " + msg.obj);
-                    else
+                    } else {
                         mBluetoothStatus.setText("Connection Failed");
+                    }
                 }
             }
         };
@@ -450,15 +406,15 @@ public abstract class AndroidGame extends Activity implements Game {
             // Get the device MAC address, which is the last 17 chars in the View
             String info = ((TextView) view).getText().toString();
             final String address = info.substring(info.length() - 17);
-            final String name = info.substring(0,info.length() - 17);
+            final String name = info.substring(0, info.length() - 17);
 
             // Spawn a new thread to avoid blocking the GUI one
-            new Thread()
-            {
+            new Thread() {
                 @Override
                 public void run() {
                     boolean fail = false;
 
+                    // Get the device object
                     BluetoothDevice device = mBTAdapter.getRemoteDevice(address);
 
                     try {
@@ -466,6 +422,7 @@ public abstract class AndroidGame extends Activity implements Game {
                     } catch (IOException e) {
                         fail = true;
                     }
+
                     // Establish the Bluetooth socket connection.
                     try {
                         if (ActivityCompat.checkSelfPermission(AndroidGame.this, Manifest.permission.BLUETOOTH_CONNECT) == PackageManager.PERMISSION_GRANTED || Build.VERSION.SDK_INT < Build.VERSION_CODES.S) {
@@ -477,17 +434,20 @@ public abstract class AndroidGame extends Activity implements Game {
                         try {
                             fail = true;
                             mBTSocket.close();
-                            mHandler.obtainMessage(CONNECTING_STATUS, -1, -1)
-                                    .sendToTarget();
+                            mHandler.obtainMessage(CONNECTING_STATUS, -1, -1).sendToTarget();
                         } catch (IOException e2) {
+                            // Error closing socket
                         }
                     }
-                    if(!fail) {
+
+                    if (!fail) {
+                        // Initialize ConnectedThread to handle the data stream
+                        // Note: All parsing logic is now moved inside ConnectedThread
                         mConnectedThread = new ConnectedThread(mBTSocket, mHandler);
                         mConnectedThread.start();
 
-                        mHandler.obtainMessage(CONNECTING_STATUS, 1, -1, name)
-                                .sendToTarget();
+                        // Notify UI that we are connected
+                        mHandler.obtainMessage(CONNECTING_STATUS, 1, -1, name).sendToTarget();
                     }
                 }
             }.start();
