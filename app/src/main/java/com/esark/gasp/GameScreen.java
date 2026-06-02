@@ -412,8 +412,8 @@ public class GameScreen extends Screen implements Input {
         if (!isReplaying) {
             // --- LIVE BLACK LINE ---
             xStart = 1600;
-            int xStep = 3;
-            int drawSkip = 1;
+            int xStep = 6;      // Was 6 Was 3 Was 8
+            int drawSkip = 4;   // Was 4 Was 1 Was 4
             for (int n = signalBufferLen - 1; n > drawSkip; n -= drawSkip) {
                 int y1 = (int) (screenCenterY - (A2DVal[n] - dataBaseline) * gain);
                 int y2 = (int) (screenCenterY - (A2DVal[n - drawSkip] - dataBaseline) * gain);
@@ -462,7 +462,7 @@ public class GameScreen extends Screen implements Input {
             }
 
             // Move the window forward: 2000Hz sampled data @ 60fps = ~33 samples per frame
-            replayPosition += 33;
+            replayPosition += 33;       // Increase this to 35 or 40 to speed up the replay.
 
             // Loop back to start if we reach the end
             if (replayPosition >= replayList.size()) {

@@ -1,6 +1,6 @@
 package com.esark.framework;
 
-import static com.esark.gasp.ConnectedThread.finalSamples;
+
 import static com.esark.gasp.GameScreen.A2DVal;
 
 import android.Manifest;
@@ -106,7 +106,7 @@ public abstract class AndroidGame extends Activity implements Game {
 
     public static int bufferFlag = 0;
     //public static int signalBufferLen = 287;
-    public static int signalBufferLen = 2048;
+    public static int signalBufferLen = 1024;
     //public static int signalBufferLen = 1024;
     // In your class members
     Sound alertSound;
