@@ -50,86 +50,82 @@ public class ConnectedThread extends Thread {
 
     @Override
     public void run() {
-        // Urgent Display priority ensures the UI redraw isn't delayed by background OS tasks
         Process.setThreadPriority(Process.THREAD_PRIORITY_URGENT_DISPLAY);
 
         byte[] buffer = new byte[2048];
         double fs = 1000;
         PowerSpectralDensityCalculator psdCalc = new PowerSpectralDensityCalculator(A2DVal, fs);
 
-        final java.util.ArrayList<Double> persistentBatch = new java.util.ArrayList<>();
-
-        // 18 samples @ 1000Hz = ~18ms. This matches the 60Hz refresh rate of Android screens.
-        final int batchThreshold = 18;
+        final double[] primitiveBatch = new double[256];
+        int batchIdx = 0;
+        final int batchThreshold = 20;
 
         while (!Thread.currentThread().isInterrupted()) {
             try {
                 int bytesRead = mmInStream.read(buffer);
                 if (bytesRead > 0) {
-                    // Step 1: Parse characters into numbers immediately
                     for (int i = 0; i < bytesRead; i++) {
                         char c = (char) buffer[i];
+
                         if (c == 'a') {
                             if (dataAccumulator.length() >= 5) {
-                                try {
-                                    int val = Integer.parseInt(dataAccumulator.toString().substring(0, 5));
-                                    persistentBatch.add(val / 3.0);
-                                } catch (Exception e) {
-                                    // Skip malformed data
+                                int val = 0;
+                                for (int k = 0; k < 5; k++) {
+                                    val = val * 10 + (dataAccumulator.charAt(k) - '0');
                                 }
+                                primitiveBatch[batchIdx++] = val / 3.0;
                             }
                             dataAccumulator.setLength(0);
-                        } else if (Character.isDigit(c)) {
+                        } else if (c >= '0' && c <= '9') {
                             dataAccumulator.append(c);
                         }
-                    }
 
-                    // Step 2: If we have a batch ready, process it
-                    if (persistentBatch.size() >= batchThreshold) {
-                        final Double[] samplesToProcess = persistentBatch.toArray(new Double[0]);
-                        persistentBatch.clear();
+                        // When batch is full, process it
+                        if (batchIdx >= batchThreshold) {
+                            final int numNew = batchIdx;
+                            final double[] samplesToProcess = new double[numNew];
+                            System.arraycopy(primitiveBatch, 0, samplesToProcess, 0, numNew);
+                            batchIdx = 0;
 
-                        executor.execute(() -> {
-                            int numNew = samplesToProcess.length;
-
-                            // Update the shared array (Shift left and add new)
-                            System.arraycopy(A2DVal, numNew, A2DVal, 0, signalBufferLen - numNew);
-                            for (int i = 0; i < numNew; i++) {
-                                double val = samplesToProcess[i];
-                                A2DVal[signalBufferLen - numNew + i] = val;
-                                if (GameScreen.isRecording && writer != null) {
-                                    writer.println(val);
-                                }
-                            }
-
-                            // REDRAW IMMEDIATELY
-                            // We do this BEFORE the math so the visual sweep is never delayed by the FFT
-                            mHandler.post(() -> {
-                                if (GameScreen.view != null) {
-                                    GameScreen.view.invalidate();
-                                }
-                            });
-
-                            // THROTTLED HEAVY MATH
-                            // We only do PSD and RMS every 5th batch (~every 100ms).
-                            // This is plenty for a human-readable graph but saves 80% CPU usage.
-                            if (mathSkipCount++ % 5 == 0) {
-                                double[] tempResult = psdCalc.calculatePSD(A2DVal, fs);
-                                if (tempResult != null && tempResult.length <= psdResult.length) {
-                                    System.arraycopy(tempResult, 0, psdResult, 0, tempResult.length);
+                            executor.execute(() -> {
+                                // Update A2DVal array
+                                synchronized (A2DVal) {
+                                    System.arraycopy(A2DVal, numNew, A2DVal, 0, signalBufferLen - numNew);
+                                    for (int j = 0; j < numNew; j++) {
+                                        double val = samplesToProcess[j];
+                                        A2DVal[signalBufferLen - numNew + j] = val;
+                                        if (GameScreen.isRecording && writer != null) {
+                                            writer.println(val);
+                                        }
+                                    }
                                 }
 
-                                for (int i = 0; i < psdResult.length; i++) {
-                                    psdResult[i] = psdResult[i] * -1 + 3600;
-                                    if (psdResult[i] < 3165) psdResult[i] = 3165;
-                                }
+                                // Update UI
+                                mHandler.post(() -> {
+                                    if (GameScreen.view != null) {
+                                        GameScreen.view.invalidate();
+                                    }
+                                });
 
-                                movingRMS = RMSCalculator.calculateMovingRMS(A2DVal, 10);
-                                smoothedRMS = MovingAverageCalculator.calculateMovingAverage(movingRMS, 20);
-                            }
-                        });
-                    }
-                }
+                                // Heavy Math (PSD / RMS) throttled
+                                if (mathSkipCount++ % 5 == 0) {
+                                    double[] tempResult = psdCalc.calculatePSD(A2DVal, fs);
+                                    if (tempResult != null && tempResult.length <= psdResult.length) {
+                                        System.arraycopy(tempResult, 0, psdResult, 0, tempResult.length);
+                                    }
+
+                                    for (int j = 0; j < psdResult.length; j++) {
+                                        psdResult[j] = psdResult[j] * -1 + 3600;
+                                        if (psdResult[j] < 3165) psdResult[j] = 3165;
+                                    }
+
+                                    movingRMS = RMSCalculator.calculateMovingRMS(A2DVal, 10);
+                                    smoothedRMS = MovingAverageCalculator.calculateMovingAverage(movingRMS, 20);
+                                }
+                            }); // End executor.execute
+                        } // End if (batchIdx)
+                    } // End for
+                } // End if (bytesRead)
             } catch (IOException e) {
                 Log.d("ConnectedThread", "Input stream disconnected");
                 break;
