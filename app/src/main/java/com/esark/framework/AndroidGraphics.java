@@ -103,7 +103,7 @@ public class AndroidGraphics extends AndroidGame implements Graphics {
     public void drawBlackLine(int x, int y, int x2, int y2, int color) {
         // Inside your Graphics/Painter class
         paint.setAntiAlias(true);
-        paint.setStrokeWidth(2.0f); // A slightly thicker line (2.0 instead of 1.0) looks much smoother
+    //    paint.setStrokeWidth(2.0f); // A slightly thicker line (2.0 instead of 1.0) looks much smoother
         paint.setStrokeJoin(Paint.Join.ROUND);
         paint.setStrokeCap(Paint.Cap.ROUND);
         paint.setColor(Color.BLACK);
