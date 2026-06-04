@@ -4,6 +4,9 @@ import static com.esark.framework.AndroidGame.signalBufferLen;
 
 import android.content.Context;
 import android.content.Intent;
+import android.graphics.Canvas;
+import android.graphics.Color;
+import android.graphics.Paint;
 import android.util.Log;
 
 import com.esark.framework.Game;
@@ -26,6 +29,11 @@ import java.text.SimpleDateFormat;
 import java.util.ArrayList;
 import java.util.Date;
 import java.util.List;
+
+import android.graphics.Canvas;
+import android.graphics.Paint;
+import com.esark.framework.AndroidGraphics;
+
 
 public class GameScreen extends Screen implements Input {
     boolean isAlertPlaying = false;
@@ -92,9 +100,17 @@ public class GameScreen extends Screen implements Input {
     private static List<Double> replayList = new ArrayList<>();
     private static int replayPosition = 0;
     private String fileName = "sEMG_Data.csv";
+    // signalBufferLen is 1024.// We draw (1024 - 1) line segments. Each segment needs 4 floats (x1, y1, x2, y2).
+    private final float[] lineBuffer = new float[(1024 - 1) * 4];
+    // Initialize the Paint object
+    private final Paint signalPaint = new Paint();
     //Constructor
     public GameScreen(Game game) {
         super(game);
+        signalPaint.setAntiAlias(true);
+        signalPaint.setStrokeWidth(2.5f);
+        signalPaint.setColor(android.graphics.Color.BLACK);
+        signalPaint.setStrokeCap(Paint.Cap.ROUND);
         try {
             alertSound = game.getAudio().newSound("ringtone.mp3");
         } catch (Exception e) {
@@ -402,79 +418,99 @@ public class GameScreen extends Screen implements Input {
             }
         }
 
-        // --- 4. RAW SIGNAL DRAWING (Black for Live / Red for Replay) ---
+        // --- 4. RAW SIGNAL DRAWING (GPU Optimized) ---
         double dataBaseline = 410;
         int screenCenterY = 460;
         float gain = 0.2f;
-        int topLimit = 230;
-        int bottomLimit = 690;
+
+        // Horizontal Math: 1435 pixels / 1024 samples = 1.4013
+        float currentXStep = 1.4013f;
+        float xRightEdge = 1600.0f;
+        int bufferIdx = 0;
+
+        // Ensure Paint is smooth and high-quality
+        signalPaint.setAntiAlias(true);
+        signalPaint.setStrokeWidth(2.5f);
 
         if (!isReplaying) {
             // --- LIVE BLACK LINE ---
-            // --- LIVE BLACK LINE (High Resolution / Smooth) ---
-            float xStartFloat = 1600.0f;
-            float xStep = 1.4f;   // Math: 1435 pixels / 1024 samples ≈ 1.4
-            int drawSkip = 1;     // Draw every single point for maximum smoothness
+            signalPaint.setColor(android.graphics.Color.BLACK);
+            Canvas canvas = ((AndroidGraphics) g).getCanvas();
+
             synchronized (A2DVal) {
-                for (int n = signalBufferLen - 1; n > drawSkip; n -= drawSkip) {
-                    int y1 = (int) (screenCenterY - (A2DVal[n] - dataBaseline) * gain);
-                    int y2 = (int) (screenCenterY - (A2DVal[n - drawSkip] - dataBaseline) * gain);
+                bufferIdx = 0;
+                // n = 0 is oldest (Left), n = 1023 is newest (Right)
+                for (int n = 0; n < signalBufferLen - 1; n++) {
+                    // Newer data (higher n) results in higher X (further right)
+                    float x1 = xRightEdge - ((signalBufferLen - 1 - n) * currentXStep);
+                    float y1 = (float) (screenCenterY - (A2DVal[n] - dataBaseline) * gain);
 
-                    if (y1 < topLimit) y1 = topLimit;
-                    if (y1 > bottomLimit) y1 = bottomLimit;
-                    if (y2 < topLimit) y2 = topLimit;
-                    if (y2 > bottomLimit) y2 = bottomLimit;
+                    float x2 = xRightEdge - ((signalBufferLen - 1 - (n + 1)) * currentXStep);
+                    float y2 = (float) (screenCenterY - (A2DVal[n + 1] - dataBaseline) * gain);
 
-                    // Casting x positions to int for the draw call
-                    g.drawBlackLine((int) xStartFloat, y1, (int) (xStartFloat - xStep), y2, 0);
+                    // Clamping to graph box
+                    if (y1 < 230) y1 = 230; if (y1 > 690) y1 = 690;
+                    if (y2 < 230) y2 = 230; if (y2 > 690) y2 = 690;
 
-                    xStartFloat -= xStep;
-                    if (xStartFloat <= 165) break;
+                    lineBuffer[bufferIdx++] = x1;
+                    lineBuffer[bufferIdx++] = y1;
+                    lineBuffer[bufferIdx++] = x2;
+                    lineBuffer[bufferIdx++] = y2;
+
+                    if (bufferIdx >= lineBuffer.length) break;
+                }
+                if (bufferIdx > 0) {
+                    canvas.drawLines(lineBuffer, 0, bufferIdx, signalPaint);
                 }
             }
         } else if (isReplaying && !replayList.isEmpty()) {
             // --- REPLAY RED LINE ---
-            xStart = 1600;
-            int xStepReplay = 10;
-            int drawSkipReplay = 6;
-            double recordingGain = 0.2;
+            signalPaint.setColor(android.graphics.Color.RED);
+            Canvas canvas = ((AndroidGraphics) g).getCanvas();
+            bufferIdx = 0;
 
-            // Calculate how many segments we can fit on screen
-            int maxSegments = (1600 - 165) / xStepReplay;
+            // 'k' represents "how many samples ago" from the playhead (replayPosition)
+            // k=0 is the "head" (at 1600), increasing k moves back in time (to the left)
+            for (int k = 0; k < 1023; k++) {
+                int pos1 = replayPosition - k;
+                int pos2 = replayPosition - (k + 1);
 
-            for (int k = 0; k < maxSegments; k++) {
-                // Map screen segments to file indices
-                // Pos1 is the "current" point, Pos2 is the "previous" point (further back in history)
-                int pos1 = replayPosition - (k * drawSkipReplay);
-                int pos2 = replayPosition - ((k + 1) * drawSkipReplay);
-
-                // Bounds check
+                // Only draw if the indices exist in the recorded file
                 if (pos1 >= 0 && pos1 < replayList.size() && pos2 >= 0 && pos2 < replayList.size()) {
-                    double v1 = replayList.get(pos1);
-                    double v2 = replayList.get(pos2);
 
-                    int y1 = (int) (screenCenterY - (v1 - dataBaseline) * recordingGain);
-                    int y2 = (int) (screenCenterY - (v2 - dataBaseline) * recordingGain);
+                    // x1 is current head, x2 is one sample older (to the left)
+                    float x1 = xRightEdge - (k * currentXStep);
+                    float y1 = (float) (screenCenterY - (replayList.get(pos1) - dataBaseline) * gain);
 
-                    if (y1 < topLimit) y1 = topLimit;
-                    if (y1 > bottomLimit) y1 = bottomLimit;
-                    if (y2 < topLimit) y2 = topLimit;
-                    if (y2 > bottomLimit) y2 = bottomLimit;
+                    float x2 = xRightEdge - ((k + 1) * currentXStep);
+                    float y2 = (float) (screenCenterY - (replayList.get(pos2) - dataBaseline) * gain);
 
-                    g.drawRedLine(xStart, y1, xStart - xStepReplay, y2, 0);
+                    // Clamping
+                    if (y1 < 230) y1 = 230; if (y1 > 690) y1 = 690;
+                    if (y2 < 230) y2 = 230; if (y2 > 690) y2 = 690;
+
+                    lineBuffer[bufferIdx++] = x1;
+                    lineBuffer[bufferIdx++] = y1;
+                    lineBuffer[bufferIdx++] = x2;
+                    lineBuffer[bufferIdx++] = y2;
                 }
-                xStart -= xStepReplay;
+
+                // Stop drawing if the x coordinate goes past the left boundary (165)
+                if (xRightEdge - (k * currentXStep) <= 165) break;
+                if (bufferIdx >= lineBuffer.length) break;
             }
 
-            // Move the window forward: 2000Hz sampled data @ 60fps = ~33 samples per frame
-            replayPosition += 33;       // Increase this to 35 or 40 to speed up the replay.
+            if (bufferIdx > 0) {
+                canvas.drawLines(lineBuffer, 0, bufferIdx, signalPaint);
+            }
 
-            // Loop back to start if we reach the end
+            // Move the replay window forward (1000Hz / 60fps = ~17 samples per frame)
+            replayPosition += 17;
             if (replayPosition >= replayList.size()) {
-                //  replayPosition = signalBufferLen;
-                replayPosition = 1000;
+                replayPosition = 0; // Loop back to the very start of the file
             }
         }
+
         //////////////////////////////////////////////////////////////////////////
 
 
