@@ -58,7 +58,7 @@ public class ConnectedThread extends Thread {
         // Persistent list to accumulate samples across multiple Bluetooth reads
         final java.util.ArrayList<Double> persistentBatch = new java.util.ArrayList<>();
         // Threshold: Only perform Heavy Math/Shifting every 50 samples (~20 times per second)
-        final int batchThreshold = 50;
+        final int batchThreshold = 50;      // Was 50
 
         while (!Thread.currentThread().isInterrupted()) {
             try {
