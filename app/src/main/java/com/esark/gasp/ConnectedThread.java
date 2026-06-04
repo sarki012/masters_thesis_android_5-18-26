@@ -27,6 +27,7 @@ public class ConnectedThread extends Thread {
     private final Handler mHandler;
 
     private int count = 0;
+    private int mathSkipCount = 0;      // Counter to throttle heavy math
     private final StringBuilder dataAccumulator = new StringBuilder();
     private final ExecutorService executor = Executors.newSingleThreadExecutor();
 
@@ -49,59 +50,49 @@ public class ConnectedThread extends Thread {
 
     @Override
     public void run() {
+        // Urgent Display priority ensures the UI redraw isn't delayed by background OS tasks
         Process.setThreadPriority(Process.THREAD_PRIORITY_URGENT_DISPLAY);
 
         byte[] buffer = new byte[2048];
         double fs = 1000;
         PowerSpectralDensityCalculator psdCalc = new PowerSpectralDensityCalculator(A2DVal, fs);
 
-        // Persistent list to accumulate samples across multiple Bluetooth reads
         final java.util.ArrayList<Double> persistentBatch = new java.util.ArrayList<>();
-        // Threshold: Only perform Heavy Math/Shifting every 50 samples (~20 times per second)
-        final int batchThreshold = 10;      // Was 50
+
+        // 18 samples @ 1000Hz = ~18ms. This matches the 60Hz refresh rate of Android screens.
+        final int batchThreshold = 18;
 
         while (!Thread.currentThread().isInterrupted()) {
             try {
                 int bytesRead = mmInStream.read(buffer);
                 if (bytesRead > 0) {
-                    // Convert raw bytes to string to parse characters
-                    String incoming = new String(buffer, 0, bytesRead);
-                    dataAccumulator.append(incoming);
-
-                    // 1. Parse all available 'aXXXXXa' packets into the persistentBatch
-                    // Replace the entire while ((firstA = dataAccumulator.indexOf("a")) != -1) block with this:
+                    // Step 1: Parse characters into numbers immediately
                     for (int i = 0; i < bytesRead; i++) {
                         char c = (char) buffer[i];
                         if (c == 'a') {
-                            // We hit a delimiter, try to parse what we have
                             if (dataAccumulator.length() >= 5) {
                                 try {
-                                    // Parse the 5-digit number
                                     int val = Integer.parseInt(dataAccumulator.toString().substring(0, 5));
                                     persistentBatch.add(val / 3.0);
                                 } catch (Exception e) {
-                                    // Ignore malformed data
+                                    // Skip malformed data
                                 }
                             }
-                            dataAccumulator.setLength(0); // Faster than .delete()
+                            dataAccumulator.setLength(0);
                         } else if (Character.isDigit(c)) {
                             dataAccumulator.append(c);
                         }
                     }
 
-
-                    // 2. ONLY if we have reached our threshold, offload to the executor
-                    // This prevents the executor from being flooded with tiny tasks
+                    // Step 2: If we have a batch ready, process it
                     if (persistentBatch.size() >= batchThreshold) {
-                        // Create a final copy of the current batch for the background thread
                         final Double[] samplesToProcess = persistentBatch.toArray(new Double[0]);
                         persistentBatch.clear();
 
                         executor.execute(() -> {
                             int numNew = samplesToProcess.length;
 
-                            /////////////////////////
-                            // 1. Update the data array
+                            // Update the shared array (Shift left and add new)
                             System.arraycopy(A2DVal, numNew, A2DVal, 0, signalBufferLen - numNew);
                             for (int i = 0; i < numNew; i++) {
                                 double val = samplesToProcess[i];
@@ -111,29 +102,31 @@ public class ConnectedThread extends Thread {
                                 }
                             }
 
-                            // 2. TRIGGER UI REDRAW IMMEDIATELY
-                            // This makes the "Sweep" feel instantaneous
+                            // REDRAW IMMEDIATELY
+                            // We do this BEFORE the math so the visual sweep is never delayed by the FFT
                             mHandler.post(() -> {
                                 if (GameScreen.view != null) {
                                     GameScreen.view.invalidate();
                                 }
                             });
 
-                            // 3. NOW do the heavy math in the background
-                            double[] tempResult = psdCalc.calculatePSD(A2DVal, fs);
-                            if (tempResult != null && tempResult.length <= psdResult.length) {
-                                System.arraycopy(tempResult, 0, psdResult, 0, tempResult.length);
+                            // THROTTLED HEAVY MATH
+                            // We only do PSD and RMS every 5th batch (~every 100ms).
+                            // This is plenty for a human-readable graph but saves 80% CPU usage.
+                            if (mathSkipCount++ % 5 == 0) {
+                                double[] tempResult = psdCalc.calculatePSD(A2DVal, fs);
+                                if (tempResult != null && tempResult.length <= psdResult.length) {
+                                    System.arraycopy(tempResult, 0, psdResult, 0, tempResult.length);
+                                }
+
+                                for (int i = 0; i < psdResult.length; i++) {
+                                    psdResult[i] = psdResult[i] * -1 + 3600;
+                                    if (psdResult[i] < 3165) psdResult[i] = 3165;
+                                }
+
+                                movingRMS = RMSCalculator.calculateMovingRMS(A2DVal, 10);
+                                smoothedRMS = MovingAverageCalculator.calculateMovingAverage(movingRMS, 20);
                             }
-
-                            for (int i = 0; i < psdResult.length; i++) {
-                                psdResult[i] = psdResult[i] * -1 + 3600;
-                                if (psdResult[i] < 3165) psdResult[i] = 3165;
-                            }
-
-                            movingRMS = RMSCalculator.calculateMovingRMS(A2DVal, 10);
-                            smoothedRMS = MovingAverageCalculator.calculateMovingAverage(movingRMS, 20);
-
-                            /////////////////////////////
                         });
                     }
                 }
@@ -144,7 +137,6 @@ public class ConnectedThread extends Thread {
         }
         executor.shutdownNow();
     }
-
 
     public void cancel() {
         try {
