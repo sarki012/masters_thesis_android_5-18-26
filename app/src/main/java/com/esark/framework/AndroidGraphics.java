@@ -35,7 +35,9 @@ public class AndroidGraphics extends AndroidGame implements Graphics {
         this.canvas = new Canvas(frameBuffer);
         this.paint = new Paint();
     }
-
+    public Canvas getCanvas() {
+        return canvas;
+    }
     public Pixmap newPixmap(String fileName, PixmapFormat format) {
         Config config = null;
         if (format == PixmapFormat.RGB565)
