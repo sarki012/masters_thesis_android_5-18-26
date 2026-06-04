@@ -418,17 +418,17 @@ public class GameScreen extends Screen implements Input {
             }
         }
 
-        // --- 4. RAW SIGNAL DRAWING (GPU Optimized) ---
+        // --- 4. RAW SIGNAL DRAWING (GPU Optimized - Right to Left) ---
         double dataBaseline = 410;
         int screenCenterY = 460;
         float gain = 0.2f;
 
-        // Horizontal Math: 1435 pixels / 1024 samples = 1.4013
-        float currentXStep = 1.4013f;
+        // Total width is 1600 - 165 = 1435 pixels.
+        // 1435 pixels / 1023 segments = 1.4027 pixels per sample.
+        float currentXStep = 1.4027f;
         float xRightEdge = 1600.0f;
         int bufferIdx = 0;
 
-        // Ensure Paint is smooth and high-quality
         signalPaint.setAntiAlias(true);
         signalPaint.setStrokeWidth(2.5f);
 
@@ -439,16 +439,16 @@ public class GameScreen extends Screen implements Input {
 
             synchronized (A2DVal) {
                 bufferIdx = 0;
-                // n = 0 is oldest (Left), n = 1023 is newest (Right)
-                for (int n = 0; n < signalBufferLen - 1; n++) {
-                    // Newer data (higher n) results in higher X (further right)
+                // n=1023 is newest data (Right), n=0 is oldest data (Left)
+                for (int n = signalBufferLen - 1; n > 0; n--) {
+                    // x1 is the newer point, x2 is the older point (to the left of x1)
                     float x1 = xRightEdge - ((signalBufferLen - 1 - n) * currentXStep);
                     float y1 = (float) (screenCenterY - (A2DVal[n] - dataBaseline) * gain);
 
-                    float x2 = xRightEdge - ((signalBufferLen - 1 - (n + 1)) * currentXStep);
-                    float y2 = (float) (screenCenterY - (A2DVal[n + 1] - dataBaseline) * gain);
+                    float x2 = xRightEdge - ((signalBufferLen - 1 - (n - 1)) * currentXStep);
+                    float y2 = (float) (screenCenterY - (A2DVal[n - 1] - dataBaseline) * gain);
 
-                    // Clamping to graph box
+                    // Clamping
                     if (y1 < 230) y1 = 230; if (y1 > 690) y1 = 690;
                     if (y2 < 230) y2 = 230; if (y2 > 690) y2 = 690;
 
@@ -457,6 +457,8 @@ public class GameScreen extends Screen implements Input {
                     lineBuffer[bufferIdx++] = x2;
                     lineBuffer[bufferIdx++] = y2;
 
+                    // Stop if we hit the left border
+                    if (x2 <= 165) break;
                     if (bufferIdx >= lineBuffer.length) break;
                 }
                 if (bufferIdx > 0) {
@@ -469,16 +471,15 @@ public class GameScreen extends Screen implements Input {
             Canvas canvas = ((AndroidGraphics) g).getCanvas();
             bufferIdx = 0;
 
-            // 'k' represents "how many samples ago" from the playhead (replayPosition)
-            // k=0 is the "head" (at 1600), increasing k moves back in time (to the left)
-            for (int k = 0; k < 1023; k++) {
+            // 'k' is the distance in samples from the current playhead (replayPosition)
+            // k=0 is the newest sample visible, which we anchor at the Right Edge (1600)
+            for (int k = 0; k < replayPosition && k < 1500; k++) {
                 int pos1 = replayPosition - k;
                 int pos2 = replayPosition - (k + 1);
 
-                // Only draw if the indices exist in the recorded file
+                // Check bounds
                 if (pos1 >= 0 && pos1 < replayList.size() && pos2 >= 0 && pos2 < replayList.size()) {
 
-                    // x1 is current head, x2 is one sample older (to the left)
                     float x1 = xRightEdge - (k * currentXStep);
                     float y1 = (float) (screenCenterY - (replayList.get(pos1) - dataBaseline) * gain);
 
@@ -493,10 +494,10 @@ public class GameScreen extends Screen implements Input {
                     lineBuffer[bufferIdx++] = y1;
                     lineBuffer[bufferIdx++] = x2;
                     lineBuffer[bufferIdx++] = y2;
-                }
 
-                // Stop drawing if the x coordinate goes past the left boundary (165)
-                if (xRightEdge - (k * currentXStep) <= 165) break;
+                    // Stop drawing once the line moves past the left border
+                    if (x2 <= 165) break;
+                }
                 if (bufferIdx >= lineBuffer.length) break;
             }
 
@@ -504,10 +505,10 @@ public class GameScreen extends Screen implements Input {
                 canvas.drawLines(lineBuffer, 0, bufferIdx, signalPaint);
             }
 
-            // Move the replay window forward (1000Hz / 60fps = ~17 samples per frame)
+            // Move the playhead forward (1000Hz / 60fps = ~17 samples per frame)
             replayPosition += 17;
             if (replayPosition >= replayList.size()) {
-                replayPosition = 0; // Loop back to the very start of the file
+                replayPosition = 0; // Loop back
             }
         }
 
