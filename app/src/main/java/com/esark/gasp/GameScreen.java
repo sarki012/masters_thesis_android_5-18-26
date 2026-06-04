@@ -415,21 +415,22 @@ public class GameScreen extends Screen implements Input {
             float xStartFloat = 1600.0f;
             float xStep = 1.4f;   // Math: 1435 pixels / 1024 samples ≈ 1.4
             int drawSkip = 1;     // Draw every single point for maximum smoothness
+            synchronized (A2DVal) {
+                for (int n = signalBufferLen - 1; n > drawSkip; n -= drawSkip) {
+                    int y1 = (int) (screenCenterY - (A2DVal[n] - dataBaseline) * gain);
+                    int y2 = (int) (screenCenterY - (A2DVal[n - drawSkip] - dataBaseline) * gain);
 
-            for (int n = signalBufferLen - 1; n > drawSkip; n -= drawSkip) {
-                int y1 = (int) (screenCenterY - (A2DVal[n] - dataBaseline) * gain);
-                int y2 = (int) (screenCenterY - (A2DVal[n - drawSkip] - dataBaseline) * gain);
+                    if (y1 < topLimit) y1 = topLimit;
+                    if (y1 > bottomLimit) y1 = bottomLimit;
+                    if (y2 < topLimit) y2 = topLimit;
+                    if (y2 > bottomLimit) y2 = bottomLimit;
 
-                if (y1 < topLimit) y1 = topLimit;
-                if (y1 > bottomLimit) y1 = bottomLimit;
-                if (y2 < topLimit) y2 = topLimit;
-                if (y2 > bottomLimit) y2 = bottomLimit;
+                    // Casting x positions to int for the draw call
+                    g.drawBlackLine((int) xStartFloat, y1, (int) (xStartFloat - xStep), y2, 0);
 
-                // Casting x positions to int for the draw call
-                g.drawBlackLine((int)xStartFloat, y1, (int)(xStartFloat - xStep), y2, 0);
-
-                xStartFloat -= xStep;
-                if (xStartFloat <= 165) break;
+                    xStartFloat -= xStep;
+                    if (xStartFloat <= 165) break;
+                }
             }
         } else if (isReplaying && !replayList.isEmpty()) {
             // --- REPLAY RED LINE ---
