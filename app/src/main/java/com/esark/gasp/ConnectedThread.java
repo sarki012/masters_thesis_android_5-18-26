@@ -58,7 +58,7 @@ public class ConnectedThread extends Thread {
         // Persistent list to accumulate samples across multiple Bluetooth reads
         final java.util.ArrayList<Double> persistentBatch = new java.util.ArrayList<>();
         // Threshold: Only perform Heavy Math/Shifting every 50 samples (~20 times per second)
-        final int batchThreshold = 50;      // Was 50
+        final int batchThreshold = 10;      // Was 50
 
         while (!Thread.currentThread().isInterrupted()) {
             try {
@@ -69,24 +69,26 @@ public class ConnectedThread extends Thread {
                     dataAccumulator.append(incoming);
 
                     // 1. Parse all available 'aXXXXXa' packets into the persistentBatch
-                    int firstA;
-                    while ((firstA = dataAccumulator.indexOf("a")) != -1) {
-                        int nextA = dataAccumulator.indexOf("a", firstA + 1);
-                        if (nextA != -1) {
-                            try {
-                                String sampleStr = dataAccumulator.substring(firstA + 1, nextA);
-                                if (sampleStr.length() >= 5) {
-                                    int val = Integer.parseInt(sampleStr.substring(0, 5));
+                    // Replace the entire while ((firstA = dataAccumulator.indexOf("a")) != -1) block with this:
+                    for (int i = 0; i < bytesRead; i++) {
+                        char c = (char) buffer[i];
+                        if (c == 'a') {
+                            // We hit a delimiter, try to parse what we have
+                            if (dataAccumulator.length() >= 5) {
+                                try {
+                                    // Parse the 5-digit number
+                                    int val = Integer.parseInt(dataAccumulator.toString().substring(0, 5));
                                     persistentBatch.add(val / 3.0);
+                                } catch (Exception e) {
+                                    // Ignore malformed data
                                 }
-                            } catch (Exception e) {
-                                // Ignore malformed segments
                             }
-                            dataAccumulator.delete(0, nextA);
-                        } else {
-                            break; // Wait for more data to complete the packet
+                            dataAccumulator.setLength(0); // Faster than .delete()
+                        } else if (Character.isDigit(c)) {
+                            dataAccumulator.append(c);
                         }
                     }
+
 
                     // 2. ONLY if we have reached our threshold, offload to the executor
                     // This prevents the executor from being flooded with tiny tasks
@@ -98,20 +100,26 @@ public class ConnectedThread extends Thread {
                         executor.execute(() -> {
                             int numNew = samplesToProcess.length;
 
-                            // 3. BLOCK ARRAY SHIFT (Perform once for the whole batch)
+                            /////////////////////////
+                            // 1. Update the data array
                             System.arraycopy(A2DVal, numNew, A2DVal, 0, signalBufferLen - numNew);
-
-                            // 4. UPDATE ARRAY AND RECORD
                             for (int i = 0; i < numNew; i++) {
                                 double val = samplesToProcess[i];
                                 A2DVal[signalBufferLen - numNew + i] = val;
-
                                 if (GameScreen.isRecording && writer != null) {
                                     writer.println(val);
                                 }
                             }
 
-                            // 5. HEAVY MATH (PSD / RMS) - Now runs significantly less often
+                            // 2. TRIGGER UI REDRAW IMMEDIATELY
+                            // This makes the "Sweep" feel instantaneous
+                            mHandler.post(() -> {
+                                if (GameScreen.view != null) {
+                                    GameScreen.view.invalidate();
+                                }
+                            });
+
+                            // 3. NOW do the heavy math in the background
                             double[] tempResult = psdCalc.calculatePSD(A2DVal, fs);
                             if (tempResult != null && tempResult.length <= psdResult.length) {
                                 System.arraycopy(tempResult, 0, psdResult, 0, tempResult.length);
@@ -125,12 +133,7 @@ public class ConnectedThread extends Thread {
                             movingRMS = RMSCalculator.calculateMovingRMS(A2DVal, 10);
                             smoothedRMS = MovingAverageCalculator.calculateMovingAverage(movingRMS, 20);
 
-                            // 6. TRIGGER UI REDRAW
-                            mHandler.post(() -> {
-                                if (GameScreen.view != null) {
-                                    GameScreen.view.invalidate();
-                                }
-                            });
+                            /////////////////////////////
                         });
                     }
                 }

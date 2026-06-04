@@ -411,9 +411,11 @@ public class GameScreen extends Screen implements Input {
 
         if (!isReplaying) {
             // --- LIVE BLACK LINE ---
-            xStart = 1600;
-            int xStep = 2;      // Was 6 Was 3 Was 8
-            int drawSkip = 1;   // Was 4 Was 1 Was 4
+            // --- LIVE BLACK LINE (High Resolution / Smooth) ---
+            float xStartFloat = 1600.0f;
+            float xStep = 1.4f;   // Math: 1435 pixels / 1024 samples ≈ 1.4
+            int drawSkip = 1;     // Draw every single point for maximum smoothness
+
             for (int n = signalBufferLen - 1; n > drawSkip; n -= drawSkip) {
                 int y1 = (int) (screenCenterY - (A2DVal[n] - dataBaseline) * gain);
                 int y2 = (int) (screenCenterY - (A2DVal[n - drawSkip] - dataBaseline) * gain);
@@ -423,9 +425,11 @@ public class GameScreen extends Screen implements Input {
                 if (y2 < topLimit) y2 = topLimit;
                 if (y2 > bottomLimit) y2 = bottomLimit;
 
-                g.drawBlackLine(xStart, y1, xStart - xStep, y2, 0);
-                xStart -= xStep;
-                if (xStart <= 165) break;
+                // Casting x positions to int for the draw call
+                g.drawBlackLine((int)xStartFloat, y1, (int)(xStartFloat - xStep), y2, 0);
+
+                xStartFloat -= xStep;
+                if (xStartFloat <= 165) break;
             }
         } else if (isReplaying && !replayList.isEmpty()) {
             // --- REPLAY RED LINE ---
