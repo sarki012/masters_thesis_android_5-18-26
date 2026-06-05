@@ -58,7 +58,7 @@ public class ConnectedThread extends Thread {
 
         final double[] primitiveBatch = new double[256];
         int batchIdx = 0;
-        final int batchThreshold = 20;
+        final int batchThreshold = 5;       // Was 10
 
         while (!Thread.currentThread().isInterrupted()) {
             try {
@@ -108,7 +108,7 @@ public class ConnectedThread extends Thread {
                                 });
 
                                 // Heavy Math (PSD / RMS) throttled
-                                if (mathSkipCount++ % 5 == 0) {
+                                if (mathSkipCount++ % 2 == 0) {
                                     double[] tempResult = psdCalc.calculatePSD(A2DVal, fs);
                                     if (tempResult != null && tempResult.length <= psdResult.length) {
                                         System.arraycopy(tempResult, 0, psdResult, 0, tempResult.length);

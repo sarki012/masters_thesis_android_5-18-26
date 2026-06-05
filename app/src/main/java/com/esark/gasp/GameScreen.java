@@ -108,7 +108,7 @@ public class GameScreen extends Screen implements Input {
     public GameScreen(Game game) {
         super(game);
         signalPaint.setAntiAlias(true);
-        signalPaint.setStrokeWidth(2.5f);
+        signalPaint.setStrokeWidth(5.0f);
         signalPaint.setColor(android.graphics.Color.BLACK);
         signalPaint.setStrokeCap(Paint.Cap.ROUND);
         try {
@@ -419,18 +419,26 @@ public class GameScreen extends Screen implements Input {
         }
 
         // --- 4. RAW SIGNAL DRAWING (GPU Optimized - Right to Left) ---
-        double dataBaseline = 410;
+        // --- 4. RAW SIGNAL DRAWING (Fixed for Clipping) ---
+        // dataBaseline should match the middle of your raw ADC signal (e.g., 512 or 2048)
+        double dataBaseline = 410.0;
         int screenCenterY = 460;
+
+        // REDUCED GAIN: Changing from 0.2f to 0.1f prevents the peaks from hitting the limits
         float gain = 0.2f;
 
+        // WIDENED LIMITS: Giving the signal more "headroom" and "footroom"
+        int topLimit = 50;             // Moved up from 230
+        int bottomLimit = 820;          // Moved down from 690
+
         // Total width is 1600 - 165 = 1435 pixels.
-        // 1435 pixels / 1023 segments = 1.4027 pixels per sample.
         float currentXStep = 1.4027f;
         float xRightEdge = 1600.0f;
         int bufferIdx = 0;
 
         signalPaint.setAntiAlias(true);
-        signalPaint.setStrokeWidth(2.5f);
+        // THINNER STROKE: 5.0f was too fat, making peaks look flat. 2.5f is sharper.
+        signalPaint.setStrokeWidth(5.0f);
 
         if (!isReplaying) {
             // --- LIVE BLACK LINE ---
@@ -439,27 +447,25 @@ public class GameScreen extends Screen implements Input {
 
             synchronized (A2DVal) {
                 bufferIdx = 0;
-                // n=1023 is newest data (Right), n=0 is oldest data (Left)
                 for (int n = signalBufferLen - 1; n > 0; n--) {
-                    // x1 is the newer point, x2 is the older point (to the left of x1)
                     float x1 = xRightEdge - ((signalBufferLen - 1 - n) * currentXStep);
                     float y1 = (float) (screenCenterY - (A2DVal[n] - dataBaseline) * gain);
 
                     float x2 = xRightEdge - ((signalBufferLen - 1 - (n - 1)) * currentXStep);
                     float y2 = (float) (screenCenterY - (A2DVal[n - 1] - dataBaseline) * gain);
 
-                    // Clamping
-                    if (y1 < 230) y1 = 230; if (y1 > 690) y1 = 690;
-                    if (y2 < 230) y2 = 230; if (y2 > 690) y2 = 690;
+                    // Clamping with the new widened limits
+                    if (y1 < topLimit) y1 = topLimit;
+                    if (y1 > bottomLimit) y1 = bottomLimit;
+                    if (y2 < topLimit) y2 = topLimit;
+                    if (y2 > bottomLimit) y2 = bottomLimit;
 
                     lineBuffer[bufferIdx++] = x1;
                     lineBuffer[bufferIdx++] = y1;
                     lineBuffer[bufferIdx++] = x2;
                     lineBuffer[bufferIdx++] = y2;
 
-                    // Stop if we hit the left border
-                    if (x2 <= 165) break;
-                    if (bufferIdx >= lineBuffer.length) break;
+                    if (x2 <= 165 || bufferIdx >= lineBuffer.length - 4) break;
                 }
                 if (bufferIdx > 0) {
                     canvas.drawLines(lineBuffer, 0, bufferIdx, signalPaint);
@@ -471,13 +477,10 @@ public class GameScreen extends Screen implements Input {
             Canvas canvas = ((AndroidGraphics) g).getCanvas();
             bufferIdx = 0;
 
-            // 'k' is the distance in samples from the current playhead (replayPosition)
-            // k=0 is the newest sample visible, which we anchor at the Right Edge (1600)
             for (int k = 0; k < replayPosition && k < 1500; k++) {
                 int pos1 = replayPosition - k;
                 int pos2 = replayPosition - (k + 1);
 
-                // Check bounds
                 if (pos1 >= 0 && pos1 < replayList.size() && pos2 >= 0 && pos2 < replayList.size()) {
 
                     float x1 = xRightEdge - (k * currentXStep);
@@ -486,29 +489,28 @@ public class GameScreen extends Screen implements Input {
                     float x2 = xRightEdge - ((k + 1) * currentXStep);
                     float y2 = (float) (screenCenterY - (replayList.get(pos2) - dataBaseline) * gain);
 
-                    // Clamping
-                    if (y1 < 230) y1 = 230; if (y1 > 690) y1 = 690;
-                    if (y2 < 230) y2 = 230; if (y2 > 690) y2 = 690;
+                    // Clamping with the new widened limits
+                    if (y1 < topLimit) y1 = topLimit;
+                    if (y1 > bottomLimit) y1 = bottomLimit;
+                    if (y2 < topLimit) y2 = topLimit;
+                    if (y2 > bottomLimit) y2 = bottomLimit;
 
                     lineBuffer[bufferIdx++] = x1;
                     lineBuffer[bufferIdx++] = y1;
                     lineBuffer[bufferIdx++] = x2;
                     lineBuffer[bufferIdx++] = y2;
 
-                    // Stop drawing once the line moves past the left border
-                    if (x2 <= 165) break;
+                    if (x2 <= 165 || bufferIdx >= lineBuffer.length - 4) break;
                 }
-                if (bufferIdx >= lineBuffer.length) break;
             }
 
             if (bufferIdx > 0) {
                 canvas.drawLines(lineBuffer, 0, bufferIdx, signalPaint);
             }
 
-            // Move the playhead forward (1000Hz / 60fps = ~17 samples per frame)
             replayPosition += 17;
             if (replayPosition >= replayList.size()) {
-                replayPosition = 0; // Loop back
+                replayPosition = 0;
             }
         }
 
