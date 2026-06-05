@@ -56,76 +56,81 @@ public class ConnectedThread extends Thread {
         double fs = 1000;
         PowerSpectralDensityCalculator psdCalc = new PowerSpectralDensityCalculator(A2DVal, fs);
 
-        final double[] primitiveBatch = new double[256];
-        int batchIdx = 0;
-        final int batchThreshold = 5;       // Was 10
+        // Use a local batch to collect samples from the current Bluetooth read
+        double[] localBatch = new double[1024];
 
         while (!Thread.currentThread().isInterrupted()) {
             try {
                 int bytesRead = mmInStream.read(buffer);
                 if (bytesRead > 0) {
+                    int samplesInThisRead = 0;
+
+                    // 1. PARSE ALL BYTES IN THIS PACKET FIRST
                     for (int i = 0; i < bytesRead; i++) {
                         char c = (char) buffer[i];
-
                         if (c == 'a') {
                             if (dataAccumulator.length() >= 5) {
                                 int val = 0;
                                 for (int k = 0; k < 5; k++) {
                                     val = val * 10 + (dataAccumulator.charAt(k) - '0');
                                 }
-                                primitiveBatch[batchIdx++] = val / 3.0;
+                                // Add to our local batch for this read
+                                if (samplesInThisRead < localBatch.length) {
+                                    localBatch[samplesInThisRead++] = val / 3.0;
+                                }
                             }
                             dataAccumulator.setLength(0);
                         } else if (c >= '0' && c <= '9') {
                             dataAccumulator.append(c);
                         }
+                    }
 
-                        // When batch is full, process it
-                        if (batchIdx >= batchThreshold) {
-                            final int numNew = batchIdx;
-                            final double[] samplesToProcess = new double[numNew];
-                            System.arraycopy(primitiveBatch, 0, samplesToProcess, 0, numNew);
-                            batchIdx = 0;
+                    // 2. PROCESS THE ENTIRE BATCH AT ONCE
+                    if (samplesInThisRead > 0) {
+                        final int numNew = samplesInThisRead;
+                        final double[] samplesToProcess = new double[numNew];
+                        System.arraycopy(localBatch, 0, samplesToProcess, 0, numNew);
 
-                            executor.execute(() -> {
-                                // Update A2DVal array
-                                synchronized (A2DVal) {
-                                    System.arraycopy(A2DVal, numNew, A2DVal, 0, signalBufferLen - numNew);
-                                    for (int j = 0; j < numNew; j++) {
-                                        double val = samplesToProcess[j];
-                                        A2DVal[signalBufferLen - numNew + j] = val;
-                                        if (GameScreen.isRecording && writer != null) {
-                                            writer.println(val);
-                                        }
+                        executor.execute(() -> {
+                            synchronized (A2DVal) {
+                                // Shift array by the whole batch size
+                                System.arraycopy(A2DVal, numNew, A2DVal, 0, signalBufferLen - numNew);
+                                for (int j = 0; j < numNew; j++) {
+                                    double val = samplesToProcess[j];
+                                    A2DVal[signalBufferLen - numNew + j] = val;
+
+                                    if (GameScreen.isRecording && writer != null) {
+                                        writer.println(val);
                                     }
                                 }
+                            }
 
-                                // Update UI
-                                mHandler.post(() -> {
-                                    if (GameScreen.view != null) {
-                                        GameScreen.view.invalidate();
-                                    }
-                                });
+                            // 3. TRIGGER UI REDRAW (Only once per Bluetooth read)
+                            // This prevents the UI thread from being overwhelmed
+                            if (GameScreen.view != null) {
+                                GameScreen.view.postInvalidate();
+                            }
 
-                                // Heavy Math (PSD / RMS) throttled
-                                if (mathSkipCount++ % 2 == 0) {
-                                    double[] tempResult = psdCalc.calculatePSD(A2DVal, fs);
-                                    if (tempResult != null && tempResult.length <= psdResult.length) {
-                                        System.arraycopy(tempResult, 0, psdResult, 0, tempResult.length);
-                                    }
-
-                                    for (int j = 0; j < psdResult.length; j++) {
-                                        psdResult[j] = psdResult[j] * -1 + 3600;
-                                        if (psdResult[j] < 3165) psdResult[j] = 3165;
-                                    }
-
-                                    movingRMS = RMSCalculator.calculateMovingRMS(A2DVal, 10);
-                                    smoothedRMS = MovingAverageCalculator.calculateMovingAverage(movingRMS, 20);
+                            // 4. THROTTLE HEAVY MATH SIGNIFICANTLY
+                            // Update PSD/RMS roughly 10 times per second (every 100ms)
+                            // mathSkipCount++ % 10 is better for 1000Hz
+                            if (mathSkipCount++ % 10 == 0) {
+                                double[] tempResult = psdCalc.calculatePSD(A2DVal, fs);
+                                if (tempResult != null && tempResult.length <= psdResult.length) {
+                                    System.arraycopy(tempResult, 0, psdResult, 0, tempResult.length);
                                 }
-                            }); // End executor.execute
-                        } // End if (batchIdx)
-                    } // End for
-                } // End if (bytesRead)
+
+                                for (int j = 0; j < psdResult.length; j++) {
+                                    psdResult[j] = psdResult[j] * -1 + 3600;
+                                    if (psdResult[j] < 3165) psdResult[j] = 3165;
+                                }
+
+                                movingRMS = RMSCalculator.calculateMovingRMS(A2DVal, 10);
+                                smoothedRMS = MovingAverageCalculator.calculateMovingAverage(movingRMS, 20);
+                            }
+                        });
+                    }
+                }
             } catch (IOException e) {
                 Log.d("ConnectedThread", "Input stream disconnected");
                 break;
