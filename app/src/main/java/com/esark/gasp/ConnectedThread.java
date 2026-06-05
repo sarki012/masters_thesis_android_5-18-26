@@ -26,24 +26,26 @@ public class ConnectedThread extends Thread {
     private final OutputStream mmOutStream;
     private final Handler mHandler;
 
-    private int count = 0;
-    private int mathSkipCount = 0;      // Counter to throttle heavy math
+    private int mathSkipCount = 0;
     private final StringBuilder dataAccumulator = new StringBuilder();
-    private final ExecutorService executor = Executors.newSingleThreadExecutor();
+
+    private final ExecutorService displayExecutor = Executors.newSingleThreadExecutor();
+    private final ExecutorService mathExecutor = Executors.newSingleThreadExecutor();
+
+    // Use signalBufferLen from AndroidGame to ensure sizes match perfectly
+    private final double[] a2dCopyForMath = new double[signalBufferLen];
 
     public ConnectedThread(BluetoothSocket socket, Handler handler) {
         mmSocket = socket;
         mHandler = handler;
         InputStream tmpIn = null;
         OutputStream tmpOut = null;
-
         try {
             tmpIn = socket.getInputStream();
             tmpOut = socket.getOutputStream();
         } catch (IOException e) {
             Log.e("ConnectedThread", "Error creating streams", e);
         }
-
         mmInStream = tmpIn;
         mmOutStream = tmpOut;
     }
@@ -54,97 +56,126 @@ public class ConnectedThread extends Thread {
 
         byte[] buffer = new byte[2048];
         double fs = 1000;
-        PowerSpectralDensityCalculator psdCalc = new PowerSpectralDensityCalculator(A2DVal, fs);
 
-        // Use a local batch to collect samples from the current Bluetooth read
+        // Use a local reference to avoid re-initialization crashes
+        PowerSpectralDensityCalculator psdCalc = null;
         double[] localBatch = new double[1024];
 
         while (!Thread.currentThread().isInterrupted()) {
             try {
+                // Ensure A2DVal is initialized before proceeding
+                if (A2DVal == null) {
+                    SystemClock.sleep(100);
+                    continue;
+                }
+
+                // Initialize PSD calculator only once A2DVal exists
+                if (psdCalc == null) {
+                    psdCalc = new PowerSpectralDensityCalculator(A2DVal, fs);
+                }
+
                 int bytesRead = mmInStream.read(buffer);
                 if (bytesRead > 0) {
                     int samplesInThisRead = 0;
+                    String msg = new String(buffer, 0, bytesRead);
+                    dataAccumulator.append(msg);
 
-                    // 1. PARSE ALL BYTES IN THIS PACKET FIRST
-                    for (int i = 0; i < bytesRead; i++) {
-                        char c = (char) buffer[i];
-                        if (c == 'a') {
-                            if (dataAccumulator.length() >= 5) {
-                                int val = 0;
-                                for (int k = 0; k < 5; k++) {
-                                    val = val * 10 + (dataAccumulator.charAt(k) - '0');
-                                }
-                                // Add to our local batch for this read
-                                if (samplesInThisRead < localBatch.length) {
-                                    localBatch[samplesInThisRead++] = val / 3.0;
-                                }
+                    int firstA;
+                    while ((firstA = dataAccumulator.indexOf("a")) != -1) {
+                        int nextA = dataAccumulator.indexOf("a", firstA + 1);
+                        if (nextA != -1) {
+                            String sampleStr = dataAccumulator.substring(firstA + 1, nextA);
+                            if (sampleStr.length() >= 5) {
+                                try {
+                                    int val = Integer.parseInt(sampleStr.substring(0, 5));
+                                    if (samplesInThisRead < localBatch.length) {
+                                        localBatch[samplesInThisRead++] = val / 3.0;
+                                    }
+                                } catch (NumberFormatException e) { }
                             }
-                            dataAccumulator.setLength(0);
-                        } else if (c >= '0' && c <= '9') {
-                            dataAccumulator.append(c);
+                            dataAccumulator.delete(0, nextA);
+                        } else {
+                            break;
                         }
                     }
 
-                    // 2. PROCESS THE ENTIRE BATCH AT ONCE
                     if (samplesInThisRead > 0) {
                         final int numNew = samplesInThisRead;
-                        final double[] samplesToProcess = new double[numNew];
-                        System.arraycopy(localBatch, 0, samplesToProcess, 0, numNew);
+                        final double[] batchCopy = new double[numNew];
+                        System.arraycopy(localBatch, 0, batchCopy, 0, numNew);
 
-                        executor.execute(() -> {
-                            synchronized (A2DVal) {
-                                // Shift array by the whole batch size
-                                System.arraycopy(A2DVal, numNew, A2DVal, 0, signalBufferLen - numNew);
-                                for (int j = 0; j < numNew; j++) {
-                                    double val = samplesToProcess[j];
-                                    A2DVal[signalBufferLen - numNew + j] = val;
-
-                                    if (GameScreen.isRecording && writer != null) {
-                                        writer.println(val);
+                        // TASK 1: DISPLAY
+                        displayExecutor.execute(() -> {
+                            // Null check A2DVal inside the lambda too
+                            if (A2DVal != null) {
+                                synchronized (A2DVal) {
+                                    System.arraycopy(A2DVal, numNew, A2DVal, 0, signalBufferLen - numNew);
+                                    for (int j = 0; j < numNew; j++) {
+                                        double val = batchCopy[j];
+                                        A2DVal[signalBufferLen - numNew + j] = val;
+                                        if (GameScreen.isRecording && writer != null) {
+                                            writer.println(val);
+                                        }
                                     }
                                 }
-                            }
-
-                            // 3. TRIGGER UI REDRAW (Only once per Bluetooth read)
-                            // This prevents the UI thread from being overwhelmed
-                            if (GameScreen.view != null) {
-                                GameScreen.view.postInvalidate();
-                            }
-
-                            // 4. THROTTLE HEAVY MATH SIGNIFICANTLY
-                            // Update PSD/RMS roughly 10 times per second (every 100ms)
-                            // mathSkipCount++ % 10 is better for 1000Hz
-                            if (mathSkipCount++ % 10 == 0) {
-                                double[] tempResult = psdCalc.calculatePSD(A2DVal, fs);
-                                if (tempResult != null && tempResult.length <= psdResult.length) {
-                                    System.arraycopy(tempResult, 0, psdResult, 0, tempResult.length);
+                                if (GameScreen.view != null) {
+                                    GameScreen.view.postInvalidate();
                                 }
-
-                                for (int j = 0; j < psdResult.length; j++) {
-                                    psdResult[j] = psdResult[j] * -1 + 3600;
-                                    if (psdResult[j] < 3165) psdResult[j] = 3165;
-                                }
-
-                                movingRMS = RMSCalculator.calculateMovingRMS(A2DVal, 10);
-                                smoothedRMS = MovingAverageCalculator.calculateMovingAverage(movingRMS, 20);
                             }
                         });
+
+                        // TASK 2: MATH
+                        final PowerSpectralDensityCalculator finalPsdCalc = psdCalc;
+                        if (mathSkipCount++ % 10 == 0 && finalPsdCalc != null) {
+                            mathExecutor.execute(() -> {
+                                if (A2DVal != null) {
+                                    synchronized (A2DVal) {
+                                        System.arraycopy(A2DVal, 0, a2dCopyForMath, 0, signalBufferLen);
+                                    }
+
+                                    double[] tempResult = finalPsdCalc.calculatePSD(a2dCopyForMath, fs);
+
+                                    // Null checks for all shared results
+                                    if (tempResult != null && psdResult != null && tempResult.length <= psdResult.length) {
+                                        System.arraycopy(tempResult, 0, psdResult, 0, tempResult.length);
+                                        for (int j = 0; j < psdResult.length; j++) {
+                                            psdResult[j] = psdResult[j] * -1 + 3600;
+                                            if (psdResult[j] < 3165) psdResult[j] = 3165;
+                                        }
+                                    }
+
+                                    // Calculate RMS only if arrays are ready
+                                    movingRMS = RMSCalculator.calculateMovingRMS(a2dCopyForMath, 10);
+                                    if (movingRMS != null) {
+                                        smoothedRMS = MovingAverageCalculator.calculateMovingAverage(movingRMS, 20);
+                                    }
+                                }
+                            });
+                        }
                     }
                 }
             } catch (IOException e) {
-                Log.d("ConnectedThread", "Input stream disconnected");
                 break;
+            } catch (Exception e) {
+                Log.e("ConnectedThread", "Unexpected error", e);
             }
         }
-        executor.shutdownNow();
+        displayExecutor.shutdownNow();
+        mathExecutor.shutdownNow();
+    }
+
+    // Helper for null-safety wait
+    private static class SystemClock {
+        public static void sleep(long ms) {
+            try { Thread.sleep(ms); } catch (InterruptedException ignored) {}
+        }
     }
 
     public void cancel() {
         try {
             mmSocket.close();
-            executor.shutdownNow();
         } catch (IOException e) {
-            Log.e("ConnectedThread", "Could not close the connect socket", e);
+            Log.e("ConnectedThread", "Could not close the socket", e);
         }
     }
 }
