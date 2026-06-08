@@ -218,37 +218,27 @@ public class GameScreen extends Screen implements Input {
                 else if (event.x > 1600 && event.x < 1700 && event.y > 1330 && event.y < 1600) {
                     // --- Start/Stop/Save Sample ---
                     if (!isRecording) {
-                        // START RECORDING
                         try {
-                            /* File path = context.getExternalFilesDir(null): It finds the safe, private
-                            folder on the Android device where the app is allowed to save files
-                            (usually /Android/data/com.esark.gasp/files).
-                             */
                             File path = context.getExternalFilesDir(null);
                             File file = new File(path, fileName);
-                            /* fos = new FileOutputStream(file, false): It opens the file for writing.
-                            The false tells Android to overwrite the file if it already exists
-                            (starting a fresh recording).
-                             */
-                            fos = new FileOutputStream(file, false); // false = overwrite
-                            /* The "Writer" Chain: It creates a PrintWriter wrapped in a BufferedWriter.
-                            Why this is important: At 2000Hz, writing to a disk is very slow. The
-                            BufferedWriter collects data in RAM and writes it in "chunks" so your
-                            sine wave doesn't stutter or lag while recording.
-                             */
-                            writer = new PrintWriter(new BufferedWriter(new OutputStreamWriter(fos)));
-                            /* Flags: It sets isRecording = true (which triggers the logic in your
-                            ConnectedThread to start saving samples) and isReplaying = false
-                            (to ensure you aren't trying to watch old data while recording new data).
-                             */
+                            // Use a large 32KB buffer to prevent the IO from slowing down the Bluetooth thread
+                            fos = new FileOutputStream(file, false);
+                            writer = new PrintWriter(new BufferedWriter(new OutputStreamWriter(fos), 32768));
+
                             isRecording = true;
-                            isReplaying = false; // Stop replaying if we start recording
+                            isReplaying = false;
                         } catch (IOException e) {
                             e.printStackTrace();
                         }
                     } else {
                         // STOP AND SAVE
                         isRecording = false;
+                        // Give the background thread a moment to finish its current batch write
+                        try {
+                            Thread.sleep(100);
+                        } catch (InterruptedException e) {
+                            e.printStackTrace();
+                        }
                         if (writer != null) {
                             writer.flush();
                             writer.close();
