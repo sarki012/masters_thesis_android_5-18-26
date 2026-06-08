@@ -35,6 +35,7 @@ public class ConnectedThread extends Thread {
     private final ExecutorService displayExecutor = Executors.newSingleThreadExecutor();
     private final ExecutorService mathExecutor = Executors.newSingleThreadExecutor();
     private final double[] a2dCopyForMath = new double[signalBufferLen];
+    private final ExecutorService recordExecutor = Executors.newSingleThreadExecutor();
 
     public ConnectedThread(BluetoothSocket socket, Handler handler) {
         mmSocket = socket;
@@ -59,10 +60,9 @@ public class ConnectedThread extends Thread {
         double fs = 1000;
         PowerSpectralDensityCalculator psdCalc = null;
 
-        // Batch processing to keep UI smooth
         double[] localBatch = new double[512];
         int batchIdx = 0;
-        final int batchThreshold = 20; // Update UI every 20 samples (~50Hz)
+        final int batchThreshold = 20;
 
         while (!Thread.currentThread().isInterrupted()) {
             try {
@@ -78,57 +78,82 @@ public class ConnectedThread extends Thread {
                 int bytesRead = mmInStream.read(buffer);
                 if (bytesRead > 0) {
                     for (int i = 0; i < bytesRead; i++) {
-                        int b = buffer[i] & 0xFF; // Treat as unsigned byte
+                        int b = buffer[i] & 0xFF;
 
-                        // 1. Check for Synchronization Marker 'x'
                         if (b == 'x') {
-                            expectingLowByte = false; // Next byte is guaranteed to be High Byte
+                            expectingLowByte = false;
                             continue;
                         }
 
-                        // 2. Binary Parser State Machine
                         if (!expectingLowByte) {
-                            // This is the High Byte
                             tempHighByte = b;
                             expectingLowByte = true;
                         } else {
-                            // This is the Low Byte
                             int lowByte = b;
-
-                            // Reconstruct 16-bit integer (Big Endian: HB << 8 | LB)
                             int rawVal = (tempHighByte << 8) | lowByte;
-
-                            // Apply your scaling logic (val / 3.0)
-                            localBatch[batchIdx++] = rawVal / 3.0;
+                            double parsedVal = rawVal / 3.0;
                             expectingLowByte = false;
 
-                            // 3. Process Batch when threshold reached
+                            // --- FIX 1: WRITE TO FILE IMMEDIATELY ---
+                            // Do not offload this to an executor. Writing to a buffered
+                            // writer is extremely fast and ensures no data is lost
+                            // when the recording is toggled off.
+                    //        if (GameScreen.isRecording && writer != null) {
+                      //          writer.println(parsedVal);
+                        //    }
+
+                            if (batchIdx < localBatch.length) {
+                                localBatch[batchIdx++] = parsedVal;
+                            }
+
                             if (batchIdx >= batchThreshold) {
                                 final int numNew = batchIdx;
                                 final double[] samplesToProcess = new double[numNew];
                                 System.arraycopy(localBatch, 0, samplesToProcess, 0, numNew);
                                 batchIdx = 0;
 
-                                // Offload to Display Thread
+                                // TASK 1: DISPLAY & RECORDING (High Priority)
                                 displayExecutor.execute(() -> {
                                     if (A2DVal != null) {
+                                        // 1. BUILD THE BATCH STRING FIRST (Fast)
+                                        StringBuilder sb = null;
+                                        if (GameScreen.isRecording && writer != null) {
+                                            sb = new StringBuilder();
+                                        }
+
                                         synchronized (A2DVal) {
                                             System.arraycopy(A2DVal, numNew, A2DVal, 0, signalBufferLen - numNew);
                                             for (int j = 0; j < numNew; j++) {
                                                 double val = samplesToProcess[j];
                                                 A2DVal[signalBufferLen - numNew + j] = val;
-                                                if (GameScreen.isRecording && writer != null) {
-                                                    writer.println(val);
+
+                                                // Add to string builder instead of writing to disk immediately
+                                                if (sb != null) {
+                                                    sb.append(val).append("\n");
                                                 }
                                             }
                                         }
+
+                                        // 2. WRITE TO DISK OUTSIDE THE SYNCHRONIZED BLOCK
+                                        // This prevents the "Slowdown" because the UI thread doesn't
+                                        // have to wait for the Disk SD card to respond.
+                                        if (sb != null && writer != null) {
+                                            try {
+                                                writer.print(sb.toString());
+                                                // Flush only occasionally (handled by math thread or button)
+                                            } catch (Exception e) {
+                                                // If error, stop recording to prevent crash
+                                                GameScreen.isRecording = false;
+                                            }
+                                        }
+
                                         if (GameScreen.view != null) {
                                             GameScreen.view.postInvalidate();
                                         }
                                     }
                                 });
 
-                                // Offload to Math Thread (Throttled)
+                                // Offload Math
                                 final PowerSpectralDensityCalculator finalPsdCalc = psdCalc;
                                 if (mathSkipCount++ % 10 == 0 && finalPsdCalc != null) {
                                     mathExecutor.execute(() -> {
@@ -139,7 +164,6 @@ public class ConnectedThread extends Thread {
                                             double[] tempResult = finalPsdCalc.calculatePSD(a2dCopyForMath, fs);
                                             if (tempResult != null && psdResult != null) {
                                                 System.arraycopy(tempResult, 0, psdResult, 0, Math.min(tempResult.length, psdResult.length));
-                                                // Post-processing
                                                 for (int j = 0; j < psdResult.length; j++) {
                                                     psdResult[j] = psdResult[j] * -1 + 3600;
                                                     if (psdResult[j] < 3165) psdResult[j] = 3165;
@@ -148,6 +172,12 @@ public class ConnectedThread extends Thread {
                                             movingRMS = RMSCalculator.calculateMovingRMS(a2dCopyForMath, 10);
                                             if (movingRMS != null) {
                                                 smoothedRMS = MovingAverageCalculator.calculateMovingAverage(movingRMS, 20);
+                                            }
+
+                                            // --- FIX 2: PERIODIC FLUSH ---
+                                            // Periodically push data from RAM to disk
+                                            if (GameScreen.isRecording && writer != null) {
+                                                writer.flush();
                                             }
                                         }
                                     });
