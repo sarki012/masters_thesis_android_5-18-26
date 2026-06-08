@@ -278,7 +278,7 @@ public class GameScreen extends Screen implements Input {
                         // FIX: Initialize replayPosition so we can "look back" one screen-width of data immediately
                         if (!replayList.isEmpty()) {
                             // Approximately 1000 samples are needed to fill the horizontal screen width
-                            replayPosition = 1000;
+                            replayPosition = 0;
                             isReplaying = true;
                             isRecording = false;
                         }
@@ -471,16 +471,24 @@ public class GameScreen extends Screen implements Input {
                     canvas.drawLines(lineBuffer, 0, bufferIdx, signalPaint);
                 }
             }
-        } else if (isReplaying && !replayList.isEmpty()) {
-            // --- REPLAY RED LINE ---
+        } else if (isReplaying && !replayList.isEmpty()) {// --- DEBUG: Show how many samples were loaded ---
+            g.drawText("Loaded: " + replayList.size(), 170, 200);
+            g.drawText("Pos: " + replayPosition, 170, 250);
+
+            // --- REPLAY RED LINE (Full Screen & Moving) ---
             signalPaint.setColor(android.graphics.Color.RED);
             Canvas canvas = ((AndroidGraphics) g).getCanvas();
             bufferIdx = 0;
 
-            for (int k = 0; k < replayPosition && k < 1500; k++) {
+            // We iterate through 'k' which represents pixels back from the right edge
+            // k=0 is the right edge (1600), k=1023 is the left edge (165)
+            for (int k = 0; k < 1023; k++) {
+                // We map the playhead (replayPosition) to the right edge.
+                // As k increases, we look back in the file indices.
                 int pos1 = replayPosition - k;
                 int pos2 = replayPosition - (k + 1);
 
+                // If the file is short, we only draw what we have
                 if (pos1 >= 0 && pos1 < replayList.size() && pos2 >= 0 && pos2 < replayList.size()) {
 
                     float x1 = xRightEdge - (k * currentXStep);
@@ -489,7 +497,7 @@ public class GameScreen extends Screen implements Input {
                     float x2 = xRightEdge - ((k + 1) * currentXStep);
                     float y2 = (float) (screenCenterY - (replayList.get(pos2) - dataBaseline) * gain);
 
-                    // Clamping with the new widened limits
+                    // Clamping
                     if (y1 < topLimit) y1 = topLimit;
                     if (y1 > bottomLimit) y1 = bottomLimit;
                     if (y2 < topLimit) y2 = topLimit;
@@ -500,17 +508,28 @@ public class GameScreen extends Screen implements Input {
                     lineBuffer[bufferIdx++] = x2;
                     lineBuffer[bufferIdx++] = y2;
 
-                    if (x2 <= 165 || bufferIdx >= lineBuffer.length - 4) break;
+                    if (x2 <= 165) break;
                 }
+                if (bufferIdx >= lineBuffer.length - 4) break;
             }
 
             if (bufferIdx > 0) {
                 canvas.drawLines(lineBuffer, 0, bufferIdx, signalPaint);
             }
 
-            replayPosition += 17;
-            if (replayPosition >= replayList.size()) {
+            // --- SPEED CONTROL ---
+            // Advance the playhead. At 1000Hz, we need to move roughly 17-25 samples
+            // every frame to look real-time.
+            replayPosition += 25;
+
+            // Loop back to start if we reach the end of the file
+            if (replayPosition >= replayList.size() + 1024) {
                 replayPosition = 0;
+            }
+
+            // Force the animation to continue
+            if (GameScreen.view != null) {
+                GameScreen.view.postInvalidate();
             }
         }
 
