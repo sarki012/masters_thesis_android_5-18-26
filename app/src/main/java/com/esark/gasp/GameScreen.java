@@ -243,17 +243,33 @@ public class GameScreen extends Screen implements Input {
                             e.printStackTrace();
                         }
                     } else {
-                        // STOP AND SAVE
-                        isRecording = false;
-                        // Give the recordExecutor 500ms to finish writing the last data in the queue
+                        // --- STOP AND SAVE (Graceful Shutdown) ---
+                        // 1. Reset the UI timer/startRecording flag immediately
+                        startRecording = 0;
+
+                        // 2. WAIT before flipping the isRecording flag.
+                        // This allows the background thread to finish writing the last
+                        // few hundred samples arriving from the Bluetooth stream.
                         new Handler(Looper.getMainLooper()).postDelayed(() -> {
-                            if (writer != null) {
-                                writer.flush();
-                                writer.close();
-                                writer = null;
-                                Log.d("RECORD", "File saved and closed.");
-                            }
-                        }, 500);
+
+                            // 3. Now stop the data flow
+                            isRecording = false;
+
+                            // 4. Give the Executor one more tiny moment to finish the last write task
+                            new Handler(Looper.getMainLooper()).postDelayed(() -> {
+                                if (writer != null) {
+                                    try {
+                                        writer.flush();
+                                        writer.close();
+                                        writer = null;
+                                        Log.d("RECORD", "File successfully drained and closed.");
+                                    } catch (Exception e) {
+                                        e.printStackTrace();
+                                    }
+                                }
+                            }, 200); // 200ms to finish the final disk write task
+
+                        }, 800); // 800ms grace period to catch the "tail" of the 1000Hz signal
                     }
                 }
 
