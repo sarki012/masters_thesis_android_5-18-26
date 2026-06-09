@@ -61,7 +61,6 @@ public class ConnectedThread extends Thread {
         double fs = 1000;
         PowerSpectralDensityCalculator psdCalc = null;
 
-        // Local buffer to accumulate samples until we reach the threshold for UI/Math
         double[] localBatch = new double[512];
         int batchIdx = 0;
         final int batchThreshold = 20;
@@ -82,13 +81,13 @@ public class ConnectedThread extends Thread {
                     for (int i = 0; i < bytesRead; i++) {
                         int b = buffer[i] & 0xFF;
 
-                        // 1. Synchronization Marker
+                        // 1. Synchronization Marker 'x'
                         if (b == 'x') {
                             expectingLowByte = false;
                             continue;
                         }
 
-                        // 2. 16-bit Reconstruction
+                        // 2. Binary Parser State Machine
                         if (!expectingLowByte) {
                             tempHighByte = b;
                             expectingLowByte = true;
@@ -98,26 +97,26 @@ public class ConnectedThread extends Thread {
                             double parsedVal = rawVal / 3.0;
                             expectingLowByte = false;
 
-                            // --- NEW RAM RECORDING LOGIC ---
-                            // This captures every single sample immediately.
-                            // Adding to a List in RAM is extremely fast and won't lag the signal.
+                            // --- FIXED RAM RECORDING ---
                             if (GameScreen.isRecording) {
-                                GameScreen.ramRecordBuffer.add(parsedVal);
+                                // We MUST synchronize on the buffer to prevent data loss
+                                synchronized (GameScreen.ramRecordBuffer) {
+                                    GameScreen.ramRecordBuffer.add(parsedVal);
+                                }
                             }
 
-                            // Add to local batch for Display and Math processing
+                            // Add to batch for UI/Math
                             if (batchIdx < localBatch.length) {
                                 localBatch[batchIdx++] = parsedVal;
                             }
 
-                            // 3. Process Batch when threshold is reached (for Display/Math)
                             if (batchIdx >= batchThreshold) {
                                 final int numNew = batchIdx;
                                 final double[] samplesToProcess = new double[numNew];
                                 System.arraycopy(localBatch, 0, samplesToProcess, 0, numNew);
                                 batchIdx = 0;
 
-                                // --- TASK 1: DISPLAY (Async Shift) ---
+                                // TASK: DISPLAY
                                 displayExecutor.execute(() -> {
                                     if (A2DVal != null) {
                                         synchronized (A2DVal) {
@@ -132,7 +131,7 @@ public class ConnectedThread extends Thread {
                                     }
                                 });
 
-                                // --- TASK 2: MATH (Throttled) ---
+                                // TASK: MATH (Throttled)
                                 final PowerSpectralDensityCalculator finalPsdCalc = psdCalc;
                                 if (mathSkipCount++ % 10 == 0 && finalPsdCalc != null) {
                                     mathExecutor.execute(() -> {
@@ -169,6 +168,7 @@ public class ConnectedThread extends Thread {
         mathExecutor.shutdownNow();
         recordExecutor.shutdownNow();
     }
+
 
     private static class SystemClock {
         public static void sleep(long ms) {

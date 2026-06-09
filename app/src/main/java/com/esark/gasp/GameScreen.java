@@ -112,7 +112,9 @@ public class GameScreen extends Screen implements Input {
     public static HandlerThread loggerThread;
     public static Handler loggerHandler;
     // Inside GameScreen.java
-    public static List<Double> ramRecordBuffer = Collections.synchronizedList(new ArrayList<>(20000));
+    // Pre-allocate for 100,000 samples (100 seconds of data)
+    public static List<Double> ramRecordBuffer =
+            java.util.Collections.synchronizedList(new ArrayList<>(100000));
     //Constructor
     public GameScreen(Game game) {
         super(game);
@@ -238,50 +240,48 @@ public class GameScreen extends Screen implements Input {
                         isRecording = true;
                         isReplaying = false;
                         startRecording = 1;      // Start UI timer
-                    }                 else {
-                        // --- STOP RECORDING & SAVE RAM TO SD CARD ---
-                        isRecording = false;    // Stops ConnectedThread from adding new data
-                        startRecording = 0;     // Stops UI timer
+                    } else {
+                        // 1. Give the Bluetooth thread 200ms to finish parsing
+                        // the last bytes currently in the Android OS buffer
+                        new Handler(Looper.getMainLooper()).postDelayed(() -> {
 
-                        // Launch a background thread to handle the slow disk writing
-                        new Thread(() -> {
-                            PrintWriter pw = null;
-                            try {
-                                File path = context.getExternalFilesDir(null);
-                                File file = new File(path, fileName);
+                            isRecording = false; // Stop additions to buffer
+                            startRecording = 0;
 
-                                // 1. Open the file for writing (false = overwrite old data)
-                                pw = new PrintWriter(new BufferedWriter(new OutputStreamWriter(
-                                        new FileOutputStream(file, false)), 65536));
+                            // 2. Launch the background thread to save the snapshot
+                            new Thread(() -> {
+                                try {
+                                    List<Double> snapshot;
+                                    synchronized (ramRecordBuffer) {
+                                        snapshot = new ArrayList<>(ramRecordBuffer);
+                                        ramRecordBuffer.clear();
+                                    }
 
-                                // 2. Create a "Snapshot" copy of the RAM buffer
-                                // We do this inside a synchronized block to prevent
-                                // ConnectedThread from interfering.
-                                List<Double> snapshot;
-                                synchronized (ramRecordBuffer) {
-                                    snapshot = new ArrayList<>(ramRecordBuffer);
-                                    ramRecordBuffer.clear(); // Clear RAM immediately to free memory
+                                    if (snapshot.isEmpty()) {
+                                        Log.e("SAVE", "Buffer was empty! Check ConnectedThread parsing.");
+                                        return;
+                                    }
+
+                                    File path = context.getExternalFilesDir(null);
+                                    File file = new File(path, fileName);
+                                    PrintWriter pw = new PrintWriter(new BufferedWriter(
+                                            new OutputStreamWriter(new FileOutputStream(file, false)), 65536));
+
+                                    for (Double val : snapshot) {
+                                        pw.println(val);
+                                    }
+
+                                    pw.flush();
+                                    pw.close();
+                                    Log.d("SAVE", "Successfully saved " + snapshot.size() + " samples.");
+
+                                } catch (IOException e) {
+                                    e.printStackTrace();
                                 }
+                            }).start();
 
-                                // 3. Write the snapshot to the SD card
-                                for (Double val : snapshot) {
-                                    pw.println(val);
-                                }
-
-                                // 4. CRITICAL: Flush and Close to finalize the 0-byte file
-                                pw.flush();
-                                pw.close();
-
-                                Log.d("SAVE_SYSTEM", "Successfully saved " + snapshot.size() + " samples.");
-
-                            } catch (IOException e) {
-                                Log.e("SAVE_SYSTEM", "Error saving file", e);
-                            } finally {
-                                if (pw != null) pw.close();
-                            }
-                        }).start();
+                        }, 200); // 200ms grace period
                     }
-
                 }
 
                 /////////////////////// Replay Recording ///////////////////////////////////////////
