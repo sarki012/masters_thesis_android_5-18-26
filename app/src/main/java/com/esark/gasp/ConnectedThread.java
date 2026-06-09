@@ -61,9 +61,8 @@ public class ConnectedThread extends Thread {
         double fs = 1000;
         PowerSpectralDensityCalculator psdCalc = null;
 
-        double[] localBatch = new double[512];
-        int batchIdx = 0;
-        final int batchThreshold = 20;
+        // Temporary array to hold samples parsed from a single Bluetooth packet
+        double[] parsedSamples = new double[1024];
 
         while (!Thread.currentThread().isInterrupted()) {
             try {
@@ -78,6 +77,9 @@ public class ConnectedThread extends Thread {
 
                 int bytesRead = mmInStream.read(buffer);
                 if (bytesRead > 0) {
+                    int samplesFound = 0;
+
+                    // 1. PARSE ENTIRE BUFFER FIRST
                     for (int i = 0; i < bytesRead; i++) {
                         int b = buffer[i] & 0xFF;
 
@@ -92,79 +94,74 @@ public class ConnectedThread extends Thread {
                         } else {
                             int lowByte = b;
                             int rawVal = (tempHighByte << 8) | lowByte;
-                            double parsedVal = rawVal / 3.0;
-                            expectingLowByte = false;
-
-                            // Add to batch
-                            if (batchIdx < localBatch.length) {
-                                localBatch[batchIdx++] = parsedVal;
+                            if (samplesFound < parsedSamples.length) {
+                                parsedSamples[samplesFound++] = rawVal / 3.0;
                             }
+                            expectingLowByte = false;
+                        }
+                    }
 
-                            // When we hit the threshold (20 samples), we process the WHOLE batch
-                            if (batchIdx >= batchThreshold) {
-                                final int numNew = batchIdx;
-                                final double[] samplesToProcess = new double[numNew];
-                                System.arraycopy(localBatch, 0, samplesToProcess, 0, numNew);
-                                batchIdx = 0;
+                    // 2. PROCESS THE BATCH IF SAMPLES WERE FOUND
+                    if (samplesFound > 0) {
+                        final int numNew = samplesFound;
+                        final double[] batchCopy = new double[numNew];
+                        System.arraycopy(parsedSamples, 0, batchCopy, 0, numNew);
 
-                                // --- FIX: RECORD THE ENTIRE BATCH ---
-                                // Using the recordExecutor ensures the Bluetooth thread never waits for the SD card.
-                                // Using a StringBuilder inside the executor makes writing 10x faster.
-                                if (GameScreen.isRecording && writer != null) {
-                                    recordExecutor.execute(() -> {
-                                        if (writer != null) {
-                                            StringBuilder sb = new StringBuilder();
-                                            for (double val : samplesToProcess) {
-                                                sb.append(val).append("\n");
-                                            }
-                                            writer.print(sb.toString());
-                                        }
-                                    });
+                        // TASK 1: RECORDING (Async Batch Write)
+                        // This prevents the "180 points" issue by writing everything in one go
+                        if (GameScreen.isRecording && writer != null) {
+                            recordExecutor.execute(() -> {
+                                if (writer != null) {
+                                    StringBuilder sb = new StringBuilder();
+                                    for (double val : batchCopy) {
+                                        sb.append(val).append("\n");
+                                    }
+                                    writer.print(sb.toString());
                                 }
+                            });
+                        }
 
-                                // --- TASK 2: DISPLAY ---
-                                displayExecutor.execute(() -> {
-                                    if (A2DVal != null) {
-                                        synchronized (A2DVal) {
-                                            System.arraycopy(A2DVal, numNew, A2DVal, 0, signalBufferLen - numNew);
-                                            for (int j = 0; j < numNew; j++) {
-                                                A2DVal[signalBufferLen - numNew + j] = samplesToProcess[j];
-                                            }
-                                        }
-                                        if (GameScreen.view != null) {
-                                            GameScreen.view.postInvalidate();
+                        // TASK 2: DISPLAY (Async Shift)
+                        displayExecutor.execute(() -> {
+                            if (A2DVal != null) {
+                                synchronized (A2DVal) {
+                                    System.arraycopy(A2DVal, numNew, A2DVal, 0, signalBufferLen - numNew);
+                                    for (int j = 0; j < numNew; j++) {
+                                        A2DVal[signalBufferLen - numNew + j] = batchCopy[j];
+                                    }
+                                }
+                                if (GameScreen.view != null) {
+                                    GameScreen.view.postInvalidate();
+                                }
+                            }
+                        });
+
+                        // TASK 3: MATH (Throttled)
+                        final PowerSpectralDensityCalculator finalPsdCalc = psdCalc;
+                        if (mathSkipCount++ % 10 == 0 && finalPsdCalc != null) {
+                            mathExecutor.execute(() -> {
+                                if (A2DVal != null) {
+                                    synchronized (A2DVal) {
+                                        System.arraycopy(A2DVal, 0, a2dCopyForMath, 0, signalBufferLen);
+                                    }
+                                    double[] tempResult = finalPsdCalc.calculatePSD(a2dCopyForMath, fs);
+                                    if (tempResult != null && psdResult != null) {
+                                        System.arraycopy(tempResult, 0, psdResult, 0, Math.min(tempResult.length, psdResult.length));
+                                        for (int j = 0; j < psdResult.length; j++) {
+                                            psdResult[j] = psdResult[j] * -1 + 3600;
+                                            if (psdResult[j] < 3165) psdResult[j] = 3165;
                                         }
                                     }
-                                });
-
-                                // --- TASK 3: MATH (Throttled) ---
-                                final PowerSpectralDensityCalculator finalPsdCalc = psdCalc;
-                                if (mathSkipCount++ % 10 == 0 && finalPsdCalc != null) {
-                                    mathExecutor.execute(() -> {
-                                        if (A2DVal != null) {
-                                            synchronized (A2DVal) {
-                                                System.arraycopy(A2DVal, 0, a2dCopyForMath, 0, signalBufferLen);
-                                            }
-                                            double[] tempResult = finalPsdCalc.calculatePSD(a2dCopyForMath, fs);
-                                            if (tempResult != null && psdResult != null) {
-                                                System.arraycopy(tempResult, 0, psdResult, 0, Math.min(tempResult.length, psdResult.length));
-                                                for (int j = 0; j < psdResult.length; j++) {
-                                                    psdResult[j] = psdResult[j] * -1 + 3600;
-                                                    if (psdResult[j] < 3165) psdResult[j] = 3165;
-                                                }
-                                            }
-                                            movingRMS = RMSCalculator.calculateMovingRMS(a2dCopyForMath, 10);
-                                            if (movingRMS != null) {
-                                                smoothedRMS = MovingAverageCalculator.calculateMovingAverage(movingRMS, 20);
-                                            }
-                                            // Flush here on the Math thread (every ~100ms) to ensure data is saved
-                                            if (GameScreen.isRecording && writer != null) {
-                                                writer.flush();
-                                            }
-                                        }
-                                    });
+                                    movingRMS = RMSCalculator.calculateMovingRMS(a2dCopyForMath, 10);
+                                    if (movingRMS != null) {
+                                        smoothedRMS = MovingAverageCalculator.calculateMovingAverage(movingRMS, 20);
+                                    }
+                                    // Flush the file on the math thread (~10 times per second)
+                                    if (writer != null) {
+                                        writer.flush();
+                                    }
                                 }
-                            }
+                            });
                         }
                     }
                 }
