@@ -95,37 +95,34 @@ public class ConnectedThread extends Thread {
                             double parsedVal = rawVal / 3.0;
                             expectingLowByte = false;
 
-                            // --- THE FIX: RECORD HERE ---
-                            // This must be OUTSIDE of any executors or throttled blocks
-                            if (GameScreen.isRecording && GameScreen.writer != null) {
-                                GameScreen.writer.println(parsedVal);
-                            }
-
+                            // Add to batch
                             if (batchIdx < localBatch.length) {
                                 localBatch[batchIdx++] = parsedVal;
                             }
 
+                            // When we hit the threshold (20 samples), we process the WHOLE batch
                             if (batchIdx >= batchThreshold) {
                                 final int numNew = batchIdx;
                                 final double[] samplesToProcess = new double[numNew];
                                 System.arraycopy(localBatch, 0, samplesToProcess, 0, numNew);
                                 batchIdx = 0;
 
-                                // --- TASK 1: RECORDING (Dedicated Disk Thread) ---
-                                // This fixes the SLOWDOWN by moving Disk I/O off the Hot Path
-                            /*    if (GameScreen.isRecording && writer != null) {
+                                // --- FIX: RECORD THE ENTIRE BATCH ---
+                                // Using the recordExecutor ensures the Bluetooth thread never waits for the SD card.
+                                // Using a StringBuilder inside the executor makes writing 10x faster.
+                                if (GameScreen.isRecording && writer != null) {
                                     recordExecutor.execute(() -> {
                                         if (writer != null) {
+                                            StringBuilder sb = new StringBuilder();
                                             for (double val : samplesToProcess) {
-                                                writer.println(val);
+                                                sb.append(val).append("\n");
                                             }
+                                            writer.print(sb.toString());
                                         }
                                     });
                                 }
 
-                             */
-
-                                // --- TASK 2: DISPLAY (High Priority) ---
+                                // --- TASK 2: DISPLAY ---
                                 displayExecutor.execute(() -> {
                                     if (A2DVal != null) {
                                         synchronized (A2DVal) {
@@ -160,7 +157,7 @@ public class ConnectedThread extends Thread {
                                             if (movingRMS != null) {
                                                 smoothedRMS = MovingAverageCalculator.calculateMovingAverage(movingRMS, 20);
                                             }
-                                            // Flush occasionally to ensure data is moving to physical storage
+                                            // Flush here on the Math thread (every ~100ms) to ensure data is saved
                                             if (GameScreen.isRecording && writer != null) {
                                                 writer.flush();
                                             }
