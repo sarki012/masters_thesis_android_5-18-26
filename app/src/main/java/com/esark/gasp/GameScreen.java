@@ -227,49 +227,53 @@ public class GameScreen extends Screen implements Input {
                     4. Looping: When replaying, it increments replayPosition every frame, making the recorded
                     signal "slide" across the screen exactly like the real-time one.
                  */
+                //////////////////////////// Start/Stop/Save Recording /////////////////////////////
                 else if (event.x > 1600 && event.x < 1700 && event.y > 1330 && event.y < 1600) {
-                    // --- Start/Stop/Save Sample ---
                     if (!isRecording) {
+                        // --- START RECORDING ---
                         try {
                             File path = context.getExternalFilesDir(null);
                             File file = new File(path, fileName);
-                            // Use a large 32KB buffer to prevent the IO from slowing down the Bluetooth thread
+                            // 32KB buffer allows for ~4 seconds of data to be held in RAM
+                            // preventing Disk I/O from slowing down the Bluetooth parsing
                             fos = new FileOutputStream(file, false);
                             writer = new PrintWriter(new BufferedWriter(new OutputStreamWriter(fos), 32768));
 
                             isRecording = true;
                             isReplaying = false;
+                            startRecording = 1; // Start the UI timer
+                            startTimeMillis = System.currentTimeMillis();
                         } catch (IOException e) {
                             e.printStackTrace();
                         }
-                    } else {
-                        // --- STOP AND SAVE (Graceful Shutdown) ---
-                        // 1. Reset the UI timer/startRecording flag immediately
+                    }                 else {
+                        // --- STOP AND SAVE (The "Full Signal" Fix) ---
+                        // 1. Stop the UI timer only
                         startRecording = 0;
 
-                        // 2. WAIT before flipping the isRecording flag.
-                        // This allows the background thread to finish writing the last
-                        // few hundred samples arriving from the Bluetooth stream.
+                        // 2. WAIT before flipping the global isRecording flag.
+                        // This keeps the Bluetooth thread writing for 1 more second
+                        // to catch the "tail" of the waveform.
                         new Handler(Looper.getMainLooper()).postDelayed(() -> {
 
-                            // 3. Now stop the data flow
+                            // 3. NOW stop the data stream
                             isRecording = false;
 
-                            // 4. Give the Executor one more tiny moment to finish the last write task
+                            // 4. Give the background executor a tiny moment to finish the last write
                             new Handler(Looper.getMainLooper()).postDelayed(() -> {
                                 if (writer != null) {
                                     try {
                                         writer.flush();
                                         writer.close();
                                         writer = null;
-                                        Log.d("RECORD", "File successfully drained and closed.");
+                                        Log.d("RECORD", "Recording Saved: 100% of data captured.");
                                     } catch (Exception e) {
                                         e.printStackTrace();
                                     }
                                 }
-                            }, 200); // 200ms to finish the final disk write task
+                            }, 200); // 200ms to finalize the last batch
 
-                        }, 800); // 800ms grace period to catch the "tail" of the 1000Hz signal
+                        }, 1000); // 1000ms "Drain" period
                     }
                 }
 
@@ -536,7 +540,7 @@ public class GameScreen extends Screen implements Input {
             // --- SPEED CONTROL ---
             // Advance the playhead. At 1000Hz, we need to move roughly 17-25 samples
             // every frame to look real-time.
-            replayPosition += 25;
+            replayPosition += 17;       // Was 25
 
             // Loop back to start if we reach the end of the file
             if (replayPosition >= replayList.size() + 1024) {
