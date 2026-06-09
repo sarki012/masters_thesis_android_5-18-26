@@ -29,6 +29,7 @@ import java.io.OutputStreamWriter;
 import java.io.PrintWriter;
 import java.text.SimpleDateFormat;
 import java.util.ArrayList;
+import java.util.Collections;
 import java.util.Date;
 import java.util.List;
 import android.os.Handler;         // ADD THIS LINE
@@ -110,6 +111,8 @@ public class GameScreen extends Screen implements Input {
     // Background thread for disk I/O
     public static HandlerThread loggerThread;
     public static Handler loggerHandler;
+    // Inside GameScreen.java
+    public static List<Double> ramRecordBuffer = Collections.synchronizedList(new ArrayList<>(20000));
     //Constructor
     public GameScreen(Game game) {
         super(game);
@@ -231,50 +234,54 @@ public class GameScreen extends Screen implements Input {
                 else if (event.x > 1600 && event.x < 1700 && event.y > 1330 && event.y < 1600) {
                     if (!isRecording) {
                         // --- START RECORDING ---
-                        try {
-                            File path = context.getExternalFilesDir(null);
-                            File file = new File(path, fileName);
-                            // 32KB buffer allows for ~4 seconds of data to be held in RAM
-                            // preventing Disk I/O from slowing down the Bluetooth parsing
-                            fos = new FileOutputStream(file, false);
-                            writer = new PrintWriter(new BufferedWriter(new OutputStreamWriter(fos), 32768));
-
-                            isRecording = true;
-                            isReplaying = false;
-                            startRecording = 1; // Start the UI timer
-                            startTimeMillis = System.currentTimeMillis();
-                        } catch (IOException e) {
-                            e.printStackTrace();
-                        }
+                        ramRecordBuffer.clear(); // Clear RAM for new recording
+                        isRecording = true;
+                        isReplaying = false;
+                        startRecording = 1;      // Start UI timer
                     }                 else {
-                        // --- STOP AND SAVE (The "Full Signal" Fix) ---
-                        // 1. Stop the UI timer only
-                        startRecording = 0;
+                        // --- STOP RECORDING & SAVE RAM TO SD CARD ---
+                        isRecording = false;    // Stops ConnectedThread from adding new data
+                        startRecording = 0;     // Stops UI timer
 
-                        // 2. WAIT before flipping the global isRecording flag.
-                        // This keeps the Bluetooth thread writing for 1 more second
-                        // to catch the "tail" of the waveform.
-                        new Handler(Looper.getMainLooper()).postDelayed(() -> {
+                        // Launch a background thread to handle the slow disk writing
+                        new Thread(() -> {
+                            PrintWriter pw = null;
+                            try {
+                                File path = context.getExternalFilesDir(null);
+                                File file = new File(path, fileName);
 
-                            // 3. NOW stop the data stream
-                            isRecording = false;
+                                // 1. Open the file for writing (false = overwrite old data)
+                                pw = new PrintWriter(new BufferedWriter(new OutputStreamWriter(
+                                        new FileOutputStream(file, false)), 65536));
 
-                            // 4. Give the background executor a tiny moment to finish the last write
-                            new Handler(Looper.getMainLooper()).postDelayed(() -> {
-                                if (writer != null) {
-                                    try {
-                                        writer.flush();
-                                        writer.close();
-                                        writer = null;
-                                        Log.d("RECORD", "Recording Saved: 100% of data captured.");
-                                    } catch (Exception e) {
-                                        e.printStackTrace();
-                                    }
+                                // 2. Create a "Snapshot" copy of the RAM buffer
+                                // We do this inside a synchronized block to prevent
+                                // ConnectedThread from interfering.
+                                List<Double> snapshot;
+                                synchronized (ramRecordBuffer) {
+                                    snapshot = new ArrayList<>(ramRecordBuffer);
+                                    ramRecordBuffer.clear(); // Clear RAM immediately to free memory
                                 }
-                            }, 200); // 200ms to finalize the last batch
 
-                        }, 1000); // 1000ms "Drain" period
+                                // 3. Write the snapshot to the SD card
+                                for (Double val : snapshot) {
+                                    pw.println(val);
+                                }
+
+                                // 4. CRITICAL: Flush and Close to finalize the 0-byte file
+                                pw.flush();
+                                pw.close();
+
+                                Log.d("SAVE_SYSTEM", "Successfully saved " + snapshot.size() + " samples.");
+
+                            } catch (IOException e) {
+                                Log.e("SAVE_SYSTEM", "Error saving file", e);
+                            } finally {
+                                if (pw != null) pw.close();
+                            }
+                        }).start();
                     }
+
                 }
 
                 /////////////////////// Replay Recording ///////////////////////////////////////////
