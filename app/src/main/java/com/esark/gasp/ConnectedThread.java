@@ -95,13 +95,11 @@ public class ConnectedThread extends Thread {
                             double parsedVal = rawVal / 3.0;
                             expectingLowByte = false;
 
-                            // --- FIX 1: WRITE TO FILE IMMEDIATELY ---
-                            // Do not offload this to an executor. Writing to a buffered
-                            // writer is extremely fast and ensures no data is lost
-                            // when the recording is toggled off.
-                    //        if (GameScreen.isRecording && writer != null) {
-                      //          writer.println(parsedVal);
-                        //    }
+                            // --- THE FIX: RECORD HERE ---
+                            // This must be OUTSIDE of any executors or throttled blocks
+                            if (GameScreen.isRecording && GameScreen.writer != null) {
+                                GameScreen.writer.println(parsedVal);
+                            }
 
                             if (batchIdx < localBatch.length) {
                                 localBatch[batchIdx++] = parsedVal;
@@ -113,7 +111,21 @@ public class ConnectedThread extends Thread {
                                 System.arraycopy(localBatch, 0, samplesToProcess, 0, numNew);
                                 batchIdx = 0;
 
-                                // TASK 1: DISPLAY & RECORDING (High Priority)
+                                // --- TASK 1: RECORDING (Dedicated Disk Thread) ---
+                                // This fixes the SLOWDOWN by moving Disk I/O off the Hot Path
+                            /*    if (GameScreen.isRecording && writer != null) {
+                                    recordExecutor.execute(() -> {
+                                        if (writer != null) {
+                                            for (double val : samplesToProcess) {
+                                                writer.println(val);
+                                            }
+                                        }
+                                    });
+                                }
+
+                             */
+
+                                // --- TASK 2: DISPLAY (High Priority) ---
                                 displayExecutor.execute(() -> {
                                     if (A2DVal != null) {
                                         synchronized (A2DVal) {
@@ -128,29 +140,7 @@ public class ConnectedThread extends Thread {
                                     }
                                 });
 
-                                // TASK 2: RECORDING (Dedicated Disk Thread)
-                                // TASK 2: RECORDING (Dedicated Disk Thread)
-                                if (GameScreen.isRecording && writer != null) {
-                                    // We capture the samplesToProcess array for the background thread
-                                    final double[] recordBatch = samplesToProcess;
-
-                                    recordExecutor.execute(() -> {
-                                        // Use a local reference to the writer to avoid NullPointer if closed mid-write
-                                        PrintWriter currentWriter = writer;
-                                        if (currentWriter != null) {
-                                            // Build a single string for the whole batch to minimize disk "hits"
-                                            StringBuilder sb = new StringBuilder();
-                                            for (double val : recordBatch) {
-                                                sb.append(val).append("\n");
-                                            }
-                                            currentWriter.print(sb.toString());
-                                            // Do NOT flush here; it slows down the thread.
-                                            // The BufferedWriter handles it.
-                                        }
-                                    });
-                                }
-
-                                // Offload Math
+                                // --- TASK 3: MATH (Throttled) ---
                                 final PowerSpectralDensityCalculator finalPsdCalc = psdCalc;
                                 if (mathSkipCount++ % 10 == 0 && finalPsdCalc != null) {
                                     mathExecutor.execute(() -> {
@@ -170,9 +160,7 @@ public class ConnectedThread extends Thread {
                                             if (movingRMS != null) {
                                                 smoothedRMS = MovingAverageCalculator.calculateMovingAverage(movingRMS, 20);
                                             }
-
-                                            // --- FIX 2: PERIODIC FLUSH ---
-                                            // Periodically push data from RAM to disk
+                                            // Flush occasionally to ensure data is moving to physical storage
                                             if (GameScreen.isRecording && writer != null) {
                                                 writer.flush();
                                             }
@@ -191,6 +179,7 @@ public class ConnectedThread extends Thread {
         }
         displayExecutor.shutdownNow();
         mathExecutor.shutdownNow();
+        recordExecutor.shutdownNow();
     }
 
     private static class SystemClock {
