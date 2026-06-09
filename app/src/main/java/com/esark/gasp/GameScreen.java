@@ -7,6 +7,8 @@ import android.content.Intent;
 import android.graphics.Canvas;
 import android.graphics.Color;
 import android.graphics.Paint;
+import android.os.HandlerThread;
+import android.os.Looper;
 import android.util.Log;
 
 import com.esark.framework.Game;
@@ -29,6 +31,7 @@ import java.text.SimpleDateFormat;
 import java.util.ArrayList;
 import java.util.Date;
 import java.util.List;
+import android.os.Handler;         // ADD THIS LINE
 
 import android.graphics.Canvas;
 import android.graphics.Paint;
@@ -104,9 +107,18 @@ public class GameScreen extends Screen implements Input {
     private final float[] lineBuffer = new float[(1024 - 1) * 4];
     // Initialize the Paint object
     private final Paint signalPaint = new Paint();
+    // Background thread for disk I/O
+    public static HandlerThread loggerThread;
+    public static Handler loggerHandler;
     //Constructor
     public GameScreen(Game game) {
         super(game);
+        // Create a dedicated thread for writing to disk
+        if (loggerThread == null) {
+            loggerThread = new HandlerThread("DiskLogger");
+            loggerThread.start();
+            loggerHandler = new Handler(loggerThread.getLooper());
+        }
         signalPaint.setAntiAlias(true);
         signalPaint.setStrokeWidth(5.0f);
         signalPaint.setColor(android.graphics.Color.BLACK);
@@ -233,17 +245,15 @@ public class GameScreen extends Screen implements Input {
                     } else {
                         // STOP AND SAVE
                         isRecording = false;
-                        // Give the background thread a moment to finish its current batch write
-                        try {
-                            Thread.sleep(100);
-                        } catch (InterruptedException e) {
-                            e.printStackTrace();
-                        }
-                        if (writer != null) {
-                            writer.flush();
-                            writer.close();
-                            writer = null;
-                        }
+                        // Give the recordExecutor 500ms to finish writing the last data in the queue
+                        new Handler(Looper.getMainLooper()).postDelayed(() -> {
+                            if (writer != null) {
+                                writer.flush();
+                                writer.close();
+                                writer = null;
+                                Log.d("RECORD", "File saved and closed.");
+                            }
+                        }, 500);
                     }
                 }
 

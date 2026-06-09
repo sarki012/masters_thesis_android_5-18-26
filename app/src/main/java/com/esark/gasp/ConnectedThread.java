@@ -17,6 +17,7 @@ import com.esark.framework.AndroidGame;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
+import java.io.PrintWriter;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 
@@ -115,43 +116,39 @@ public class ConnectedThread extends Thread {
                                 // TASK 1: DISPLAY & RECORDING (High Priority)
                                 displayExecutor.execute(() -> {
                                     if (A2DVal != null) {
-                                        // 1. BUILD THE BATCH STRING FIRST (Fast)
-                                        StringBuilder sb = null;
-                                        if (GameScreen.isRecording && writer != null) {
-                                            sb = new StringBuilder();
-                                        }
-
                                         synchronized (A2DVal) {
                                             System.arraycopy(A2DVal, numNew, A2DVal, 0, signalBufferLen - numNew);
                                             for (int j = 0; j < numNew; j++) {
-                                                double val = samplesToProcess[j];
-                                                A2DVal[signalBufferLen - numNew + j] = val;
-
-                                                // Add to string builder instead of writing to disk immediately
-                                                if (sb != null) {
-                                                    sb.append(val).append("\n");
-                                                }
+                                                A2DVal[signalBufferLen - numNew + j] = samplesToProcess[j];
                                             }
                                         }
-
-                                        // 2. WRITE TO DISK OUTSIDE THE SYNCHRONIZED BLOCK
-                                        // This prevents the "Slowdown" because the UI thread doesn't
-                                        // have to wait for the Disk SD card to respond.
-                                        if (sb != null && writer != null) {
-                                            try {
-                                                writer.print(sb.toString());
-                                                // Flush only occasionally (handled by math thread or button)
-                                            } catch (Exception e) {
-                                                // If error, stop recording to prevent crash
-                                                GameScreen.isRecording = false;
-                                            }
-                                        }
-
                                         if (GameScreen.view != null) {
                                             GameScreen.view.postInvalidate();
                                         }
                                     }
                                 });
+
+                                // TASK 2: RECORDING (Dedicated Disk Thread)
+                                // TASK 2: RECORDING (Dedicated Disk Thread)
+                                if (GameScreen.isRecording && writer != null) {
+                                    // We capture the samplesToProcess array for the background thread
+                                    final double[] recordBatch = samplesToProcess;
+
+                                    recordExecutor.execute(() -> {
+                                        // Use a local reference to the writer to avoid NullPointer if closed mid-write
+                                        PrintWriter currentWriter = writer;
+                                        if (currentWriter != null) {
+                                            // Build a single string for the whole batch to minimize disk "hits"
+                                            StringBuilder sb = new StringBuilder();
+                                            for (double val : recordBatch) {
+                                                sb.append(val).append("\n");
+                                            }
+                                            currentWriter.print(sb.toString());
+                                            // Do NOT flush here; it slows down the thread.
+                                            // The BufferedWriter handles it.
+                                        }
+                                    });
+                                }
 
                                 // Offload Math
                                 final PowerSpectralDensityCalculator finalPsdCalc = psdCalc;
