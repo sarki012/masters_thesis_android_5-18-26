@@ -237,22 +237,29 @@ public class GameScreen extends Screen implements Input {
                 else if (event.x > 1600 && event.x < 1700 && event.y > 1330 && event.y < 1600) {
                     if (!isRecording) {
                         // --- START RECORDING ---
-                        ramRecordBuffer.clear(); // Clear RAM for new recording
+                        synchronized (ramRecordBuffer) {
+                            ramRecordBuffer.clear(); // Clear RAM for new recording
+                        }
                         isRecording = true;
                         isReplaying = false;
                         startRecording = 1;      // Start UI timer
+                        startTimeMillis = System.currentTimeMillis();
                     } else {
-                        // 1. Give the Bluetooth thread 200ms to finish parsing
-                        // the last bytes currently in the Android OS buffer
+                        // --- STOP AND SAVE (Full Capture Fix) ---
+                        startRecording = 0; // Stop UI clock immediately
+
+                        // 1. Give the Bluetooth thread 800ms to finish parsing
+                        // the last samples currently in the Android OS hardware buffer
                         new Handler(Looper.getMainLooper()).postDelayed(() -> {
 
-                            isRecording = false; // Stop additions to buffer
-                            startRecording = 0;
+                            // 2. NOW stop the data flow into the RAM buffer
+                            isRecording = false;
 
-                            // 2. Launch the background thread to save the snapshot
+                            // 3. Save the data in a background thread
                             new Thread(() -> {
                                 try {
                                     List<Double> snapshot;
+                                    // Take a snapshot and clear the buffer immediately
                                     synchronized (ramRecordBuffer) {
                                         snapshot = new ArrayList<>(ramRecordBuffer);
                                         ramRecordBuffer.clear();
@@ -265,6 +272,7 @@ public class GameScreen extends Screen implements Input {
 
                                     File path = context.getExternalFilesDir(null);
                                     File file = new File(path, fileName);
+                                    // Use a massive buffer (64KB) for writing 1000Hz data
                                     PrintWriter pw = new PrintWriter(new BufferedWriter(
                                             new OutputStreamWriter(new FileOutputStream(file, false)), 65536));
 
@@ -274,38 +282,23 @@ public class GameScreen extends Screen implements Input {
 
                                     pw.flush();
                                     pw.close();
-                                    Log.d("SAVE", "Successfully saved " + snapshot.size() + " samples.");
+                                    Log.d("SAVE", "SUCCESS! Saved " + snapshot.size() + " samples.");
 
                                 } catch (IOException e) {
                                     e.printStackTrace();
                                 }
                             }).start();
 
-                        }, 300); // 200ms grace period
+                        }, 800); // Grace period to catch the "tail" of the signal
                     }
-                }
+                } // This brace correctly closes the Start/Stop button block
 
                 /////////////////////// Replay Recording ///////////////////////////////////////////
                 else if (event.x > 1600 && event.x < 1700 && event.y > 1610 && event.y < 1920) {
-                    // --- Replay Button ---
-                    /*
-                    1. loadReplayData(context);: This calls a helper method that opens your sEMG_Data.csv
-                    file, reads every line (which contains a sensor value), converts it to a number, and
-                    stores it in the replayList array.
-                    2. replayPosition = 1000;: This sets the starting point (the "playhead") in your
-                    recorded data. It starts at index 1000 so that when the drawing loop draws "backwards"
-                    from that point to fill the screen (which is about 1000 pixels wide), there is enough
-                    historical data to show a full screen of the waveform immediately.
-                    3. isReplaying = true;: This is a flag that tells the rest of the app to stop drawing
-                    live data from the sensor and start drawing the data from the replayList instead.
-                    4. isRecording = false;: This ensures that if you were currently recording, it stops.
-                    This prevents the app from trying to read and write to the same file at the same time.
-                     */
                     if (!isReplaying) {
                         loadReplayData(context);
-                        // FIX: Initialize replayPosition so we can "look back" one screen-width of data immediately
                         if (!replayList.isEmpty()) {
-                            // Approximately 1000 samples are needed to fill the horizontal screen width
+                            // Start at 0 to see the wave emerge from the right side
                             replayPosition = 0;
                             isReplaying = true;
                             isRecording = false;
@@ -318,8 +311,10 @@ public class GameScreen extends Screen implements Input {
                 if (rmsAmpThresh < 0) {
                     rmsAmpThresh = 0;
                 }
-                //else if (landscape == 1 && event.x < 100 && event.y > 230)
-            } else if (event.type == TouchEvent.TOUCH_UP) {
+
+            } // This brace closes the if (TOUCH_DOWN || TOUCH_DRAGGED) block
+
+            else if (event.type == TouchEvent.TOUCH_UP) {
                 // Reset flags on any lift to ensure buttons remain responsive
                 leftUpCount = 0;
                 leftDownCount = 0;
@@ -327,7 +322,7 @@ public class GameScreen extends Screen implements Input {
                 rightDownCount = 0;
                 manualPatientEventUpCount = 0;
             }
-        }
+        } // This brace closes the for-loop
 
         //   if(landscape == 0) {
 

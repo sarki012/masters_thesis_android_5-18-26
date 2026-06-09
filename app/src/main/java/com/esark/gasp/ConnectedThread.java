@@ -104,7 +104,11 @@ public class ConnectedThread extends Thread {
                             // We only record if the flag is true.
                             // We do NOT use synchronized here because it slows down the thread.
                             if (GameScreen.isRecording) {
-                                ramBuffer.add(parsedVal);
+                                // Synchronizing on the buffer prevents ConcurrentModificationException
+                                // when the Stop button tries to save/clear the list.
+                                synchronized (ramBuffer) {
+                                    ramBuffer.add(parsedVal);
+                                }
                             }
 
                             // Add to UI batch
