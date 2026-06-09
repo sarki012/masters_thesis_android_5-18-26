@@ -113,8 +113,9 @@ public class GameScreen extends Screen implements Input {
     public static Handler loggerHandler;
     // Inside GameScreen.java
     // Pre-allocate for 100,000 samples (100 seconds of data)
-    public static List<Double> ramRecordBuffer =
-            java.util.Collections.synchronizedList(new ArrayList<>(100000));
+    // USE THIS DECLARATION in GameScreen.java
+// Pre-allocate 100,000 samples (~100 seconds) so the list doesn't have to resize
+    public static List<Double> ramRecordBuffer = java.util.Collections.synchronizedList(new ArrayList<>(100000));
     //Constructor
     public GameScreen(Game game) {
         super(game);
@@ -280,7 +281,7 @@ public class GameScreen extends Screen implements Input {
                                 }
                             }).start();
 
-                        }, 200); // 200ms grace period
+                        }, 300); // 200ms grace period
                     }
                 }
 

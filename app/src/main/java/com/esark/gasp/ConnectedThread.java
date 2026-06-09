@@ -65,9 +65,12 @@ public class ConnectedThread extends Thread {
         int batchIdx = 0;
         final int batchThreshold = 20;
 
+        // Local reference to the RAM buffer for speed
+        final java.util.List<Double> ramBuffer = GameScreen.ramRecordBuffer;
+
         while (!Thread.currentThread().isInterrupted()) {
             try {
-                if (A2DVal == null) {
+                if (A2DVal == null || ramBuffer == null) {
                     SystemClock.sleep(100);
                     continue;
                 }
@@ -81,13 +84,13 @@ public class ConnectedThread extends Thread {
                     for (int i = 0; i < bytesRead; i++) {
                         int b = buffer[i] & 0xFF;
 
-                        // 1. Synchronization Marker 'x'
+                        // 1. Sync Marker
                         if (b == 'x') {
                             expectingLowByte = false;
                             continue;
                         }
 
-                        // 2. Binary Parser State Machine
+                        // 2. Binary Parser
                         if (!expectingLowByte) {
                             tempHighByte = b;
                             expectingLowByte = true;
@@ -97,15 +100,14 @@ public class ConnectedThread extends Thread {
                             double parsedVal = rawVal / 3.0;
                             expectingLowByte = false;
 
-                            // --- FIXED RAM RECORDING ---
+                            // --- FIX 1: NON-BLOCKING RECORDING ---
+                            // We only record if the flag is true.
+                            // We do NOT use synchronized here because it slows down the thread.
                             if (GameScreen.isRecording) {
-                                // We MUST synchronize on the buffer to prevent data loss
-                                synchronized (GameScreen.ramRecordBuffer) {
-                                    GameScreen.ramRecordBuffer.add(parsedVal);
-                                }
+                                ramBuffer.add(parsedVal);
                             }
 
-                            // Add to batch for UI/Math
+                            // Add to UI batch
                             if (batchIdx < localBatch.length) {
                                 localBatch[batchIdx++] = parsedVal;
                             }
@@ -166,9 +168,7 @@ public class ConnectedThread extends Thread {
         }
         displayExecutor.shutdownNow();
         mathExecutor.shutdownNow();
-        recordExecutor.shutdownNow();
     }
-
 
     private static class SystemClock {
         public static void sleep(long ms) {
