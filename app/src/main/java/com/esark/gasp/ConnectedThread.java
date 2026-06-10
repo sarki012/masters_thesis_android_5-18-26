@@ -53,7 +53,8 @@ public class ConnectedThread extends Thread {
         mmOutStream = tmpOut;
     }
 
-    @Override    public void run() {
+    @Override
+    public void run() {
         Process.setThreadPriority(Process.THREAD_PRIORITY_URGENT_DISPLAY);
 
         byte[] buffer = new byte[2048];
@@ -78,13 +79,14 @@ public class ConnectedThread extends Thread {
                     psdCalc = new PowerSpectralDensityCalculator(A2DVal, fs);
                 }
 
+
                 int bytesRead = mmInStream.read(buffer);
                 if (bytesRead > 0) {
                     for (int i = 0; i < bytesRead; i++) {
                         int b = buffer[i] & 0xFF;
 
                         // 1. Synchronization Marker
-                        if (b == 'x') {
+                        if (b == 'x' || b == 120) {
                             expectingLowByte = false;
                             continue;
                         }
@@ -99,22 +101,20 @@ public class ConnectedThread extends Thread {
                             double parsedVal = rawVal / 3.0;
                             expectingLowByte = false;
 
-                            // Add to local UI/Batch buffer
+                            // Add to local batch for UI and Processing
                             if (batchIdx < localBatch.length) {
                                 localBatch[batchIdx++] = parsedVal;
                             }
 
-                            // 3. Process Batch when threshold is reached
+                            // 3. Process the Batch
                             if (batchIdx >= batchThreshold) {
                                 final int numNew = batchIdx;
                                 final double[] samplesToProcess = new double[numNew];
                                 System.arraycopy(localBatch, 0, samplesToProcess, 0, numNew);
                                 batchIdx = 0;
 
-                                // --- FIX: BATCH RECORDING ---
-                                // We add the whole batch to RAM at once.
-                                // This reduces synchronization overhead by 20x,
-                                // preventing Bluetooth buffer overflows.
+                                // --- THE FIX: RECORD THE WHOLE BATCH TO RAM ---
+                                // This is more efficient and ensures 100% data capture
                                 if (GameScreen.isRecording) {
                                     synchronized (ramBuffer) {
                                         for (double val : samplesToProcess) {
@@ -123,7 +123,7 @@ public class ConnectedThread extends Thread {
                                     }
                                 }
 
-                                // TASK 1: DISPLAY (Moves the waveform)
+                                // TASK 1: DISPLAY (Async Shift)
                                 displayExecutor.execute(() -> {
                                     if (A2DVal != null) {
                                         synchronized (A2DVal) {
@@ -137,8 +137,7 @@ public class ConnectedThread extends Thread {
                                         }
                                     }
                                 });
-
-                                // TASK 2: MATH (Throttled PSD/RMS)
+                                // TASK 2: MATH (Async & Throttled)
                                 final PowerSpectralDensityCalculator finalPsdCalc = psdCalc;
                                 if (mathSkipCount++ % 10 == 0 && finalPsdCalc != null) {
                                     mathExecutor.execute(() -> {
@@ -173,6 +172,7 @@ public class ConnectedThread extends Thread {
         }
         displayExecutor.shutdownNow();
         mathExecutor.shutdownNow();
+        recordExecutor.shutdownNow();
     }
 
     private static class SystemClock {

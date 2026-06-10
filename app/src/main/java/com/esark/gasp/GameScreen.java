@@ -98,7 +98,7 @@ public class GameScreen extends Screen implements Input {
 
     // Recording and Replay Variables
     public static volatile boolean isRecording = false;
-    public static boolean isReplaying = false;
+    public static volatile boolean isReplaying = false;
     private static FileOutputStream fos;
     public static volatile PrintWriter writer = null;
     private static List<Double> replayList = new ArrayList<>();
@@ -235,61 +235,46 @@ public class GameScreen extends Screen implements Input {
                  */
                 //////////////////////////// Start/Stop/Save Recording /////////////////////////////
                 else if (event.x > 1600 && event.x < 1700 && event.y > 1330 && event.y < 1600) {
-                    if (!isRecording) {
-                        // --- START RECORDING ---
-                        synchronized (ramRecordBuffer) {
-                            ramRecordBuffer.clear(); // Clear RAM for new recording
-                        }
-                        isRecording = true;
-                        isReplaying = false;
-                        startRecording = 1;      // Start UI timer
-                        startTimeMillis = System.currentTimeMillis();
-                    } else {
-                        // --- STOP AND SAVE (Full Capture Fix) ---
-                        startRecording = 0; // Stop UI clock immediately
+                    if (event.type == TouchEvent.TOUCH_DOWN) { // ONLY trigger on DOWN, not DRAGGED
+                        if (!isRecording) {
+                            // --- START ---
+                            synchronized (ramRecordBuffer) {
+                                ramRecordBuffer.clear();
+                            }
+                            isRecording = true;
+                            isReplaying = false;
+                            Log.d("RECORD", "Recording Started");
+                        } else {
+                            // --- STOP ---
+                            isRecording = false; // Stop adding to RAM immediately
 
-                        // 1. Give the Bluetooth thread 800ms to finish parsing
-                        // the last samples currently in the Android OS hardware buffer
-                        new Handler(Looper.getMainLooper()).postDelayed(() -> {
-
-                            // 2. NOW stop the data flow into the RAM buffer
-                            isRecording = false;
-
-                            // 3. Save the data in a background thread
+                            // Launch the Save Thread
                             new Thread(() -> {
                                 try {
                                     List<Double> snapshot;
-                                    // Take a snapshot and clear the buffer immediately
                                     synchronized (ramRecordBuffer) {
                                         snapshot = new ArrayList<>(ramRecordBuffer);
-                                        ramRecordBuffer.clear();
+                                        // Do NOT clear here yet
                                     }
 
-                                    if (snapshot.isEmpty()) {
-                                        Log.e("SAVE", "Buffer was empty! Check ConnectedThread parsing.");
-                                        return;
+                                    if (snapshot.size() > 0) {
+                                        File path = context.getExternalFilesDir(null);
+                                        File file = new File(path, "sEMG_Data.csv");
+                                        PrintWriter pw = new PrintWriter(new BufferedWriter(
+                                                new OutputStreamWriter(new FileOutputStream(file, false)), 65536));
+
+                                        for (Double val : snapshot) {
+                                            pw.println(val);
+                                        }
+                                        pw.flush();
+                                        pw.close();
+                                        Log.d("RECORD", "Saved Samples: " + snapshot.size());
                                     }
-
-                                    File path = context.getExternalFilesDir(null);
-                                    File file = new File(path, fileName);
-                                    // Use a massive buffer (64KB) for writing 1000Hz data
-                                    PrintWriter pw = new PrintWriter(new BufferedWriter(
-                                            new OutputStreamWriter(new FileOutputStream(file, false)), 65536));
-
-                                    for (Double val : snapshot) {
-                                        pw.println(val);
-                                    }
-
-                                    pw.flush();
-                                    pw.close();
-                                    Log.d("SAVE", "SUCCESS! Saved " + snapshot.size() + " samples.");
-
                                 } catch (IOException e) {
                                     e.printStackTrace();
                                 }
                             }).start();
-
-                        }, 800); // Grace period to catch the "tail" of the signal
+                        }
                     }
                 } // This brace correctly closes the Start/Stop button block
 
