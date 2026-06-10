@@ -53,8 +53,7 @@ public class ConnectedThread extends Thread {
         mmOutStream = tmpOut;
     }
 
-    @Override
-    public void run() {
+    @Override    public void run() {
         Process.setThreadPriority(Process.THREAD_PRIORITY_URGENT_DISPLAY);
 
         byte[] buffer = new byte[2048];
@@ -84,13 +83,13 @@ public class ConnectedThread extends Thread {
                     for (int i = 0; i < bytesRead; i++) {
                         int b = buffer[i] & 0xFF;
 
-                        // 1. Sync Marker
+                        // 1. Synchronization Marker
                         if (b == 'x') {
                             expectingLowByte = false;
                             continue;
                         }
 
-                        // 2. Binary Parser
+                        // 2. Binary Parser State Machine
                         if (!expectingLowByte) {
                             tempHighByte = b;
                             expectingLowByte = true;
@@ -100,29 +99,31 @@ public class ConnectedThread extends Thread {
                             double parsedVal = rawVal / 3.0;
                             expectingLowByte = false;
 
-                            // --- FIX 1: NON-BLOCKING RECORDING ---
-                            // We only record if the flag is true.
-                            // We do NOT use synchronized here because it slows down the thread.
-                            if (GameScreen.isRecording) {
-                                // Synchronizing on the buffer prevents ConcurrentModificationException
-                                // when the Stop button tries to save/clear the list.
-                                synchronized (ramBuffer) {
-                                    ramBuffer.add(parsedVal);
-                                }
-                            }
-
-                            // Add to UI batch
+                            // Add to local UI/Batch buffer
                             if (batchIdx < localBatch.length) {
                                 localBatch[batchIdx++] = parsedVal;
                             }
 
+                            // 3. Process Batch when threshold is reached
                             if (batchIdx >= batchThreshold) {
                                 final int numNew = batchIdx;
                                 final double[] samplesToProcess = new double[numNew];
                                 System.arraycopy(localBatch, 0, samplesToProcess, 0, numNew);
                                 batchIdx = 0;
 
-                                // TASK: DISPLAY
+                                // --- FIX: BATCH RECORDING ---
+                                // We add the whole batch to RAM at once.
+                                // This reduces synchronization overhead by 20x,
+                                // preventing Bluetooth buffer overflows.
+                                if (GameScreen.isRecording) {
+                                    synchronized (ramBuffer) {
+                                        for (double val : samplesToProcess) {
+                                            ramBuffer.add(val);
+                                        }
+                                    }
+                                }
+
+                                // TASK 1: DISPLAY (Moves the waveform)
                                 displayExecutor.execute(() -> {
                                     if (A2DVal != null) {
                                         synchronized (A2DVal) {
@@ -137,7 +138,7 @@ public class ConnectedThread extends Thread {
                                     }
                                 });
 
-                                // TASK: MATH (Throttled)
+                                // TASK 2: MATH (Throttled PSD/RMS)
                                 final PowerSpectralDensityCalculator finalPsdCalc = psdCalc;
                                 if (mathSkipCount++ % 10 == 0 && finalPsdCalc != null) {
                                     mathExecutor.execute(() -> {
