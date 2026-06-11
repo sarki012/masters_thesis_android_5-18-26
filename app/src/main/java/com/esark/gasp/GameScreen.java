@@ -115,7 +115,10 @@ public class GameScreen extends Screen implements Input {
     // Pre-allocate for 100,000 samples (100 seconds of data)
     // USE THIS DECLARATION in GameScreen.java
 // Pre-allocate 100,000 samples (~100 seconds) so the list doesn't have to resize
-    public static List<Double> ramRecordBuffer = java.util.Collections.synchronizedList(new ArrayList<>(100000));
+  //  public static List<Double> ramRecordBuffer = java.util.Collections.synchronizedList(new ArrayList<>(100000));
+    // Inside GameScreen.java - replace your current ramRecordBuffer declaration
+    public static double[] ramRecordBuffer = new double[300000]; // Fits 5 minutes at 1000Hz
+    public static int ramRecordBufferIdx = 0;
     //Constructor
     public GameScreen(Game game) {
         super(game);
@@ -239,7 +242,8 @@ public class GameScreen extends Screen implements Input {
                         if (!isRecording) {
                             // --- START ---
                             synchronized (ramRecordBuffer) {
-                                ramRecordBuffer.clear();
+                                // Reset the index pointer to start recording at the beginning of the array
+                                ramRecordBufferIdx = 0;
                             }
                             isRecording = true;
                             isReplaying = false;
@@ -249,30 +253,22 @@ public class GameScreen extends Screen implements Input {
                             isRecording = false; // Stop adding to RAM immediately
 
                             // Launch the Save Thread
+                            // Inside GameScreen.java Stop logic
                             new Thread(() -> {
                                 try {
-                                    List<Double> snapshot;
+                                    File path = context.getExternalFilesDir(null);
+                                    File file = new File(path, fileName);
+                                    PrintWriter pw = new PrintWriter(new BufferedWriter(new OutputStreamWriter(new FileOutputStream(file, false)), 65536));
+
                                     synchronized (ramRecordBuffer) {
-                                        snapshot = new ArrayList<>(ramRecordBuffer);
-                                        // Do NOT clear here yet
-                                    }
-
-                                    if (snapshot.size() > 0) {
-                                        File path = context.getExternalFilesDir(null);
-                                        File file = new File(path, "sEMG_Data.csv");
-                                        PrintWriter pw = new PrintWriter(new BufferedWriter(
-                                                new OutputStreamWriter(new FileOutputStream(file, false)), 65536));
-
-                                        for (Double val : snapshot) {
-                                            pw.println(val);
+                                        for (int k = 0; k < ramRecordBufferIdx; k++) {
+                                            pw.println(ramRecordBuffer[k]);
                                         }
-                                        pw.flush();
-                                        pw.close();
-                                        Log.d("RECORD", "Saved Samples: " + snapshot.size());
+                                        ramRecordBufferIdx = 0; // Reset for next recording
                                     }
-                                } catch (IOException e) {
-                                    e.printStackTrace();
-                                }
+                                    pw.flush();
+                                    pw.close();
+                                } catch (IOException e) { e.printStackTrace(); }
                             }).start();
                         }
                     }
