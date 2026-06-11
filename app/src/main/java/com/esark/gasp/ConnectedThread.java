@@ -4,6 +4,7 @@ import static com.esark.framework.AndroidGame.signalBufferLen;
 import static com.esark.gasp.GameScreen.A2DVal;
 import static com.esark.gasp.GameScreen.movingRMS;
 import static com.esark.gasp.GameScreen.psdResult;
+import static com.esark.gasp.GameScreen.ramRecordBuffer;
 import static com.esark.gasp.GameScreen.smoothedRMS;
 import static com.esark.gasp.GameScreen.writer;
 
@@ -61,16 +62,12 @@ public class ConnectedThread extends Thread {
         double fs = 1000;
         PowerSpectralDensityCalculator psdCalc = null;
 
-        double[] localBatch = new double[512];
-        int batchIdx = 0;
-        final int batchThreshold = 20;
-
-        // Local reference to the RAM buffer for speed
-        final java.util.List<Double> ramBuffer = GameScreen.ramRecordBuffer;
+        // Temporary array to hold samples parsed from ONE Bluetooth packet
+        double[] readPacketSamples = new double[1024];
 
         while (!Thread.currentThread().isInterrupted()) {
             try {
-                if (A2DVal == null || ramBuffer == null) {
+                if (A2DVal == null || ramRecordBuffer == null) {
                     SystemClock.sleep(100);
                     continue;
                 }
@@ -79,19 +76,19 @@ public class ConnectedThread extends Thread {
                     psdCalc = new PowerSpectralDensityCalculator(A2DVal, fs);
                 }
 
-
                 int bytesRead = mmInStream.read(buffer);
                 if (bytesRead > 0) {
+                    int samplesFoundInPacket = 0;
+
+                    // 1. PARSE ALL BYTES IN THE CURRENT PACKET
                     for (int i = 0; i < bytesRead; i++) {
                         int b = buffer[i] & 0xFF;
 
-                        // 1. Synchronization Marker
                         if (b == 'x' || b == 120) {
                             expectingLowByte = false;
                             continue;
                         }
 
-                        // 2. Binary Parser State Machine
                         if (!expectingLowByte) {
                             tempHighByte = b;
                             expectingLowByte = true;
@@ -101,66 +98,67 @@ public class ConnectedThread extends Thread {
                             double parsedVal = rawVal / 3.0;
                             expectingLowByte = false;
 
-                            // Add to local batch for UI and Processing
-                            if (batchIdx < localBatch.length) {
-                                localBatch[batchIdx++] = parsedVal;
-                            }
-
-                            // 3. Process the Batch
-                            if (batchIdx >= batchThreshold) {
-                                final int numNew = batchIdx;
-                                final double[] samplesToProcess = new double[numNew];
-                                System.arraycopy(localBatch, 0, samplesToProcess, 0, numNew);
-                                batchIdx = 0;
-
-                                // --- THE FIX: RECORD THE WHOLE BATCH TO RAM ---
-                                // This is more efficient and ensures 100% data capture
-                                if (GameScreen.isRecording) {
-                                    synchronized (ramBuffer) {
-                                        for (double val : samplesToProcess) {
-                                            ramBuffer.add(val);
-                                        }
-                                    }
-                                }
-
-                                // TASK 1: DISPLAY (Async Shift)
-                                displayExecutor.execute(() -> {
-                                    if (A2DVal != null) {
-                                        synchronized (A2DVal) {
-                                            System.arraycopy(A2DVal, numNew, A2DVal, 0, signalBufferLen - numNew);
-                                            for (int j = 0; j < numNew; j++) {
-                                                A2DVal[signalBufferLen - numNew + j] = samplesToProcess[j];
-                                            }
-                                        }
-                                        if (GameScreen.view != null) {
-                                            GameScreen.view.postInvalidate();
-                                        }
-                                    }
-                                });
-                                // TASK 2: MATH (Async & Throttled)
-                                final PowerSpectralDensityCalculator finalPsdCalc = psdCalc;
-                                if (mathSkipCount++ % 10 == 0 && finalPsdCalc != null) {
-                                    mathExecutor.execute(() -> {
-                                        if (A2DVal != null) {
-                                            synchronized (A2DVal) {
-                                                System.arraycopy(A2DVal, 0, a2dCopyForMath, 0, signalBufferLen);
-                                            }
-                                            double[] tempResult = finalPsdCalc.calculatePSD(a2dCopyForMath, fs);
-                                            if (tempResult != null && psdResult != null) {
-                                                System.arraycopy(tempResult, 0, psdResult, 0, Math.min(tempResult.length, psdResult.length));
-                                                for (int j = 0; j < psdResult.length; j++) {
-                                                    psdResult[j] = psdResult[j] * -1 + 3600;
-                                                    if (psdResult[j] < 3165) psdResult[j] = 3165;
-                                                }
-                                            }
-                                            movingRMS = RMSCalculator.calculateMovingRMS(a2dCopyForMath, 10);
-                                            if (movingRMS != null) {
-                                                smoothedRMS = MovingAverageCalculator.calculateMovingAverage(movingRMS, 20);
-                                            }
-                                        }
-                                    });
+                            // RECORDING: Add every sample to RAM immediately
+                            if (GameScreen.isRecording) {
+                                synchronized (ramRecordBuffer) {
+                                    ramRecordBuffer.add(parsedVal);
                                 }
                             }
+
+                            // Store in temporary packet buffer for UI update
+                            if (samplesFoundInPacket < readPacketSamples.length) {
+                                readPacketSamples[samplesFoundInPacket++] = parsedVal;
+                            }
+                        }
+                    }
+
+                    // 2. UPDATE UI ONCE PER BLUETOOTH READ (Natural Batching)
+                    // This eliminates "bunching" and lag by aligning drawing with data arrival
+                    if (samplesFoundInPacket > 0) {
+                        final int numNew = samplesFoundInPacket;
+                        final double[] samplesToProcess = new double[numNew];
+                        System.arraycopy(readPacketSamples, 0, samplesToProcess, 0, numNew);
+
+                        // TASK: DISPLAY (High Priority)
+                        displayExecutor.execute(() -> {
+                            if (A2DVal != null) {
+                                synchronized (A2DVal) {
+                                    // Shift existing data to the left
+                                    System.arraycopy(A2DVal, numNew, A2DVal, 0, signalBufferLen - numNew);
+                                    // Add the new packet data to the end
+                                    for (int j = 0; j < numNew; j++) {
+                                        A2DVal[signalBufferLen - numNew + j] = samplesToProcess[j];
+                                    }
+                                }
+                                if (GameScreen.view != null) {
+                                    // postInvalidateOnAnimation is smoother on modern Android
+                                    GameScreen.view.postInvalidate();
+                                }
+                            }
+                        });
+
+                        // TASK: MATH (Low Priority - Throttled)
+                        final PowerSpectralDensityCalculator finalPsdCalc = psdCalc;
+                        if (mathSkipCount++ % 10 == 0 && finalPsdCalc != null) {
+                            mathExecutor.execute(() -> {
+                                if (A2DVal != null) {
+                                    synchronized (A2DVal) {
+                                        System.arraycopy(A2DVal, 0, a2dCopyForMath, 0, signalBufferLen);
+                                    }
+                                    double[] tempResult = finalPsdCalc.calculatePSD(a2dCopyForMath, fs);
+                                    if (tempResult != null && psdResult != null) {
+                                        System.arraycopy(tempResult, 0, psdResult, 0, Math.min(tempResult.length, psdResult.length));
+                                        for (int j = 0; j < psdResult.length; j++) {
+                                            psdResult[j] = psdResult[j] * -1 + 3600;
+                                            if (psdResult[j] < 3165) psdResult[j] = 3165;
+                                        }
+                                    }
+                                    movingRMS = RMSCalculator.calculateMovingRMS(a2dCopyForMath, 10);
+                                    if (movingRMS != null) {
+                                        smoothedRMS = MovingAverageCalculator.calculateMovingAverage(movingRMS, 20);
+                                    }
+                                }
+                            });
                         }
                     }
                 }
