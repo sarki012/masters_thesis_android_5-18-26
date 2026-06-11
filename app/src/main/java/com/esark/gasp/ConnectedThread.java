@@ -56,15 +56,18 @@ public class ConnectedThread extends Thread {
 
     @Override
     public void run() {
-        // HIGHEST PRIORITY: Ensure the OS doesn't throttle this thread
+        // HIGHEST PRIORITY
         Process.setThreadPriority(Process.THREAD_PRIORITY_URGENT_DISPLAY);
 
         byte[] buffer = new byte[4096];
         double fs = 1000;
         PowerSpectralDensityCalculator psdCalc = null;
 
-        // PRE-ALLOCATE: Re-use these arrays to stop the 7-second GC lag
-        double[] tempSamples = new double[2048];
+        // Cumulative buffer to stabilize the UI and Recording cadence
+        // This prevents the 7-second lag by reducing context switching
+        double[] cadenceBuffer = new double[2048];
+        int cadenceIdx = 0;
+        final int CADENCE_THRESHOLD = 25; // Update every 25ms (40Hz) - Perfect for real-time
 
         while (!Thread.currentThread().isInterrupted()) {
             try {
@@ -81,12 +84,10 @@ public class ConnectedThread extends Thread {
                 int bytesRead = mmInStream.read(buffer);
                 if (bytesRead <= 0) continue;
 
-                int samplesFound = 0;
-
-                // 2. ULTRA-FAST PARSE
+                // 2. PARSE DATA INTO THE CADENCE BUFFER
                 for (int i = 0; i < bytesRead; i++) {
                     int b = buffer[i] & 0xFF;
-                    if (b == 120) { // ASCII 'x'
+                    if (b == 120) { // Sync 'x'
                         expectingLowByte = false;
                         continue;
                     }
@@ -95,54 +96,51 @@ public class ConnectedThread extends Thread {
                         tempHighByte = b;
                         expectingLowByte = true;
                     } else {
-                        // Reconstruct 16-bit val
                         int rawVal = (tempHighByte << 8) | b;
-                        if (samplesFound < tempSamples.length) {
-                            tempSamples[samplesFound++] = rawVal / 3.0;
+                        if (cadenceIdx < cadenceBuffer.length) {
+                            cadenceBuffer[cadenceIdx++] = rawVal / 3.0;
                         }
                         expectingLowByte = false;
                     }
                 }
 
-                if (samplesFound > 0) {
-                    final int numNew = samplesFound;
+                // 3. PROCESS DATA ONLY WHEN THRESHOLD IS MET (The Smoothness Fix)
+                if (cadenceIdx >= CADENCE_THRESHOLD) {
+                    final int numNew = cadenceIdx;
+                    final double[] batchCopy = new double[numNew];
+                    System.arraycopy(cadenceBuffer, 0, batchCopy, 0, numNew);
+                    cadenceIdx = 0; // Reset accumulator
 
-                    // 3. OPTIMIZED RECORDING: Hand off to executor without allocating new arrays
+                    // A. ASYNC RECORDING (Off-loaded)
                     if (GameScreen.isRecording) {
-                        // We must create a snapshot ONLY when recording to maintain integrity
-                        // but we do it only for the batch
-                        final double[] recordBatch = new double[numNew];
-                        System.arraycopy(tempSamples, 0, recordBatch, 0, numNew);
                         recordExecutor.execute(() -> {
                             synchronized (ramRecordBuffer) {
-                                for (double v : recordBatch) ramRecordBuffer.add(v);
+                                for (double v : batchCopy) ramRecordBuffer.add(v);
                             }
                         });
                     }
 
-                    // 4. ATOMIC UI UPDATE: Update display array on the BT thread
-                    // This ensures the plot is ALWAYS in sync with the incoming data
+                    // B. ATOMIC UI UPDATE (Immediate on BT Thread for zero lag)
                     synchronized (A2DVal) {
                         System.arraycopy(A2DVal, numNew, A2DVal, 0, signalBufferLen - numNew);
-                        System.arraycopy(tempSamples, 0, A2DVal, signalBufferLen - numNew, numNew);
+                        System.arraycopy(batchCopy, 0, A2DVal, signalBufferLen - numNew, numNew);
                     }
 
-                    // 5. THROTTLED UI NOTIFICATION
-                    // Don't flood the UI thread. Only ping if the view exists.
+                    // C. FRAME-SYNCED PING
                     if (GameScreen.view != null) {
                         GameScreen.view.postInvalidateOnAnimation();
                     }
 
-                    // 6. ZERO-ALLOCATION MATH HAND-OFF
-                    // We use the pre-allocated 'a2dCopyForMath' instead of 'new double[]'
-                    if (mathSkipCount++ % 15 == 0) {
+                    // D. HEAVY MATH (Heavily Throttled)
+                    // PSD on 1024 points is CPU intensive.
+                    // Lowering update frequency to ~8Hz is enough for the eye and saves the signal speed.
+                    if (mathSkipCount++ % 5 == 0) { // mathSkipCount increments per batch, not per sample
                         synchronized (A2DVal) {
                             System.arraycopy(A2DVal, 0, a2dCopyForMath, 0, signalBufferLen);
                         }
 
                         final PowerSpectralDensityCalculator finalPsd = psdCalc;
                         mathExecutor.execute(() -> {
-                            // Calculate PSD using the shared pre-allocated math copy
                             double[] tempResult = finalPsd.calculatePSD(a2dCopyForMath, fs);
                             if (tempResult != null && psdResult != null) {
                                 int copyLen = Math.min(tempResult.length, psdResult.length);
@@ -152,7 +150,6 @@ public class ConnectedThread extends Thread {
                                     if (psdResult[j] < 3165) psdResult[j] = 3165;
                                 }
                             }
-                            // Calculate RMS
                             movingRMS = RMSCalculator.calculateMovingRMS(a2dCopyForMath, 10);
                             if (movingRMS != null) {
                                 smoothedRMS = MovingAverageCalculator.calculateMovingAverage(movingRMS, 20);
@@ -161,10 +158,9 @@ public class ConnectedThread extends Thread {
                     }
                 }
             } catch (IOException e) {
-                Log.e("BT", "Connection Lost");
                 break;
             } catch (Exception e) {
-                Log.e("BT", "Processing Error", e);
+                Log.e("BT", "Runtime Error", e);
             }
         }
     }
