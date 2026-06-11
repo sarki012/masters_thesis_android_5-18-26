@@ -62,8 +62,13 @@ public class ConnectedThread extends Thread {
         double fs = 1000;
         PowerSpectralDensityCalculator psdCalc = null;
 
-        // Temporary array to hold samples parsed from ONE Bluetooth packet
-        double[] readPacketSamples = new double[1024];
+        // Cumulative buffer to stabilize the UI cadence
+        double[] uiAccumulator = new double[2048];
+        int accumulatedSamples = 0;
+
+        // FIXED STEP SIZE: The signal will always move in increments of 40.
+        // This prevents the "jumping/bunching" effect.
+        final int UI_STEP = 40;
 
         while (!Thread.currentThread().isInterrupted()) {
             try {
@@ -78,12 +83,12 @@ public class ConnectedThread extends Thread {
 
                 int bytesRead = mmInStream.read(buffer);
                 if (bytesRead > 0) {
-                    int samplesFoundInPacket = 0;
+                    int samplesInPacket = 0;
+                    double[] packetSamples = new double[1024];
 
-                    // 1. PARSE ALL BYTES IN THE CURRENT PACKET
+                    // 1. PARSE BYTES
                     for (int i = 0; i < bytesRead; i++) {
                         int b = buffer[i] & 0xFF;
-
                         if (b == 'x' || b == 120) {
                             expectingLowByte = false;
                             continue;
@@ -98,46 +103,59 @@ public class ConnectedThread extends Thread {
                             double parsedVal = rawVal / 3.0;
                             expectingLowByte = false;
 
-                            // RECORDING: Add every sample to RAM immediately
-                            if (GameScreen.isRecording) {
-                                synchronized (ramRecordBuffer) {
-                                    ramRecordBuffer.add(parsedVal);
-                                }
-                            }
-
-                            // Store in temporary packet buffer for UI update
-                            if (samplesFoundInPacket < readPacketSamples.length) {
-                                readPacketSamples[samplesFoundInPacket++] = parsedVal;
+                            if (samplesInPacket < packetSamples.length) {
+                                packetSamples[samplesInPacket++] = parsedVal;
                             }
                         }
                     }
 
-                    // 2. UPDATE UI ONCE PER BLUETOOTH READ (Natural Batching)
-                    // This eliminates "bunching" and lag by aligning drawing with data arrival
-                    if (samplesFoundInPacket > 0) {
-                        final int numNew = samplesFoundInPacket;
-                        final double[] samplesToProcess = new double[numNew];
-                        System.arraycopy(readPacketSamples, 0, samplesToProcess, 0, numNew);
-
-                        // TASK: DISPLAY (High Priority)
-                        displayExecutor.execute(() -> {
-                            if (A2DVal != null) {
-                                synchronized (A2DVal) {
-                                    // Shift existing data to the left
-                                    System.arraycopy(A2DVal, numNew, A2DVal, 0, signalBufferLen - numNew);
-                                    // Add the new packet data to the end
-                                    for (int j = 0; j < numNew; j++) {
-                                        A2DVal[signalBufferLen - numNew + j] = samplesToProcess[j];
-                                    }
-                                }
-                                if (GameScreen.view != null) {
-                                    // postInvalidateOnAnimation is smoother on modern Android
-                                    GameScreen.view.postInvalidate();
+                    if (samplesInPacket > 0) {
+                        // 2. RECORDING (Synchronized Batch)
+                        if (GameScreen.isRecording) {
+                            synchronized (ramRecordBuffer) {
+                                for (int j = 0; j < samplesInPacket; j++) {
+                                    ramRecordBuffer.add(packetSamples[j]);
                                 }
                             }
-                        });
+                        }
 
-                        // TASK: MATH (Low Priority - Throttled)
+                        // 3. ADD TO UI ACCUMULATOR
+                        for (int j = 0; j < samplesInPacket; j++) {
+                            if (accumulatedSamples < uiAccumulator.length) {
+                                uiAccumulator[accumulatedSamples++] = packetSamples[j];
+                            }
+                        }
+
+                        // 4. CHUNKED UI UPDATES (The Smoothness Fix)
+                        // Instead of pushing everything at once, we break large bursts
+                        // into consistent steps of 40 samples.
+                        while (accumulatedSamples >= UI_STEP) {
+                            final double[] displayChunk = new double[UI_STEP];
+                            System.arraycopy(uiAccumulator, 0, displayChunk, 0, UI_STEP);
+
+                            // Shift the remaining data in the accumulator to the front
+                            accumulatedSamples -= UI_STEP;
+                            System.arraycopy(uiAccumulator, UI_STEP, uiAccumulator, 0, accumulatedSamples);
+
+                            // Send the fixed-size chunk to the executor
+                            displayExecutor.execute(() -> {
+                                if (A2DVal != null) {
+                                    synchronized (A2DVal) {
+                                        // Shift by exactly UI_STEP
+                                        System.arraycopy(A2DVal, UI_STEP, A2DVal, 0, signalBufferLen - UI_STEP);
+                                        for (int j = 0; j < UI_STEP; j++) {
+                                            A2DVal[signalBufferLen - UI_STEP + j] = displayChunk[j];
+                                        }
+                                    }
+                                    if (GameScreen.view != null) {
+                                        // Request redraw for this smooth step
+                                        GameScreen.view.postInvalidate();
+                                    }
+                                }
+                            });
+                        }
+
+                        // 5. MATH (Throttled)
                         final PowerSpectralDensityCalculator finalPsdCalc = psdCalc;
                         if (mathSkipCount++ % 10 == 0 && finalPsdCalc != null) {
                             mathExecutor.execute(() -> {
@@ -172,6 +190,7 @@ public class ConnectedThread extends Thread {
         mathExecutor.shutdownNow();
         recordExecutor.shutdownNow();
     }
+
 
     private static class SystemClock {
         public static void sleep(long ms) {
