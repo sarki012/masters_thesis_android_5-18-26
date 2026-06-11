@@ -56,20 +56,20 @@ public class ConnectedThread extends Thread {
 
     @Override
     public void run() {
-        // Set priority to the highest possible level for a background thread
+        // 1. Set the highest priority for a background thread
         Process.setThreadPriority(Process.THREAD_PRIORITY_URGENT_DISPLAY);
 
-        byte[] buffer = new byte[2048];
+        byte[] buffer = new byte[4096];     // Larger buffer to handle bursts
         double fs = 1000;
         PowerSpectralDensityCalculator psdCalc = null;
 
-        // Pre-allocate temporary storage to avoid Garbage Collection stutter
-        double[] tempSamples = new double[1024];
+        // Pre-allocate temporary storage to prevent Garbage Collection (GC) stutter
+        double[] packetSamples = new double[2048];
 
         while (!Thread.currentThread().isInterrupted()) {
             try {
                 if (A2DVal == null || ramRecordBuffer == null) {
-                    SystemClock.sleep(100);
+                    SystemClock.sleep(50);
                     continue;
                 }
 
@@ -77,15 +77,15 @@ public class ConnectedThread extends Thread {
                     psdCalc = new PowerSpectralDensityCalculator(A2DVal, fs);
                 }
 
-                // 1. BLOCKING READ: This is where the thread "waits" for the next Bluetooth packet
+                // BLOCKING READ: Waits here for the next Bluetooth burst
                 int bytesRead = mmInStream.read(buffer);
-
                 if (bytesRead > 0) {
-                    int samplesInPacket = 0;
+                    int samplesInThisPacket = 0;
 
-                    // 2. FAST PARSE: Process the raw bytes immediately
+                    // 2. FAST PARSE: Extract samples immediately
                     for (int i = 0; i < bytesRead; i++) {
                         int b = buffer[i] & 0xFF;
+
                         if (b == 'x' || b == 120) {
                             expectingLowByte = false;
                             continue;
@@ -97,67 +97,62 @@ public class ConnectedThread extends Thread {
                         } else {
                             int lowByte = b;
                             int rawVal = (tempHighByte << 8) | lowByte;
-                            double parsedVal = rawVal / 3.0;
-                            expectingLowByte = false;
-
-                            if (samplesInPacket < tempSamples.length) {
-                                tempSamples[samplesInPacket++] = parsedVal;
+                            if (samplesInThisPacket < packetSamples.length) {
+                                packetSamples[samplesInThisPacket++] = rawVal / 3.0;
                             }
+                            expectingLowByte = false;
                         }
                     }
 
-                    if (samplesInPacket > 0) {
-                        final int numNew = samplesInPacket;
+                    if (samplesInThisPacket > 0) {
+                        final int numNew = samplesInThisPacket;
 
-                        // 3. IMMEDIATE RECORDING
+                        // 3. RECORDING: Synchronize ONCE per packet (Massive speed boost)
                         if (GameScreen.isRecording) {
                             synchronized (ramRecordBuffer) {
                                 for (int j = 0; j < numNew; j++) {
-                                    ramRecordBuffer.add(tempSamples[j]);
+                                    ramRecordBuffer.add(packetSamples[j]);
                                 }
                             }
                         }
 
-                        // 4. IMMEDIATE DATA UPDATE (On BT Thread)
-                        // Shifting an array of 1024 doubles takes ~5 microseconds.
-                        // Doing it here ensures the display array is ALWAYS in sync with the BT chip.
+                        // 4. IMMEDIATE DISPLAY UPDATE: Run on BT thread to eliminate queue lag
+                        // Shifting 1024 doubles is much faster than queuing an executor task.
                         synchronized (A2DVal) {
                             System.arraycopy(A2DVal, numNew, A2DVal, 0, signalBufferLen - numNew);
                             for (int j = 0; j < numNew; j++) {
-                                A2DVal[signalBufferLen - numNew + j] = tempSamples[j];
+                                A2DVal[signalBufferLen - numNew + j] = packetSamples[j];
                             }
                         }
 
-                        // 5. LIGHTWEIGHT UI PING
-                        // Tell the UI thread to draw the latest state.
-                        // If it's already drawing, it will simply catch the new data on the next frame.
+                        // 5. LIGHTWEIGHT UI TRIGGER
+                        // Tell Android to draw the next frame. Android will sync this with the 60Hz VSync.
                         if (GameScreen.view != null) {
                             GameScreen.view.postInvalidate();
                         }
 
                         // 6. OFF-LOAD HEAVY MATH (PSD/RMS)
-                        // Only run math ~10 times per second to keep CPU cool
+                        // Math is the only thing that should be in an executor.
+                        // We throttle it to 10 times per second to keep the CPU cool.
                         final PowerSpectralDensityCalculator finalPsdCalc = psdCalc;
                         if (mathSkipCount++ % 10 == 0 && finalPsdCalc != null) {
-                            mathExecutor.execute(() -> {
-                                if (A2DVal != null) {
-                                    // Use a safe copy so Math doesn't lock up the BT thread
-                                    synchronized (A2DVal) {
-                                        System.arraycopy(A2DVal, 0, a2dCopyForMath, 0, signalBufferLen);
-                                    }
+                            // Copy data safely so the BT thread can keep moving
+                            synchronized (A2DVal) {
+                                System.arraycopy(A2DVal, 0, a2dCopyForMath, 0, signalBufferLen);
+                            }
 
-                                    double[] tempResult = finalPsdCalc.calculatePSD(a2dCopyForMath, fs);
-                                    if (tempResult != null && psdResult != null) {
-                                        System.arraycopy(tempResult, 0, psdResult, 0, Math.min(tempResult.length, psdResult.length));
-                                        for (int j = 0; j < psdResult.length; j++) {
-                                            psdResult[j] = psdResult[j] * -1 + 3600;
-                                            if (psdResult[j] < 3165) psdResult[j] = 3165;
-                                        }
+                            mathExecutor.execute(() -> {
+                                double[] tempResult = finalPsdCalc.calculatePSD(a2dCopyForMath, fs);
+                                if (tempResult != null && psdResult != null) {
+                                    System.arraycopy(tempResult, 0, psdResult, 0, Math.min(tempResult.length, psdResult.length));
+                                    for (int j = 0; j < psdResult.length; j++) {
+                                        psdResult[j] = psdResult[j] * -1 + 3600;
+                                        if (psdResult[j] < 3165) psdResult[j] = 3165;
                                     }
-                                    movingRMS = RMSCalculator.calculateMovingRMS(a2dCopyForMath, 10);
-                                    if (movingRMS != null) {
-                                        smoothedRMS = MovingAverageCalculator.calculateMovingAverage(movingRMS, 20);
-                                    }
+                                }
+                                movingRMS = RMSCalculator.calculateMovingRMS(a2dCopyForMath, 10);
+                                if (movingRMS != null) {
+                                    smoothedRMS = MovingAverageCalculator.calculateMovingAverage(movingRMS, 20);
                                 }
                             });
                         }
@@ -169,12 +164,10 @@ public class ConnectedThread extends Thread {
                 Log.e("ConnectedThread", "Parsing Error", e);
             }
         }
-        // Cleanup
         displayExecutor.shutdownNow();
         mathExecutor.shutdownNow();
         recordExecutor.shutdownNow();
     }
-
 
     private static class SystemClock {
         public static void sleep(long ms) {
