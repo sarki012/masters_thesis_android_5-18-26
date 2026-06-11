@@ -56,20 +56,23 @@ public class ConnectedThread extends Thread {
 
     @Override
     public void run() {
-        // 1. Set the highest priority for a background thread
+        // HIGHEST PRIORITY
         Process.setThreadPriority(Process.THREAD_PRIORITY_URGENT_DISPLAY);
 
-        byte[] buffer = new byte[4096];     // Larger buffer to handle bursts
+        byte[] buffer = new byte[4096];
         double fs = 1000;
         PowerSpectralDensityCalculator psdCalc = null;
 
-        // Pre-allocate temporary storage to prevent Garbage Collection (GC) stutter
-        double[] packetSamples = new double[2048];
+        // Cumulative buffer to stabilize the UI and Recording cadence
+        // This prevents the 7-second lag by reducing context switching
+        double[] cadenceBuffer = new double[2048];
+        int cadenceIdx = 0;
+        final int CADENCE_THRESHOLD = 25; // Update every 25ms (40Hz) - Perfect for real-time
 
         while (!Thread.currentThread().isInterrupted()) {
             try {
                 if (A2DVal == null || ramRecordBuffer == null) {
-                    SystemClock.sleep(50);
+                    SystemClock.sleep(10);
                     continue;
                 }
 
@@ -77,96 +80,89 @@ public class ConnectedThread extends Thread {
                     psdCalc = new PowerSpectralDensityCalculator(A2DVal, fs);
                 }
 
-                // BLOCKING READ: Waits here for the next Bluetooth burst
+                // 1. BLOCKING READ
                 int bytesRead = mmInStream.read(buffer);
-                if (bytesRead > 0) {
-                    int samplesInThisPacket = 0;
+                if (bytesRead <= 0) continue;
 
-                    // 2. FAST PARSE: Extract samples immediately
-                    for (int i = 0; i < bytesRead; i++) {
-                        int b = buffer[i] & 0xFF;
-
-                        if (b == 'x' || b == 120) {
-                            expectingLowByte = false;
-                            continue;
-                        }
-
-                        if (!expectingLowByte) {
-                            tempHighByte = b;
-                            expectingLowByte = true;
-                        } else {
-                            int lowByte = b;
-                            int rawVal = (tempHighByte << 8) | lowByte;
-                            if (samplesInThisPacket < packetSamples.length) {
-                                packetSamples[samplesInThisPacket++] = rawVal / 3.0;
-                            }
-                            expectingLowByte = false;
-                        }
+                // 2. PARSE DATA INTO THE CADENCE BUFFER
+                for (int i = 0; i < bytesRead; i++) {
+                    int b = buffer[i] & 0xFF;
+                    if (b == 120) { // Sync 'x'
+                        expectingLowByte = false;
+                        continue;
                     }
 
-                    if (samplesInThisPacket > 0) {
-                        final int numNew = samplesInThisPacket;
+                    if (!expectingLowByte) {
+                        tempHighByte = b;
+                        expectingLowByte = true;
+                    } else {
+                        int rawVal = (tempHighByte << 8) | b;
+                        if (cadenceIdx < cadenceBuffer.length) {
+                            cadenceBuffer[cadenceIdx++] = rawVal / 3.0;
+                        }
+                        expectingLowByte = false;
+                    }
+                }
 
-                        // 3. RECORDING: Synchronize ONCE per packet (Massive speed boost)
-                        if (GameScreen.isRecording) {
+                // 3. PROCESS DATA ONLY WHEN THRESHOLD IS MET (The Smoothness Fix)
+                if (cadenceIdx >= CADENCE_THRESHOLD) {
+                    final int numNew = cadenceIdx;
+                    final double[] batchCopy = new double[numNew];
+                    System.arraycopy(cadenceBuffer, 0, batchCopy, 0, numNew);
+                    cadenceIdx = 0; // Reset accumulator
+
+                    // A. ASYNC RECORDING (Off-loaded)
+                    if (GameScreen.isRecording) {
+                        recordExecutor.execute(() -> {
                             synchronized (ramRecordBuffer) {
-                                for (int j = 0; j < numNew; j++) {
-                                    ramRecordBuffer.add(packetSamples[j]);
-                                }
+                                for (double v : batchCopy) ramRecordBuffer.add(v);
                             }
-                        }
+                        });
+                    }
 
-                        // 4. IMMEDIATE DISPLAY UPDATE: Run on BT thread to eliminate queue lag
-                        // Shifting 1024 doubles is much faster than queuing an executor task.
+                    // B. ATOMIC UI UPDATE (Immediate on BT Thread for zero lag)
+                    synchronized (A2DVal) {
+                        System.arraycopy(A2DVal, numNew, A2DVal, 0, signalBufferLen - numNew);
+                        System.arraycopy(batchCopy, 0, A2DVal, signalBufferLen - numNew, numNew);
+                    }
+
+                    // C. FRAME-SYNCED PING
+                    if (GameScreen.view != null) {
+                        GameScreen.view.postInvalidateOnAnimation();
+                    }
+
+                    // D. HEAVY MATH (Heavily Throttled)
+                    // PSD on 1024 points is CPU intensive.
+                    // Lowering update frequency to ~8Hz is enough for the eye and saves the signal speed.
+                    if (mathSkipCount++ % 5 == 0) { // mathSkipCount increments per batch, not per sample
                         synchronized (A2DVal) {
-                            System.arraycopy(A2DVal, numNew, A2DVal, 0, signalBufferLen - numNew);
-                            for (int j = 0; j < numNew; j++) {
-                                A2DVal[signalBufferLen - numNew + j] = packetSamples[j];
-                            }
+                            System.arraycopy(A2DVal, 0, a2dCopyForMath, 0, signalBufferLen);
                         }
 
-                        // 5. LIGHTWEIGHT UI TRIGGER
-                        // Tell Android to draw the next frame. Android will sync this with the 60Hz VSync.
-                        if (GameScreen.view != null) {
-                            GameScreen.view.postInvalidate();
-                        }
-
-                        // 6. OFF-LOAD HEAVY MATH (PSD/RMS)
-                        // Math is the only thing that should be in an executor.
-                        // We throttle it to 10 times per second to keep the CPU cool.
-                        final PowerSpectralDensityCalculator finalPsdCalc = psdCalc;
-                        if (mathSkipCount++ % 10 == 0 && finalPsdCalc != null) {
-                            // Copy data safely so the BT thread can keep moving
-                            synchronized (A2DVal) {
-                                System.arraycopy(A2DVal, 0, a2dCopyForMath, 0, signalBufferLen);
-                            }
-
-                            mathExecutor.execute(() -> {
-                                double[] tempResult = finalPsdCalc.calculatePSD(a2dCopyForMath, fs);
-                                if (tempResult != null && psdResult != null) {
-                                    System.arraycopy(tempResult, 0, psdResult, 0, Math.min(tempResult.length, psdResult.length));
-                                    for (int j = 0; j < psdResult.length; j++) {
-                                        psdResult[j] = psdResult[j] * -1 + 3600;
-                                        if (psdResult[j] < 3165) psdResult[j] = 3165;
-                                    }
+                        final PowerSpectralDensityCalculator finalPsd = psdCalc;
+                        mathExecutor.execute(() -> {
+                            double[] tempResult = finalPsd.calculatePSD(a2dCopyForMath, fs);
+                            if (tempResult != null && psdResult != null) {
+                                int copyLen = Math.min(tempResult.length, psdResult.length);
+                                System.arraycopy(tempResult, 0, psdResult, 0, copyLen);
+                                for (int j = 0; j < copyLen; j++) {
+                                    psdResult[j] = psdResult[j] * -1 + 3600;
+                                    if (psdResult[j] < 3165) psdResult[j] = 3165;
                                 }
-                                movingRMS = RMSCalculator.calculateMovingRMS(a2dCopyForMath, 10);
-                                if (movingRMS != null) {
-                                    smoothedRMS = MovingAverageCalculator.calculateMovingAverage(movingRMS, 20);
-                                }
-                            });
-                        }
+                            }
+                            movingRMS = RMSCalculator.calculateMovingRMS(a2dCopyForMath, 10);
+                            if (movingRMS != null) {
+                                smoothedRMS = MovingAverageCalculator.calculateMovingAverage(movingRMS, 20);
+                            }
+                        });
                     }
                 }
             } catch (IOException e) {
                 break;
             } catch (Exception e) {
-                Log.e("ConnectedThread", "Parsing Error", e);
+                Log.e("BT", "Runtime Error", e);
             }
         }
-        displayExecutor.shutdownNow();
-        mathExecutor.shutdownNow();
-        recordExecutor.shutdownNow();
     }
 
     private static class SystemClock {
