@@ -56,19 +56,15 @@ public class ConnectedThread extends Thread {
 
     @Override
     public void run() {
+        // Set priority to the highest possible level for a background thread
         Process.setThreadPriority(Process.THREAD_PRIORITY_URGENT_DISPLAY);
 
         byte[] buffer = new byte[2048];
         double fs = 1000;
         PowerSpectralDensityCalculator psdCalc = null;
 
-        // Cumulative buffer to stabilize the UI cadence
-        double[] uiAccumulator = new double[2048];
-        int accumulatedSamples = 0;
-
-        // FIXED STEP SIZE: The signal will always move in increments of 40.
-        // This prevents the "jumping/bunching" effect.
-        final int UI_STEP = 40;
+        // Pre-allocate temporary storage to avoid Garbage Collection stutter
+        double[] tempSamples = new double[1024];
 
         while (!Thread.currentThread().isInterrupted()) {
             try {
@@ -81,12 +77,13 @@ public class ConnectedThread extends Thread {
                     psdCalc = new PowerSpectralDensityCalculator(A2DVal, fs);
                 }
 
+                // 1. BLOCKING READ: This is where the thread "waits" for the next Bluetooth packet
                 int bytesRead = mmInStream.read(buffer);
+
                 if (bytesRead > 0) {
                     int samplesInPacket = 0;
-                    double[] packetSamples = new double[1024];
 
-                    // 1. PARSE BYTES
+                    // 2. FAST PARSE: Process the raw bytes immediately
                     for (int i = 0; i < bytesRead; i++) {
                         int b = buffer[i] & 0xFF;
                         if (b == 'x' || b == 120) {
@@ -103,66 +100,52 @@ public class ConnectedThread extends Thread {
                             double parsedVal = rawVal / 3.0;
                             expectingLowByte = false;
 
-                            if (samplesInPacket < packetSamples.length) {
-                                packetSamples[samplesInPacket++] = parsedVal;
+                            if (samplesInPacket < tempSamples.length) {
+                                tempSamples[samplesInPacket++] = parsedVal;
                             }
                         }
                     }
 
                     if (samplesInPacket > 0) {
-                        // 2. RECORDING (Synchronized Batch)
+                        final int numNew = samplesInPacket;
+
+                        // 3. IMMEDIATE RECORDING
                         if (GameScreen.isRecording) {
                             synchronized (ramRecordBuffer) {
-                                for (int j = 0; j < samplesInPacket; j++) {
-                                    ramRecordBuffer.add(packetSamples[j]);
+                                for (int j = 0; j < numNew; j++) {
+                                    ramRecordBuffer.add(tempSamples[j]);
                                 }
                             }
                         }
 
-                        // 3. ADD TO UI ACCUMULATOR
-                        for (int j = 0; j < samplesInPacket; j++) {
-                            if (accumulatedSamples < uiAccumulator.length) {
-                                uiAccumulator[accumulatedSamples++] = packetSamples[j];
+                        // 4. IMMEDIATE DATA UPDATE (On BT Thread)
+                        // Shifting an array of 1024 doubles takes ~5 microseconds.
+                        // Doing it here ensures the display array is ALWAYS in sync with the BT chip.
+                        synchronized (A2DVal) {
+                            System.arraycopy(A2DVal, numNew, A2DVal, 0, signalBufferLen - numNew);
+                            for (int j = 0; j < numNew; j++) {
+                                A2DVal[signalBufferLen - numNew + j] = tempSamples[j];
                             }
                         }
 
-                        // 4. CHUNKED UI UPDATES (The Smoothness Fix)
-                        // Instead of pushing everything at once, we break large bursts
-                        // into consistent steps of 40 samples.
-                        while (accumulatedSamples >= UI_STEP) {
-                            final double[] displayChunk = new double[UI_STEP];
-                            System.arraycopy(uiAccumulator, 0, displayChunk, 0, UI_STEP);
-
-                            // Shift the remaining data in the accumulator to the front
-                            accumulatedSamples -= UI_STEP;
-                            System.arraycopy(uiAccumulator, UI_STEP, uiAccumulator, 0, accumulatedSamples);
-
-                            // Send the fixed-size chunk to the executor
-                            displayExecutor.execute(() -> {
-                                if (A2DVal != null) {
-                                    synchronized (A2DVal) {
-                                        // Shift by exactly UI_STEP
-                                        System.arraycopy(A2DVal, UI_STEP, A2DVal, 0, signalBufferLen - UI_STEP);
-                                        for (int j = 0; j < UI_STEP; j++) {
-                                            A2DVal[signalBufferLen - UI_STEP + j] = displayChunk[j];
-                                        }
-                                    }
-                                    if (GameScreen.view != null) {
-                                        // Request redraw for this smooth step
-                                        GameScreen.view.postInvalidate();
-                                    }
-                                }
-                            });
+                        // 5. LIGHTWEIGHT UI PING
+                        // Tell the UI thread to draw the latest state.
+                        // If it's already drawing, it will simply catch the new data on the next frame.
+                        if (GameScreen.view != null) {
+                            GameScreen.view.postInvalidate();
                         }
 
-                        // 5. MATH (Throttled)
+                        // 6. OFF-LOAD HEAVY MATH (PSD/RMS)
+                        // Only run math ~10 times per second to keep CPU cool
                         final PowerSpectralDensityCalculator finalPsdCalc = psdCalc;
                         if (mathSkipCount++ % 10 == 0 && finalPsdCalc != null) {
                             mathExecutor.execute(() -> {
                                 if (A2DVal != null) {
+                                    // Use a safe copy so Math doesn't lock up the BT thread
                                     synchronized (A2DVal) {
                                         System.arraycopy(A2DVal, 0, a2dCopyForMath, 0, signalBufferLen);
                                     }
+
                                     double[] tempResult = finalPsdCalc.calculatePSD(a2dCopyForMath, fs);
                                     if (tempResult != null && psdResult != null) {
                                         System.arraycopy(tempResult, 0, psdResult, 0, Math.min(tempResult.length, psdResult.length));
@@ -186,6 +169,7 @@ public class ConnectedThread extends Thread {
                 Log.e("ConnectedThread", "Parsing Error", e);
             }
         }
+        // Cleanup
         displayExecutor.shutdownNow();
         mathExecutor.shutdownNow();
         recordExecutor.shutdownNow();
