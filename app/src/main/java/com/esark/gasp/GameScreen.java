@@ -118,29 +118,50 @@ public class GameScreen extends Screen implements Input {
   //  public static List<Double> ramRecordBuffer = java.util.Collections.synchronizedList(new ArrayList<>(100000));
     // Inside GameScreen.java - replace your current ramRecordBuffer declaration
     public static double[] ramRecordBuffer = new double[300000]; // Fits 5 minutes at 1000Hz
-    public static int ramRecordBufferIdx = 0;
-    //Constructor
+    public static int ramRecordBufferIdx =0;
+    private final static float currentXStep = 1.4027f;
+
+    // FIX 1: Use signalBufferLen instead of hardcoded 1024 to prevent Bounds Crash
+    private final double[] drawingSnapshot = new double[signalBufferLen];
+
+    // FIX 2: Declare these here, but do NOT initialize them here
+    public GameScreenLastEvent gameScreenLastEvent;
+    public GameScreenEventLog gameScreenEventLog;
+
+    // Constructor
     public GameScreen(Game game) {
         super(game);
+
+        // Cast the 'game' object to Context.
+        // This works because AndroidGame extends Activity, which is a Context.
+        this.context = (Context) game;
+
+        // FIX 4: Initialize sub-screens here so 'game' is valid
+        gameScreenLastEvent = new GameScreenLastEvent(game);
+        gameScreenEventLog = new GameScreenEventLog(game);
+
         // Create a dedicated thread for writing to disk
         if (loggerThread == null) {
             loggerThread = new HandlerThread("DiskLogger");
             loggerThread.start();
             loggerHandler = new Handler(loggerThread.getLooper());
         }
+
+        // Initialize Paint
         signalPaint.setAntiAlias(true);
         signalPaint.setStrokeWidth(5.0f);
         signalPaint.setColor(android.graphics.Color.BLACK);
         signalPaint.setStrokeCap(Paint.Cap.ROUND);
+
         try {
             alertSound = game.getAudio().newSound("ringtone.mp3");
         } catch (Exception e) {
             Log.e(TAG, "Failed to load ringtone.mp3: " + e.getMessage());
-            alertSound = null; // Ensure it's null so the check in updateRunning works
+            alertSound = null;
         }
     }
-    public GameScreenLastEvent gameScreenLastEvent = new GameScreenLastEvent(game);
-    public GameScreenEventLog gameScreenEventLog = new GameScreenEventLog(game);
+   // public GameScreenLastEvent gameScreenLastEvent = new GameScreenLastEvent(game);
+    //public GameScreenEventLog gameScreenEventLog = new GameScreenEventLog(game);
     @Override
     public void update(float deltaTime, Context context) {
         //framework.input
@@ -436,7 +457,7 @@ public class GameScreen extends Screen implements Input {
         int bottomLimit = 820;          // Moved down from 690
 
         // Total width is 1600 - 165 = 1435 pixels.
-        float currentXStep = 1.4027f;
+
         float xRightEdge = 1600.0f;
         int bufferIdx = 0;
 
@@ -444,36 +465,60 @@ public class GameScreen extends Screen implements Input {
         // THINNER STROKE: 5.0f was too fat, making peaks look flat. 2.5f is sharper.
         signalPaint.setStrokeWidth(5.0f);
 
+
         if (!isReplaying) {
             // --- LIVE BLACK LINE ---
             signalPaint.setColor(android.graphics.Color.BLACK);
+
+            // Optimization: Get the canvas once
             Canvas canvas = ((AndroidGraphics) g).getCanvas();
 
+            // 1. Copy data to PRE-ALLOCATED array (Zero Allocation)
+            // We use drawingSnapshot which is a class field, not a local variable
             synchronized (A2DVal) {
-                bufferIdx = 0;
-                for (int n = signalBufferLen - 1; n > 0; n--) {
-                    float x1 = xRightEdge - ((signalBufferLen - 1 - n) * currentXStep);
-                    float y1 = (float) (screenCenterY - (A2DVal[n] - dataBaseline) * gain);
+                System.arraycopy(A2DVal, 0, drawingSnapshot, 0, signalBufferLen);
+            }
+            // LOCK RELEASED IMMEDIATELY
 
-                    float x2 = xRightEdge - ((signalBufferLen - 1 - (n - 1)) * currentXStep);
-                    float y2 = (float) (screenCenterY - (A2DVal[n - 1] - dataBaseline) * gain);
+            bufferIdx = 0;
+            float xCurrent = xRightEdge;
 
-                    // Clamping with the new widened limits
-                    if (y1 < topLimit) y1 = topLimit;
-                    if (y1 > bottomLimit) y1 = bottomLimit;
-                    if (y2 < topLimit) y2 = topLimit;
-                    if (y2 > bottomLimit) y2 = bottomLimit;
+            // Pre-calculate constants to save 1024 multiplications per frame
+            final float gMult = gain;
+            final float base = (float)dataBaseline;
+            final float centerY = (float)screenCenterY;
 
-                    lineBuffer[bufferIdx++] = x1;
-                    lineBuffer[bufferIdx++] = y1;
-                    lineBuffer[bufferIdx++] = x2;
-                    lineBuffer[bufferIdx++] = y2;
+            // Calculate the first point's Y once
+            float yLast = centerY - ((float)drawingSnapshot[signalBufferLen - 1] - base) * gMult;
+            if (yLast < topLimit) yLast = topLimit;
+            if (yLast > bottomLimit) yLast = bottomLimit;
 
-                    if (x2 <= 165 || bufferIdx >= lineBuffer.length - 4) break;
-                }
-                if (bufferIdx > 0) {
-                    canvas.drawLines(lineBuffer, 0, bufferIdx, signalPaint);
-                }
+            // 2. Optimized Loop: Zero allocations inside
+            for (int n = signalBufferLen - 2; n >= 0; n--) {
+                float xNext = xCurrent - currentXStep;
+                float yNext = centerY - ((float)drawingSnapshot[n] - base) * gMult;
+
+                // Clamping
+                if (yNext < topLimit) yNext = topLimit;
+                if (yNext > bottomLimit) yNext = bottomLimit;
+
+                // Load line segment [x1, y1, x2, y2]
+                lineBuffer[bufferIdx++] = xCurrent;
+                lineBuffer[bufferIdx++] = yLast;
+                lineBuffer[bufferIdx++] = xNext;
+                lineBuffer[bufferIdx++] = yNext;
+
+                // Reuse variables for next iteration
+                xCurrent = xNext;
+                yLast = yNext;
+
+                // Exit if we hit the UI border or buffer is full
+                if (xCurrent <= 165 || bufferIdx >= lineBuffer.length - 4) break;
+            }
+
+            // 3. GPU Draw
+            if (bufferIdx > 0) {
+                canvas.drawLines(lineBuffer, 0, bufferIdx, signalPaint);
             }
         } else if (isReplaying && !replayList.isEmpty()) {// --- DEBUG: Show how many samples were loaded ---
             g.drawText("Loaded: " + replayList.size(), 170, 200);

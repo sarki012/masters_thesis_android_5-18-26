@@ -58,23 +58,18 @@ public class ConnectedThread extends Thread {
     public void run() {
         Process.setThreadPriority(Process.THREAD_PRIORITY_URGENT_DISPLAY);
 
-        byte[] buffer = new byte[4096];
+        byte[] buffer = new byte[2048];     // Standard MTU size is better for cadence
         double fs = 1000;
         PowerSpectralDensityCalculator psdCalc = null;
 
-        double[] cadenceBuffer = new double[4096];
-        int cadenceIdx = 0;
-
-        final int UI_STEP = 25;
-        final double[] stepChunk = new double[UI_STEP];
-
-        // Atomic flag to prevent Math Thread from ever having a queue/backlog
+        // Pre-allocate temporary storage
+        final double[] packetSamples = new double[1024];
         final java.util.concurrent.atomic.AtomicBoolean mathIsBusy = new java.util.concurrent.atomic.AtomicBoolean(false);
 
         while (!Thread.currentThread().isInterrupted()) {
             try {
                 if (A2DVal == null || GameScreen.ramRecordBuffer == null) {
-                    SystemClock.sleep(10);
+                    SystemClock.sleep(50);
                     continue;
                 }
 
@@ -82,13 +77,16 @@ public class ConnectedThread extends Thread {
                     psdCalc = new PowerSpectralDensityCalculator(A2DVal, fs);
                 }
 
+                // 1. BLOCKING READ: Get data as fast as the hardware provides it
                 int bytesRead = mmInStream.read(buffer);
                 if (bytesRead <= 0) continue;
 
-                // 1. FAST PARSE
+                int samplesInPacket = 0;
+
+                // 2. ULTRA-FAST BINARY PARSING
                 for (int i = 0; i < bytesRead; i++) {
                     int b = buffer[i] & 0xFF;
-                    if (b == 120) { // 'x'
+                    if (b == 120) { // 'x' sync
                         expectingLowByte = false;
                         continue;
                     }
@@ -96,53 +94,61 @@ public class ConnectedThread extends Thread {
                         tempHighByte = b;
                         expectingLowByte = true;
                     } else {
-                        int rawVal = (tempHighByte << 8) | b;
-                        if (cadenceIdx < cadenceBuffer.length) {
-                            cadenceBuffer[cadenceIdx++] = rawVal / 3.0;
+                        if (samplesInPacket < packetSamples.length) {
+                            packetSamples[samplesInPacket++] = ((tempHighByte << 8) | b) / 3.0;
                         }
                         expectingLowByte = false;
                     }
                 }
 
-                // 2. SMOOTH PROCESSING LOOP
-                boolean needsRedraw = false;
-                while (cadenceIdx >= UI_STEP) {
-                    System.arraycopy(cadenceBuffer, 0, stepChunk, 0, UI_STEP);
-                    cadenceIdx -= UI_STEP;
-                    System.arraycopy(cadenceBuffer, UI_STEP, cadenceBuffer, 0, cadenceIdx);
+                if (samplesInPacket > 0) {
+                    final int numNew = samplesInPacket;
+                    // Create a final copy of the data for the executors
+                    // This is essential to prevent the data from being overwritten by the next read()
+                    final double[] dataToProcess = new double[numNew];
+                    System.arraycopy(packetSamples, 0, dataToProcess, 0, numNew);
 
-                    // A. RECORDING: DIRECT COPY (Zero Executor, Zero Object Allocation)
-                    // We write directly to the static buffer. System.arraycopy takes nanoseconds.
+                    // 3. ASYNC RECORDING: Move off the BT thread
                     if (GameScreen.isRecording) {
-                        synchronized (GameScreen.ramRecordBuffer) {
-                            int spaceLeft = GameScreen.ramRecordBuffer.length - GameScreen.ramRecordBufferIdx;
-                            int toCopy = Math.min(UI_STEP, spaceLeft);
-                            if (toCopy > 0) {
-                                System.arraycopy(stepChunk, 0, GameScreen.ramRecordBuffer, GameScreen.ramRecordBufferIdx, toCopy);
-                                GameScreen.ramRecordBufferIdx += toCopy;
+                        recordExecutor.execute(() -> {
+                            synchronized (GameScreen.ramRecordBuffer) {
+                                int spaceLeft = GameScreen.ramRecordBuffer.length - GameScreen.ramRecordBufferIdx;
+                                int toCopy = Math.min(numNew, spaceLeft);
+                                if (toCopy > 0) {
+                                    System.arraycopy(dataToProcess, 0, GameScreen.ramRecordBuffer, GameScreen.ramRecordBufferIdx, toCopy);
+                                    GameScreen.ramRecordBufferIdx += toCopy;
+                                }
+                            }
+                        });
+                    }
+
+                    // 4. ASYNC UI UPDATE: THIS IS THE KEY FIX
+                    // By moving the 'synchronized(A2DVal)' block into an executor,
+                    // the Bluetooth thread NEVER waits for the UI thread to finish drawing.
+                    displayExecutor.execute(() -> {
+                        if (A2DVal != null) {
+                            synchronized (A2DVal) {
+                                System.arraycopy(A2DVal, numNew, A2DVal, 0, signalBufferLen - numNew);
+                                System.arraycopy(dataToProcess, 0, A2DVal, signalBufferLen - numNew, numNew);
+                            }
+                            if (GameScreen.view != null) {
+                                GameScreen.view.postInvalidateOnAnimation();
                             }
                         }
-                    }
+                    });
 
-                    // B. ATOMIC UI UPDATE
-                    synchronized (A2DVal) {
-                        System.arraycopy(A2DVal, UI_STEP, A2DVal, 0, signalBufferLen - UI_STEP);
-                        System.arraycopy(stepChunk, 0, A2DVal, signalBufferLen - UI_STEP, UI_STEP);
-                    }
-                    needsRedraw = true;
-
-                    // D. MATH: NON-QUEUING LOGIC
-                    // Instead of mathSkipCount, we only launch math if the thread is NOT busy.
-                    // This prevents the "7-second bunching" caused by math backlog.
+                    // 5. MATH (Low Priority - Non-Blocking)
                     if (mathIsBusy.compareAndSet(false, true)) {
-                        synchronized (A2DVal) {
-                            System.arraycopy(A2DVal, 0, a2dCopyForMath, 0, signalBufferLen);
-                        }
-
                         final PowerSpectralDensityCalculator finalPsd = psdCalc;
                         mathExecutor.execute(() -> {
                             try {
-                                double[] tempResult = finalPsd.calculatePSD(a2dCopyForMath, fs);
+                                // Take a local snapshot of A2DVal for math
+                                double[] mathSnapshot = new double[signalBufferLen];
+                                synchronized (A2DVal) {
+                                    System.arraycopy(A2DVal, 0, mathSnapshot, 0, signalBufferLen);
+                                }
+
+                                double[] tempResult = finalPsd.calculatePSD(mathSnapshot, fs);
                                 if (tempResult != null && psdResult != null) {
                                     int copyLen = Math.min(tempResult.length, psdResult.length);
                                     System.arraycopy(tempResult, 0, psdResult, 0, copyLen);
@@ -151,26 +157,20 @@ public class ConnectedThread extends Thread {
                                         if (psdResult[j] < 3165) psdResult[j] = 3165;
                                     }
                                 }
-                                movingRMS = RMSCalculator.calculateMovingRMS(a2dCopyForMath, 10);
+                                movingRMS = RMSCalculator.calculateMovingRMS(mathSnapshot, 10);
                                 if (movingRMS != null) {
                                     smoothedRMS = MovingAverageCalculator.calculateMovingAverage(movingRMS, 20);
                                 }
                             } finally {
-                                mathIsBusy.set(false); // Finished! Allow the next math task to run.
+                                mathIsBusy.set(false);
                             }
                         });
                     }
                 }
-
-                // 3. UI TRIGGER: Only once per Bluetooth read packet
-                if (needsRedraw && GameScreen.view != null) {
-                    GameScreen.view.postInvalidateOnAnimation();
-                }
-
             } catch (IOException e) {
                 break;
             } catch (Exception e) {
-                Log.e("BT", "Runtime Error", e);
+                Log.e("BT", "Processing Error", e);
             }
         }
     }
