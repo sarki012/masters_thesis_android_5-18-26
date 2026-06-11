@@ -56,14 +56,15 @@ public class ConnectedThread extends Thread {
 
     @Override
     public void run() {
+        // Set priority to the highest possible level for a background thread
         Process.setThreadPriority(Process.THREAD_PRIORITY_URGENT_DISPLAY);
 
         byte[] buffer = new byte[2048];
         double fs = 1000;
         PowerSpectralDensityCalculator psdCalc = null;
 
-        // Temporary array to hold samples parsed from ONE Bluetooth packet
-        double[] readPacketSamples = new double[1024];
+        // Pre-allocate temporary storage to avoid Garbage Collection stutter
+        double[] tempSamples = new double[1024];
 
         while (!Thread.currentThread().isInterrupted()) {
             try {
@@ -76,14 +77,15 @@ public class ConnectedThread extends Thread {
                     psdCalc = new PowerSpectralDensityCalculator(A2DVal, fs);
                 }
 
+                // 1. BLOCKING READ: This is where the thread "waits" for the next Bluetooth packet
                 int bytesRead = mmInStream.read(buffer);
-                if (bytesRead > 0) {
-                    int samplesFoundInPacket = 0;
 
-                    // 1. PARSE ALL BYTES IN THE CURRENT PACKET
+                if (bytesRead > 0) {
+                    int samplesInPacket = 0;
+
+                    // 2. FAST PARSE: Process the raw bytes immediately
                     for (int i = 0; i < bytesRead; i++) {
                         int b = buffer[i] & 0xFF;
-
                         if (b == 'x' || b == 120) {
                             expectingLowByte = false;
                             continue;
@@ -98,53 +100,52 @@ public class ConnectedThread extends Thread {
                             double parsedVal = rawVal / 3.0;
                             expectingLowByte = false;
 
-                            // RECORDING: Add every sample to RAM immediately
-                            if (GameScreen.isRecording) {
-                                synchronized (ramRecordBuffer) {
-                                    ramRecordBuffer.add(parsedVal);
-                                }
-                            }
-
-                            // Store in temporary packet buffer for UI update
-                            if (samplesFoundInPacket < readPacketSamples.length) {
-                                readPacketSamples[samplesFoundInPacket++] = parsedVal;
+                            if (samplesInPacket < tempSamples.length) {
+                                tempSamples[samplesInPacket++] = parsedVal;
                             }
                         }
                     }
 
-                    // 2. UPDATE UI ONCE PER BLUETOOTH READ (Natural Batching)
-                    // This eliminates "bunching" and lag by aligning drawing with data arrival
-                    if (samplesFoundInPacket > 0) {
-                        final int numNew = samplesFoundInPacket;
-                        final double[] samplesToProcess = new double[numNew];
-                        System.arraycopy(readPacketSamples, 0, samplesToProcess, 0, numNew);
+                    if (samplesInPacket > 0) {
+                        final int numNew = samplesInPacket;
 
-                        // TASK: DISPLAY (High Priority)
-                        displayExecutor.execute(() -> {
-                            if (A2DVal != null) {
-                                synchronized (A2DVal) {
-                                    // Shift existing data to the left
-                                    System.arraycopy(A2DVal, numNew, A2DVal, 0, signalBufferLen - numNew);
-                                    // Add the new packet data to the end
-                                    for (int j = 0; j < numNew; j++) {
-                                        A2DVal[signalBufferLen - numNew + j] = samplesToProcess[j];
-                                    }
-                                }
-                                if (GameScreen.view != null) {
-                                    // postInvalidateOnAnimation is smoother on modern Android
-                                    GameScreen.view.postInvalidate();
+                        // 3. IMMEDIATE RECORDING
+                        if (GameScreen.isRecording) {
+                            synchronized (ramRecordBuffer) {
+                                for (int j = 0; j < numNew; j++) {
+                                    ramRecordBuffer.add(tempSamples[j]);
                                 }
                             }
-                        });
+                        }
 
-                        // TASK: MATH (Low Priority - Throttled)
+                        // 4. IMMEDIATE DATA UPDATE (On BT Thread)
+                        // Shifting an array of 1024 doubles takes ~5 microseconds.
+                        // Doing it here ensures the display array is ALWAYS in sync with the BT chip.
+                        synchronized (A2DVal) {
+                            System.arraycopy(A2DVal, numNew, A2DVal, 0, signalBufferLen - numNew);
+                            for (int j = 0; j < numNew; j++) {
+                                A2DVal[signalBufferLen - numNew + j] = tempSamples[j];
+                            }
+                        }
+
+                        // 5. LIGHTWEIGHT UI PING
+                        // Tell the UI thread to draw the latest state.
+                        // If it's already drawing, it will simply catch the new data on the next frame.
+                        if (GameScreen.view != null) {
+                            GameScreen.view.postInvalidate();
+                        }
+
+                        // 6. OFF-LOAD HEAVY MATH (PSD/RMS)
+                        // Only run math ~10 times per second to keep CPU cool
                         final PowerSpectralDensityCalculator finalPsdCalc = psdCalc;
                         if (mathSkipCount++ % 10 == 0 && finalPsdCalc != null) {
                             mathExecutor.execute(() -> {
                                 if (A2DVal != null) {
+                                    // Use a safe copy so Math doesn't lock up the BT thread
                                     synchronized (A2DVal) {
                                         System.arraycopy(A2DVal, 0, a2dCopyForMath, 0, signalBufferLen);
                                     }
+
                                     double[] tempResult = finalPsdCalc.calculatePSD(a2dCopyForMath, fs);
                                     if (tempResult != null && psdResult != null) {
                                         System.arraycopy(tempResult, 0, psdResult, 0, Math.min(tempResult.length, psdResult.length));
@@ -168,10 +169,12 @@ public class ConnectedThread extends Thread {
                 Log.e("ConnectedThread", "Parsing Error", e);
             }
         }
+        // Cleanup
         displayExecutor.shutdownNow();
         mathExecutor.shutdownNow();
         recordExecutor.shutdownNow();
     }
+
 
     private static class SystemClock {
         public static void sleep(long ms) {
