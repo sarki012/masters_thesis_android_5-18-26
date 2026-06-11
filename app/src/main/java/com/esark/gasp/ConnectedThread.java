@@ -56,18 +56,22 @@ public class ConnectedThread extends Thread {
 
     @Override
     public void run() {
-        // HIGHEST PRIORITY
+        // HIGHEST PRIORITY: Keeps the Bluetooth thread from being paused by the OS
         Process.setThreadPriority(Process.THREAD_PRIORITY_URGENT_DISPLAY);
 
         byte[] buffer = new byte[4096];
         double fs = 1000;
         PowerSpectralDensityCalculator psdCalc = null;
 
-        // Cumulative buffer to stabilize the UI and Recording cadence
-        // This prevents the 7-second lag by reducing context switching
-        double[] cadenceBuffer = new double[2048];
+        // Cumulative buffer to stabilize the cadence
+        double[] cadenceBuffer = new double[4096];
         int cadenceIdx = 0;
-        final int CADENCE_THRESHOLD = 25; // Update every 25ms (40Hz) - Perfect for real-time
+
+        // THE SMOOTHNESS KEY: Always move in fixed increments.
+        // 25 samples at 1000Hz = 25ms per step.
+        final int UI_STEP = 25;
+        // Pre-allocate chunk array to prevent Garbage Collection (GC) bunching
+        final double[] stepChunk = new double[UI_STEP];
 
         while (!Thread.currentThread().isInterrupted()) {
             try {
@@ -80,18 +84,17 @@ public class ConnectedThread extends Thread {
                     psdCalc = new PowerSpectralDensityCalculator(A2DVal, fs);
                 }
 
-                // 1. BLOCKING READ
+                // 1. BLOCKING READ: Wait for the next Bluetooth burst
                 int bytesRead = mmInStream.read(buffer);
                 if (bytesRead <= 0) continue;
 
-                // 2. PARSE DATA INTO THE CADENCE BUFFER
+                // 2. FAST PARSE: Add data to the cadence accumulator
                 for (int i = 0; i < bytesRead; i++) {
                     int b = buffer[i] & 0xFF;
                     if (b == 120) { // Sync 'x'
                         expectingLowByte = false;
                         continue;
                     }
-
                     if (!expectingLowByte) {
                         tempHighByte = b;
                         expectingLowByte = true;
@@ -104,41 +107,48 @@ public class ConnectedThread extends Thread {
                     }
                 }
 
-                // 3. PROCESS DATA ONLY WHEN THRESHOLD IS MET (The Smoothness Fix)
-                if (cadenceIdx >= CADENCE_THRESHOLD) {
-                    final int numNew = cadenceIdx;
-                    final double[] batchCopy = new double[numNew];
-                    System.arraycopy(cadenceBuffer, 0, batchCopy, 0, numNew);
-                    cadenceIdx = 0; // Reset accumulator
+                // 3. THE "ANTI-BUNCHING" LOOP
+                // If a large burst arrived (e.g., 100 samples), we process it in
+                // four separate, perfect steps of 25. This prevents the "bunching" look.
+                while (cadenceIdx >= UI_STEP) {
+                    // Extract exactly one step
+                    System.arraycopy(cadenceBuffer, 0, stepChunk, 0, UI_STEP);
 
-                    // A. ASYNC RECORDING (Off-loaded)
+                    // Shift the remaining data in the cadence buffer to the front
+                    cadenceIdx -= UI_STEP;
+                    System.arraycopy(cadenceBuffer, UI_STEP, cadenceBuffer, 0, cadenceIdx);
+
+                    // A. RECORDING: Move data to RAM for the CSV file
                     if (GameScreen.isRecording) {
+                        // Capture a snapshot for the recording thread
+                        final double[] recordCopy = new double[UI_STEP];
+                        System.arraycopy(stepChunk, 0, recordCopy, 0, UI_STEP);
                         recordExecutor.execute(() -> {
                             synchronized (ramRecordBuffer) {
-                                for (double v : batchCopy) ramRecordBuffer.add(v);
+                                for (double v : recordCopy) ramRecordBuffer.add(v);
                             }
                         });
                     }
 
-                    // B. ATOMIC UI UPDATE (Immediate on BT Thread for zero lag)
+                    // B. ATOMIC UI UPDATE: Move the wave on the screen
                     synchronized (A2DVal) {
-                        System.arraycopy(A2DVal, numNew, A2DVal, 0, signalBufferLen - numNew);
-                        System.arraycopy(batchCopy, 0, A2DVal, signalBufferLen - numNew, numNew);
+                        // Shift A2DVal left by exactly UI_STEP
+                        System.arraycopy(A2DVal, UI_STEP, A2DVal, 0, signalBufferLen - UI_STEP);
+                        // Add the new step at the end
+                        System.arraycopy(stepChunk, 0, A2DVal, signalBufferLen - UI_STEP, UI_STEP);
                     }
 
-                    // C. FRAME-SYNCED PING
+                    // C. PING DRAW: Only if the system is ready to draw
                     if (GameScreen.view != null) {
                         GameScreen.view.postInvalidateOnAnimation();
                     }
 
-                    // D. HEAVY MATH (Heavily Throttled)
-                    // PSD on 1024 points is CPU intensive.
-                    // Lowering update frequency to ~8Hz is enough for the eye and saves the signal speed.
-                    if (mathSkipCount++ % 5 == 0) { // mathSkipCount increments per batch, not per sample
+                    // D. MATH (PSD/RMS): Throttled to keep CPU cool
+                    // We increment math count based on the number of steps processed
+                    if (mathSkipCount++ % 8 == 0) {
                         synchronized (A2DVal) {
                             System.arraycopy(A2DVal, 0, a2dCopyForMath, 0, signalBufferLen);
                         }
-
                         final PowerSpectralDensityCalculator finalPsd = psdCalc;
                         mathExecutor.execute(() -> {
                             double[] tempResult = finalPsd.calculatePSD(a2dCopyForMath, fs);
