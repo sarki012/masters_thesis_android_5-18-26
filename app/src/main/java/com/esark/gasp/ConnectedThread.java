@@ -51,10 +51,9 @@ public class ConnectedThread extends Thread {
 
     @Override
     public void run() {
-        // AUDIO priority is higher than DISPLAY. This tells the OS to NEVER pause this thread.
         Process.setThreadPriority(Process.THREAD_PRIORITY_URGENT_AUDIO);
 
-        byte[] buffer = new byte[8192];
+        byte[] buffer = new byte[4096];
         double fs = 1000;
         PowerSpectralDensityCalculator psdCalc = null;
 
@@ -62,22 +61,22 @@ public class ConnectedThread extends Thread {
         final double[] packetSamples = new double[8192];
         final java.util.concurrent.atomic.AtomicBoolean mathIsBusy = new java.util.concurrent.atomic.AtomicBoolean(false);
 
+        // CADENCE TRACKING: This prevents the "slow/bunched" on-off switch behavior
+        long lastUiUpdateTime = 0;
+        int accumulatedSamples = 0;
+
         while (!Thread.currentThread().isInterrupted()) {
             try {
                 if (psdCalc == null && A2DVal != null) {
                     psdCalc = new PowerSpectralDensityCalculator(A2DVal, fs);
                 }
 
-                // 1. THE SUPER-DRAIN: Read ALL bytes waiting in the Bluetooth chip
-                // This prevents the "200Hz cap" by emptying the hardware buffer instantly.
+                // 1. THE SUPER-DRAIN: Always empty the hardware buffer first
                 int samplesInThisCycle = 0;
-
-                // We check 'available()' to see if more data is waiting immediately behind the first read
                 while (mmInStream.available() > 0 || samplesInThisCycle == 0) {
                     int bytesRead = mmInStream.read(buffer);
                     if (bytesRead <= 0) break;
 
-                    // 2. ULTRA-FAST PARSE (Binary State Machine)
                     for (int i = 0; i < bytesRead; i++) {
                         int b = buffer[i] & 0xFF;
                         if (b == 'x' || b == 120) {
@@ -89,21 +88,18 @@ public class ConnectedThread extends Thread {
                             expectingLowByte = true;
                         } else {
                             if (samplesInThisCycle < packetSamples.length) {
-                                // Reconstruct 16-bit and scale
                                 packetSamples[samplesInThisCycle++] = ((tempHighByte << 8) | b) / 3.0;
                             }
                             expectingLowByte = false;
                         }
                     }
-                    // Safety: don't loop forever if data is infinite,
-                    // give the UI a chance to breathe every 2000 samples
                     if (samplesInThisCycle > 4000) break;
                 }
 
                 if (samplesInThisCycle > 0) {
                     final int numNew = samplesInThisCycle;
 
-                    // 3. IMMEDIATE RECORDING (Zero-allocation copy)
+                    // 2. IMMEDIATE RECORDING: Record everything in RAM as it arrives
                     if (GameScreen.isRecording) {
                         synchronized (GameScreen.ramRecordBuffer) {
                             int spaceLeft = GameScreen.ramRecordBuffer.length - GameScreen.ramRecordBufferIdx;
@@ -115,18 +111,27 @@ public class ConnectedThread extends Thread {
                         }
                     }
 
-                    // 4. ATOMIC UI UPDATE
+                    // 3. ATOMIC UI ARRAY UPDATE: Update data immediately to stay in sync
                     synchronized (A2DVal) {
                         System.arraycopy(A2DVal, numNew, A2DVal, 0, signalBufferLen - numNew);
                         System.arraycopy(packetSamples, 0, A2DVal, signalBufferLen - numNew, numNew);
                     }
 
-                    // 5. UI TRIGGER (Once per drain cycle)
-                    if (GameScreen.view != null) {
-                        GameScreen.view.postInvalidate();
+                    accumulatedSamples += numNew;
+
+                    // 4. CADENCE STABILIZER: The key to fixing the "on-off switch"
+                    // Only request a redraw at 60Hz (every 16ms).
+                    // This prevents "bunching" at low frequencies and "flying" at high frequencies.
+                    long currentTime = SystemClock.uptimeMillis();
+                    if (currentTime - lastUiUpdateTime >= 16 || accumulatedSamples > 100) {
+                        if (GameScreen.view != null) {
+                            GameScreen.view.postInvalidate();
+                        }
+                        lastUiUpdateTime = currentTime;
+                        accumulatedSamples = 0;
                     }
 
-                    // 6. NON-BLOCKING MATH
+                    // 5. NON-BLOCKING MATH (PSD/RMS)
                     if (mathIsBusy.compareAndSet(false, true)) {
                         synchronized (A2DVal) {
                             System.arraycopy(A2DVal, 0, a2dCopyForMath, 0, signalBufferLen);
