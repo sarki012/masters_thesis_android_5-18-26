@@ -18,6 +18,7 @@ import java.io.OutputStream;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.locks.LockSupport;
 
 public class ConnectedThread extends Thread {
     private final BluetoothSocket mmSocket;
@@ -50,16 +51,19 @@ public class ConnectedThread extends Thread {
     }
 
     @Override
-    public void run() {    Process.setThreadPriority(Process.THREAD_PRIORITY_URGENT_DISPLAY);
-        byte[] buffer = new byte[4096];
-        final double[] packetSamples = new double[8192];
+    public void run() {
+        Process.setThreadPriority(Process.THREAD_PRIORITY_URGENT_DISPLAY);
+        byte[] buffer = new byte[2048];
+        final double[] packetSamples = new double[4096];
 
-        // Time-base variables to keep 1000Hz perfectly steady
+        // Precision constants
+        final long NS_PER_SAMPLE = 1000000L; // Exactly 1ms in nanoseconds
         long startTimeNs = System.nanoTime();
-        long totalSamplesReleased = 0;
+        long samplesReleased = 0;
 
         while (!Thread.currentThread().isInterrupted()) {
             try {
+                // 1. BLOCKING READ
                 int bytesRead = mmInStream.read(buffer);
                 if (bytesRead <= 0) continue;
 
@@ -79,7 +83,7 @@ public class ConnectedThread extends Thread {
                 }
 
                 if (samplesFound > 0) {
-                    // 1. Record 100% of data to RAM immediately (for the CSV)
+                    // Immediate Recording for CSV integrity
                     if (GameScreen.isRecording) {
                         synchronized (GameScreen.ramRecordBuffer) {
                             int spaceLeft = GameScreen.ramRecordBuffer.length - GameScreen.ramRecordBufferIdx;
@@ -90,43 +94,48 @@ public class ConnectedThread extends Thread {
                             }
                         }
                     }
-//
-                    // 2. THE PRECISION ENGINE: Release samples based on the clock, not the packet size
-                    int processed = 0;
-                    while (processed < samplesFound) {
-                        long nowNs = System.nanoTime();
-                        // How many ms have passed since we started?
-                        long elapsedMs = (nowNs - startTimeNs) / 1000000;
 
-                        // How many samples SHOULD have been shown by now to be "Real Time"?
-                        int debt = (int) (elapsedMs - totalSamplesReleased);
+                    // 2. PRECISION RELEASE ENGINE
+                    int processedInPacket = 0;
+                    while (processedInPacket < samplesFound) {
+                        long now = System.nanoTime();
+                        // Calculate debt in fractional samples for perfect accuracy
+                        long elapsedNs = now - startTimeNs;
+                        int targetSamples = (int) (elapsedNs / 1000000L); // 1ms = 1,000,000ns
+                        int debt = targetSamples - (int) samplesReleased;
 
                         if (debt > 0) {
-                            // Release either the "debt" or what's left in the packet, whichever is smaller
-                            int chunkSize = Math.min(debt, samplesFound - processed);
-                            // Cap chunk size to prevent "jumping" if the OS stalls
-                            chunkSize = Math.min(chunkSize, 32);
+                            // Release small chunks (max 10) to keep duty cycle consistent
+                            int chunkSize = Math.min(debt, samplesFound - processedInPacket);
+                            chunkSize = Math.min(chunkSize, 4);
 
                             synchronized (A2DVal) {
+                                // Shift display array
                                 System.arraycopy(A2DVal, chunkSize, A2DVal, 0, signalBufferLen - chunkSize);
-                                System.arraycopy(packetSamples, processed, A2DVal, signalBufferLen - chunkSize, chunkSize);
+                                // Insert new data
+                                System.arraycopy(packetSamples, processedInPacket, A2DVal, signalBufferLen - chunkSize, chunkSize);
                             }
 
                             if (GameScreen.view != null) {
                                 GameScreen.view.postInvalidateOnAnimation();
                             }
 
-                            processed += chunkSize;
-                            totalSamplesReleased += chunkSize;
+                            processedInPacket += chunkSize;
+                            samplesReleased += chunkSize;
                         } else {
-                            // We are ahead of the clock, wait 1ms and check again
-                            SystemClock.sleep(1);
+                            // We are ahead of the clock.
+                            // Using a very short sleep to avoid CPU maxing,
+                            // but keeping it shorter than 1ms to maintain precision.
+                            LockSupport.parkNanos(100000L); // Wait 0.1ms
                         }
                     }
                 }
-            } catch (IOException e) { break; }
+            } catch (IOException e) {
+                break;
+            }
         }
     }
+
 
 
 

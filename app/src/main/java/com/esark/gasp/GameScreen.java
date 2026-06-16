@@ -105,7 +105,7 @@ public class GameScreen extends Screen implements Input {
     private static int replayPosition = 0;
     private String fileName = "sEMG_Data.csv";
     // signalBufferLen is 1024.// We draw (1024 - 1) line segments. Each segment needs 4 floats (x1, y1, x2, y2).
-    private final float[] lineBuffer = new float[(1024 - 1) * 4];
+    private final float[] lineBuffer = new float[(signalBufferLen - 1) * 4];
     // Initialize the Paint object
     private final Paint signalPaint = new Paint();
     // Background thread for disk I/O
@@ -119,7 +119,7 @@ public class GameScreen extends Screen implements Input {
     // Inside GameScreen.java - replace your current ramRecordBuffer declaration
     public static double[] ramRecordBuffer = new double[300000]; // Fits 5 minutes at 1000Hz
     public static int ramRecordBufferIdx =0;
-    private final static float currentXStep = 1.4027f;
+    private final static float currentXStep = 1.0f;
 
     // FIX 1: Use signalBufferLen instead of hardcoded 1024 to prevent Bounds Crash
     private final double[] drawingSnapshot = new double[signalBufferLen];
@@ -471,7 +471,8 @@ public class GameScreen extends Screen implements Input {
         final float centerY = 440.0f;  // Adjusted to give peaks more room
         final float gMult = 0.15f;    // Adjusted gain to prevent clipping
         final float base = 410.0f;
-        final float currentXStep = 1.4027f;
+      //  final float currentXStep = 1.4027f;
+        final float currentXStep = 1.0f;
 
         signalPaint.setAntiAlias(true);
         // THINNER STROKE: 5.0f was too fat, making peaks look flat. 2.5f is sharper.
@@ -575,7 +576,7 @@ public class GameScreen extends Screen implements Input {
             replayPosition += 17;       // Was 25
 
             // Loop back to start if we reach the end of the file
-            if (replayPosition >= replayList.size() + 1024) {
+            if (replayPosition >= replayList.size() + signalBufferLen) {
                 replayPosition = 0;
             }
 
