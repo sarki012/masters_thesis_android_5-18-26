@@ -115,7 +115,7 @@ public class GameScreen extends Screen implements Input {
     // Pre-allocate for 100,000 samples (100 seconds of data)
     // USE THIS DECLARATION in GameScreen.java
 // Pre-allocate 100,000 samples (~100 seconds) so the list doesn't have to resize
-  //  public static List<Double> ramRecordBuffer = java.util.Collections.synchronizedList(new ArrayList<>(100000));
+    //  public static List<Double> ramRecordBuffer = java.util.Collections.synchronizedList(new ArrayList<>(100000));
     // Inside GameScreen.java - replace your current ramRecordBuffer declaration
     public static double[] ramRecordBuffer = new double[300000]; // Fits 5 minutes at 1000Hz
     public static int ramRecordBufferIdx =0;
@@ -160,7 +160,7 @@ public class GameScreen extends Screen implements Input {
             alertSound = null;
         }
     }
-   // public GameScreenLastEvent gameScreenLastEvent = new GameScreenLastEvent(game);
+    // public GameScreenLastEvent gameScreenLastEvent = new GameScreenLastEvent(game);
     //public GameScreenEventLog gameScreenEventLog = new GameScreenEventLog(game);
     @Override
     public void update(float deltaTime, Context context) {
