@@ -56,36 +56,15 @@ public class ConnectedThread extends Thread {
         final double[] packetSamples = new double[4096];
         final java.util.concurrent.atomic.AtomicBoolean mathIsBusy = new java.util.concurrent.atomic.AtomicBoolean(false);
 
-        double fs = 1000;
-        PowerSpectralDensityCalculator psdCalc = null;
-
-        final int UI_STEP = 25;
-        final int TARGET_MS = 25;
-
         while (!Thread.currentThread().isInterrupted()) {
             try {
-                // --- CRITICAL FIX 1: NULL GUARDS ---
-                // Prevent crash if GameScreen hasn't initialized these static arrays yet
-                if (A2DVal == null || GameScreen.ramRecordBuffer == null) {
-                    SystemClock.sleep(100); // Wait for GameScreen to "wake up"
-                    continue;
-                }
-
-                // Initialize calculator only once when A2DVal is ready
-                if (psdCalc == null) {
-                    psdCalc = new PowerSpectralDensityCalculator(A2DVal, fs);
-                }
-
                 int bytesRead = mmInStream.read(buffer);
                 if (bytesRead <= 0) continue;
 
                 int samplesFound = 0;
                 for (int i = 0; i < bytesRead; i++) {
                     int b = buffer[i] & 0xFF;
-                    if (b == 120) { // 'x' sync byte
-                        expectingLowByte = false;
-                        continue;
-                    }
+                    if (b == 120) { expectingLowByte = false; continue; }
                     if (!expectingLowByte) {
                         tempHighByte = b;
                         expectingLowByte = true;
@@ -98,7 +77,7 @@ public class ConnectedThread extends Thread {
                 }
 
                 if (samplesFound > 0) {
-                    // 1. Immediate Recording
+                    // 1. Record immediately
                     if (GameScreen.isRecording) {
                         synchronized (GameScreen.ramRecordBuffer) {
                             int spaceLeft = GameScreen.ramRecordBuffer.length - GameScreen.ramRecordBufferIdx;
@@ -110,11 +89,11 @@ public class ConnectedThread extends Thread {
                         }
                     }
 
-                    // 2. Adaptive Steady Drip (UI Cadence)
+                    // 2. ADAPTIVE DRIP (The Smoothness Fix)
                     int processed = 0;
                     while (processed < samplesFound) {
-                        long stepStart = SystemClock.elapsedRealtime();
-                        int chunkSize = Math.min(UI_STEP, samplesFound - processed);
+                        // Move 16 samples (16ms of data)
+                        int chunkSize = Math.min(16, samplesFound - processed);
                         final double[] subBatch = new double[chunkSize];
                         System.arraycopy(packetSamples, processed, subBatch, 0, chunkSize);
 
@@ -128,46 +107,19 @@ public class ConnectedThread extends Thread {
                         }
 
                         processed += chunkSize;
-                        long elapsed = SystemClock.elapsedRealtime() - stepStart;
-                        long sleepTime = TARGET_MS - elapsed;
-                        if (samplesFound - processed > UI_STEP * 2) sleepTime -= 5;
-                        if (sleepTime > 0) SystemClock.sleep(sleepTime);
-                    }
 
-                    // --- CRITICAL FIX 2: MATH NULL GUARD ---
-                    // Only start math if psdCalc is NOT null to avoid NullPointerException
-                    if (psdCalc != null && mathIsBusy.compareAndSet(false, true)) {
-                        synchronized (A2DVal) {
-                            System.arraycopy(A2DVal, 0, a2dCopyForMath, 0, signalBufferLen);
+                        // --- ADAPTIVE SLEEP ---
+                        // If we have a lot of data left in this packet (backlog),
+                        // sleep less (12ms) to "catch up" smoothly.
+                        // Otherwise, sleep 16ms to match the screen.
+                        if (samplesFound - processed > 32) {
+                            SystemClock.sleep(10); // Fast catch-up
+                        } else {
+                            SystemClock.sleep(16); // Normal steady flow
                         }
-                        final PowerSpectralDensityCalculator finalPsd = psdCalc;
-                        mathExecutor.execute(() -> {
-                            try {
-                                double[] tempResult = finalPsd.calculatePSD(a2dCopyForMath, fs);
-                                if (tempResult != null && psdResult != null) {
-                                    int copyLen = Math.min(tempResult.length, psdResult.length);
-                                    System.arraycopy(tempResult, 0, psdResult, 0, copyLen);
-                                    for (int j = 0; j < copyLen; j++) {
-                                        psdResult[j] = psdResult[j] * -1 + 3600;
-                                        if (psdResult[j] < 3165) psdResult[j] = 3165;
-                                    }
-                                }
-                                movingRMS = RMSCalculator.calculateMovingRMS(a2dCopyForMath, 10);
-                                if (movingRMS != null) {
-                                    smoothedRMS = MovingAverageCalculator.calculateMovingAverage(movingRMS, 20);
-                                }
-                            } finally {
-                                mathIsBusy.set(false);
-                            }
-                        });
                     }
                 }
-            } catch (IOException e) {
-                Log.e("BT", "Connection lost");
-                break;
-            } catch (Exception e) {
-                Log.e("BT", "Runtime error: " + e.getMessage());
-            }
+            } catch (IOException e) { break; }
         }
     }
 
