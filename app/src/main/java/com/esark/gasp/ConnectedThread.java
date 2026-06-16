@@ -51,19 +51,16 @@ public class ConnectedThread extends Thread {
 
     @Override
     public void run() {
-        Process.setThreadPriority(Process.THREAD_PRIORITY_URGENT_AUDIO);
+        // URGENT_DISPLAY ensures the OS prioritizes this thread's timing
+        Process.setThreadPriority(Process.THREAD_PRIORITY_URGENT_DISPLAY);
 
         byte[] buffer = new byte[4096];
         double fs = 1000;
         PowerSpectralDensityCalculator psdCalc = null;
 
-        // Temporary storage for samples found in the "Drain" cycle
-        final double[] packetSamples = new double[8192];
+        // Local storage for parsed samples
+        final double[] packetSamples = new double[4096];
         final java.util.concurrent.atomic.AtomicBoolean mathIsBusy = new java.util.concurrent.atomic.AtomicBoolean(false);
-
-        // CADENCE TRACKING: This prevents the "slow/bunched" on-off switch behavior
-        long lastUiUpdateTime = 0;
-        int accumulatedSamples = 0;
 
         while (!Thread.currentThread().isInterrupted()) {
             try {
@@ -71,39 +68,35 @@ public class ConnectedThread extends Thread {
                     psdCalc = new PowerSpectralDensityCalculator(A2DVal, fs);
                 }
 
-                // 1. THE SUPER-DRAIN: Always empty the hardware buffer first
-                int samplesInThisCycle = 0;
-                while (mmInStream.available() > 0 || samplesInThisCycle == 0) {
-                    int bytesRead = mmInStream.read(buffer);
-                    if (bytesRead <= 0) break;
+                // 1. BLOCKING READ: Wait for the next Bluetooth burst
+                int bytesRead = mmInStream.read(buffer);
+                if (bytesRead <= 0) continue;
 
-                    for (int i = 0; i < bytesRead; i++) {
-                        int b = buffer[i] & 0xFF;
-                        if (b == 'x' || b == 120) {
-                            expectingLowByte = false;
-                            continue;
-                        }
-                        if (!expectingLowByte) {
-                            tempHighByte = b;
-                            expectingLowByte = true;
-                        } else {
-                            if (samplesInThisCycle < packetSamples.length) {
-                                packetSamples[samplesInThisCycle++] = ((tempHighByte << 8) | b) / 3.0;
-                            }
-                            expectingLowByte = false;
-                        }
+                int samplesFound = 0;
+                // 2. PARSE DATA
+                for (int i = 0; i < bytesRead; i++) {
+                    int b = buffer[i] & 0xFF;
+                    if (b == 120) { // Sync 'x'
+                        expectingLowByte = false;
+                        continue;
                     }
-                    if (samplesInThisCycle > 4000) break;
+                    if (!expectingLowByte) {
+                        tempHighByte = b;
+                        expectingLowByte = true;
+                    } else {
+                        if (samplesFound < packetSamples.length) {
+                            packetSamples[samplesFound++] = ((tempHighByte << 8) | b) / 3.0;
+                        }
+                        expectingLowByte = false;
+                    }
                 }
 
-                if (samplesInThisCycle > 0) {
-                    final int numNew = samplesInThisCycle;
-
-                    // 2. IMMEDIATE RECORDING: Record everything in RAM as it arrives
+                if (samplesFound > 0) {
+                    // 3. IMMEDIATE RECORDING: Save raw data to RAM immediately (No lag)
                     if (GameScreen.isRecording) {
                         synchronized (GameScreen.ramRecordBuffer) {
                             int spaceLeft = GameScreen.ramRecordBuffer.length - GameScreen.ramRecordBufferIdx;
-                            int toCopy = Math.min(numNew, spaceLeft);
+                            int toCopy = Math.min(samplesFound, spaceLeft);
                             if (toCopy > 0) {
                                 System.arraycopy(packetSamples, 0, GameScreen.ramRecordBuffer, GameScreen.ramRecordBufferIdx, toCopy);
                                 GameScreen.ramRecordBufferIdx += toCopy;
@@ -111,27 +104,35 @@ public class ConnectedThread extends Thread {
                         }
                     }
 
-                    // 3. ATOMIC UI ARRAY UPDATE: Update data immediately to stay in sync
-                    synchronized (A2DVal) {
-                        System.arraycopy(A2DVal, numNew, A2DVal, 0, signalBufferLen - numNew);
-                        System.arraycopy(packetSamples, 0, A2DVal, signalBufferLen - numNew, numNew);
-                    }
+                    // 4. CADENCE STABILIZER: The "Drip" Loop
+                    // Instead of jumping 100 pixels at once, we move in smooth 20ms steps.
+                    int processed = 0;
+                    while (processed < samplesFound) {
+                        int chunkSize = Math.min(20, samplesFound - processed);
+                        final double[] subBatch = new double[chunkSize];
+                        System.arraycopy(packetSamples, processed, subBatch, 0, chunkSize);
 
-                    accumulatedSamples += numNew;
-
-                    // 4. CADENCE STABILIZER: The key to fixing the "on-off switch"
-                    // Only request a redraw at 60Hz (every 16ms).
-                    // This prevents "bunching" at low frequencies and "flying" at high frequencies.
-                    long currentTime = SystemClock.uptimeMillis();
-                    if (currentTime - lastUiUpdateTime >= 16 || accumulatedSamples > 100) {
-                        if (GameScreen.view != null) {
-                            GameScreen.view.postInvalidate();
+                        synchronized (A2DVal) {
+                            System.arraycopy(A2DVal, chunkSize, A2DVal, 0, signalBufferLen - chunkSize);
+                            for (int k = 0; k < chunkSize; k++) {
+                                A2DVal[signalBufferLen - chunkSize + k] = subBatch[k];
+                            }
                         }
-                        lastUiUpdateTime = currentTime;
-                        accumulatedSamples = 0;
+
+                        if (GameScreen.view != null) {
+                            GameScreen.view.postInvalidateOnAnimation();
+                        }
+
+                        processed += chunkSize;
+
+                        // This tiny sleep (approx 18-20ms) simulates real-time flow
+                        // and prevents the "speed-up" accordion effect.
+                        if (processed < samplesFound) {
+                            SystemClock.sleep(18);
+                        }
                     }
 
-                    // 5. NON-BLOCKING MATH (PSD/RMS)
+                    // 5. MATH (Throttled per burst)
                     if (mathIsBusy.compareAndSet(false, true)) {
                         synchronized (A2DVal) {
                             System.arraycopy(A2DVal, 0, a2dCopyForMath, 0, signalBufferLen);
@@ -159,10 +160,9 @@ public class ConnectedThread extends Thread {
                     }
                 }
             } catch (IOException e) {
-                Log.e("BT", "Stream disconnected");
                 break;
             } catch (Exception e) {
-                Log.e("BT", "Parsing Error", e);
+                Log.e("BT", "Runtime Error", e);
             }
         }
     }
