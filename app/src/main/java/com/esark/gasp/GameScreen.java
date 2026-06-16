@@ -104,7 +104,7 @@ public class GameScreen extends Screen implements Input {
     private static List<Double> replayList = new ArrayList<>();
     private static int replayPosition = 0;
     private String fileName = "sEMG_Data.csv";
-    // signalBufferLen is 1024.// We draw (1024 - 1) line segments. Each segment needs 4 floats (x1, y1, x2, y2).
+    // signalBufferLen is 1435.// We draw (1435 - 1) line segments. Each segment needs 4 floats (x1, y1, x2, y2).
     private final float[] lineBuffer = new float[(signalBufferLen - 1) * 4];
     // Initialize the Paint object
     private final Paint signalPaint = new Paint();
@@ -119,9 +119,9 @@ public class GameScreen extends Screen implements Input {
     // Inside GameScreen.java - replace your current ramRecordBuffer declaration
     public static double[] ramRecordBuffer = new double[300000]; // Fits 5 minutes at 1000Hz
     public static int ramRecordBufferIdx =0;
-    private final static float currentXStep = 1.0f;
+    private final static int currentXStep = 1;
 
-    // FIX 1: Use signalBufferLen instead of hardcoded 1024 to prevent Bounds Crash
+    // FIX 1: Use signalBufferLen instead of hardcoded 1435 to prevent Bounds Crash
     private final double[] drawingSnapshot = new double[signalBufferLen];
 
     // FIX 2: Declare these here, but do NOT initialize them here
@@ -452,6 +452,25 @@ public class GameScreen extends Screen implements Input {
 
         // --- 4. RAW SIGNAL DRAWING (GPU Optimized - Right to Left) ---
         // --- 4. RAW SIGNAL DRAWING (Fixed for Clipping) ---
+
+        final float xRightLimit = 1600.0f;
+        final float xLeftLimit = 165.0f;
+        final float drawWidth = xRightLimit - xLeftLimit;
+
+        // CRITICAL: Calculate step as a double to prevent duty cycle "wobble"
+        // (1435 pixels / 1435 segments)
+        final double currentXStep = drawWidth / (signalBufferLen - 1);
+
+        final float drawCenterY = 440.0f;
+        final float drawGain = 0.2f;
+        final float drawBase = 410.0f;
+
+        // Setup Paint for sharp square waves
+        signalPaint.setAntiAlias(true);
+        signalPaint.setStrokeWidth(5.0f);
+        // BUTT cap prevents the "vibrating" ends on vertical lines
+        signalPaint.setStrokeCap(Paint.Cap.BUTT);
+
         // dataBaseline should match the middle of your raw ADC signal (e.g., 512 or 2048)
         double dataBaseline = 410.0;
         int screenCenterY = 500;    // Was 460
@@ -465,18 +484,12 @@ public class GameScreen extends Screen implements Input {
 
         // Total width is 1600 - 165 = 1435 pixels.
 
-        float xRightEdge = 1600.0f;
+        int xRightEdge = 1600;
         int bufferIdx = 0;
         // 2. Setup Drawing Constants
         final float centerY = 440.0f;  // Adjusted to give peaks more room
         final float gMult = 0.15f;    // Adjusted gain to prevent clipping
         final float base = 410.0f;
-      //  final float currentXStep = 1.4027f;
-        final float currentXStep = 1.0f;
-
-        signalPaint.setAntiAlias(true);
-        // THINNER STROKE: 5.0f was too fat, making peaks look flat. 2.5f is sharper.
-        signalPaint.setStrokeWidth(2.5f);
 
 //
         if (!isReplaying) {
@@ -488,24 +501,25 @@ public class GameScreen extends Screen implements Input {
             synchronized (A2DVal) {
                 System.arraycopy(A2DVal, 0, drawingSnapshot, 0, signalBufferLen);
             }
+            bufferIdx = 0;
 
-            float xCurrent = xRightEdge;
+            int xCurrent = xRightEdge;
 
             // Calculate initial Y
             // Start drawing from the right (most recent data)
-            float yLast = centerY - ((float)drawingSnapshot[signalBufferLen - 1] - base) * gMult;
+            float yLast = drawCenterY - ((float)drawingSnapshot[signalBufferLen - 1] - base) * gMult;
             if (yLast < 10) yLast = 10;
             if (yLast > 880) yLast = 880;
 
             for (int n = 1; n < signalBufferLen; n++) {
                 // CALCULATE X EXACTLY BASED ON N
                 // This prevents floating point "creep" and keeps the wave steady
-                float x1 = xRightEdge - ((n - 1) * currentXStep);
-                float x2 = xRightEdge - (n * currentXStep);
+                int x1 = xRightEdge - (int)((n - 1) * currentXStep);
+                int x2 = xRightEdge - (int)(n * currentXStep);
 
                 // Get data from right to left
                 int dataIdx = (signalBufferLen - 1) - n;
-                float yNext = centerY - ((float)drawingSnapshot[dataIdx] - base) * gMult;
+                float yNext = drawCenterY - ((float)drawingSnapshot[dataIdx] - base) * gMult;
 
                 if (yNext < 10) yNext = 10;
                 if (yNext > 880) yNext = 880;
@@ -534,8 +548,8 @@ public class GameScreen extends Screen implements Input {
             bufferIdx = 0;
 
             // We iterate through 'k' which represents pixels back from the right edge
-            // k=0 is the right edge (1600), k=1023 is the left edge (165)
-            for (int k = 0; k < 1023; k++) {
+            // k=0 is the right edge (1600), k=1435 is the left edge (165)
+            for (int k = 0; k < signalBufferLen; k++) {
                 // We map the playhead (replayPosition) to the right edge.
                 // As k increases, we look back in the file indices.
                 int pos1 = replayPosition - k;
@@ -544,10 +558,10 @@ public class GameScreen extends Screen implements Input {
                 // If the file is short, we only draw what we have
                 if (pos1 >= 0 && pos1 < replayList.size() && pos2 >= 0 && pos2 < replayList.size()) {
 
-                    float x1 = xRightEdge - (k * currentXStep);
+                    float x1 = xRightEdge - (float)(k * currentXStep);
                     float y1 = (float) (screenCenterY - (replayList.get(pos1) - dataBaseline) * gain);
 
-                    float x2 = xRightEdge - ((k + 1) * currentXStep);
+                    float x2 = xRightEdge - (float)((k + 1) * currentXStep);
                     float y2 = (float) (screenCenterY - (replayList.get(pos2) - dataBaseline) * gain);
 
                     // Clamping
