@@ -51,32 +51,38 @@ public class ConnectedThread extends Thread {
 
     @Override
     public void run() {
-        // URGENT_DISPLAY ensures the OS prioritizes this thread's timing
         Process.setThreadPriority(Process.THREAD_PRIORITY_URGENT_DISPLAY);
-
         byte[] buffer = new byte[4096];
-        double fs = 1000;
-        PowerSpectralDensityCalculator psdCalc = null;
-
-        // Local storage for parsed samples
         final double[] packetSamples = new double[4096];
         final java.util.concurrent.atomic.AtomicBoolean mathIsBusy = new java.util.concurrent.atomic.AtomicBoolean(false);
 
+        double fs = 1000;
+        PowerSpectralDensityCalculator psdCalc = null;
+
+        final int UI_STEP = 25;
+        final int TARGET_MS = 25;
+
         while (!Thread.currentThread().isInterrupted()) {
             try {
-                if (psdCalc == null && A2DVal != null) {
+                // --- CRITICAL FIX 1: NULL GUARDS ---
+                // Prevent crash if GameScreen hasn't initialized these static arrays yet
+                if (A2DVal == null || GameScreen.ramRecordBuffer == null) {
+                    SystemClock.sleep(100); // Wait for GameScreen to "wake up"
+                    continue;
+                }
+
+                // Initialize calculator only once when A2DVal is ready
+                if (psdCalc == null) {
                     psdCalc = new PowerSpectralDensityCalculator(A2DVal, fs);
                 }
 
-                // 1. BLOCKING READ: Wait for the next Bluetooth burst
                 int bytesRead = mmInStream.read(buffer);
                 if (bytesRead <= 0) continue;
 
                 int samplesFound = 0;
-                // 2. PARSE DATA
                 for (int i = 0; i < bytesRead; i++) {
                     int b = buffer[i] & 0xFF;
-                    if (b == 120) { // Sync 'x'
+                    if (b == 120) { // 'x' sync byte
                         expectingLowByte = false;
                         continue;
                     }
@@ -92,7 +98,7 @@ public class ConnectedThread extends Thread {
                 }
 
                 if (samplesFound > 0) {
-                    // 3. IMMEDIATE RECORDING: Save raw data to RAM immediately (No lag)
+                    // 1. Immediate Recording
                     if (GameScreen.isRecording) {
                         synchronized (GameScreen.ramRecordBuffer) {
                             int spaceLeft = GameScreen.ramRecordBuffer.length - GameScreen.ramRecordBufferIdx;
@@ -104,19 +110,17 @@ public class ConnectedThread extends Thread {
                         }
                     }
 
-                    // 4. CADENCE STABILIZER: The "Drip" Loop
-                    // Instead of jumping 100 pixels at once, we move in smooth 20ms steps.
+                    // 2. Adaptive Steady Drip (UI Cadence)
                     int processed = 0;
                     while (processed < samplesFound) {
-                        int chunkSize = Math.min(20, samplesFound - processed);
+                        long stepStart = SystemClock.elapsedRealtime();
+                        int chunkSize = Math.min(UI_STEP, samplesFound - processed);
                         final double[] subBatch = new double[chunkSize];
                         System.arraycopy(packetSamples, processed, subBatch, 0, chunkSize);
 
                         synchronized (A2DVal) {
                             System.arraycopy(A2DVal, chunkSize, A2DVal, 0, signalBufferLen - chunkSize);
-                            for (int k = 0; k < chunkSize; k++) {
-                                A2DVal[signalBufferLen - chunkSize + k] = subBatch[k];
-                            }
+                            System.arraycopy(subBatch, 0, A2DVal, signalBufferLen - chunkSize, chunkSize);
                         }
 
                         if (GameScreen.view != null) {
@@ -124,16 +128,15 @@ public class ConnectedThread extends Thread {
                         }
 
                         processed += chunkSize;
-
-                        // This tiny sleep (approx 18-20ms) simulates real-time flow
-                        // and prevents the "speed-up" accordion effect.
-                        if (processed < samplesFound) {
-                            SystemClock.sleep(18);
-                        }
+                        long elapsed = SystemClock.elapsedRealtime() - stepStart;
+                        long sleepTime = TARGET_MS - elapsed;
+                        if (samplesFound - processed > UI_STEP * 2) sleepTime -= 5;
+                        if (sleepTime > 0) SystemClock.sleep(sleepTime);
                     }
 
-                    // 5. MATH (Throttled per burst)
-                    if (mathIsBusy.compareAndSet(false, true)) {
+                    // --- CRITICAL FIX 2: MATH NULL GUARD ---
+                    // Only start math if psdCalc is NOT null to avoid NullPointerException
+                    if (psdCalc != null && mathIsBusy.compareAndSet(false, true)) {
                         synchronized (A2DVal) {
                             System.arraycopy(A2DVal, 0, a2dCopyForMath, 0, signalBufferLen);
                         }
@@ -160,12 +163,14 @@ public class ConnectedThread extends Thread {
                     }
                 }
             } catch (IOException e) {
+                Log.e("BT", "Connection lost");
                 break;
             } catch (Exception e) {
-                Log.e("BT", "Runtime Error", e);
+                Log.e("BT", "Runtime error: " + e.getMessage());
             }
         }
     }
+
 
 
     public void cancel() {
