@@ -447,14 +447,14 @@ public class GameScreen extends Screen implements Input {
         // --- 4. RAW SIGNAL DRAWING (Fixed for Clipping) ---
         // dataBaseline should match the middle of your raw ADC signal (e.g., 512 or 2048)
         double dataBaseline = 410.0;
-        int screenCenterY = 460;
+        int screenCenterY = 500;    // Was 460
 
         // REDUCED GAIN: Changing from 0.2f to 0.1f prevents the peaks from hitting the limits
-        float gain = 0.2f;
+        float gain = 0.2f;      // Was 0.2f
 
         // WIDENED LIMITS: Giving the signal more "headroom" and "footroom"
-        int topLimit = 50;             // Moved up from 230
-        int bottomLimit = 820;          // Moved down from 690
+        int topLimit = 10;      //Was 50             // Moved up from 230
+        int bottomLimit = 880;      // Was 820        // Moved down from 690
 
         // Total width is 1600 - 165 = 1435 pixels.
 
@@ -463,7 +463,7 @@ public class GameScreen extends Screen implements Input {
 
         signalPaint.setAntiAlias(true);
         // THINNER STROKE: 5.0f was too fat, making peaks look flat. 2.5f is sharper.
-        signalPaint.setStrokeWidth(5.0f);
+        signalPaint.setStrokeWidth(2.5f);
 
 
         if (!isReplaying) {
