@@ -486,27 +486,33 @@ public class GameScreen extends Screen implements Input {
             float xCurrent = xRightEdge;
 
             // Calculate initial Y
+            // Start drawing from the right (most recent data)
             float yLast = centerY - ((float)drawingSnapshot[signalBufferLen - 1] - base) * gMult;
-            if (yLast < topLimit) yLast = topLimit;
-            if (yLast > bottomLimit) yLast = bottomLimit;
+            if (yLast < 10) yLast = 10;
+            if (yLast > 880) yLast = 880;
 
-            // 4. Optimized drawing loop
-            for (int n = signalBufferLen - 2; n >= 0; n--) {
-                float xNext = xCurrent - currentXStep;
-                float yNext = centerY - ((float)drawingSnapshot[n] - base) * gMult;
+            for (int n = 1; n < signalBufferLen; n++) {
+                // CALCULATE X EXACTLY BASED ON N
+                // This prevents floating point "creep" and keeps the wave steady
+                float x1 = xRightEdge - ((n - 1) * currentXStep);
+                float x2 = xRightEdge - (n * currentXStep);
 
-                if (yNext < topLimit) yNext = topLimit;
-                if (yNext > bottomLimit) yNext = bottomLimit;
+                // Get data from right to left
+                int dataIdx = (signalBufferLen - 1) - n;
+                float yNext = centerY - ((float)drawingSnapshot[dataIdx] - base) * gMult;
 
-                lineBuffer[bufferIdx++] = xCurrent;
+                if (yNext < 10) yNext = 10;
+                if (yNext > 880) yNext = 880;
+
+                lineBuffer[bufferIdx++] = x1;
                 lineBuffer[bufferIdx++] = yLast;
-                lineBuffer[bufferIdx++] = xNext;
+                lineBuffer[bufferIdx++] = x2;
                 lineBuffer[bufferIdx++] = yNext;
 
-                xCurrent = xNext;
                 yLast = yNext;
 
-                if (xCurrent <= 165 || bufferIdx >= lineBuffer.length - 4) break;
+                // Stop if we hit the left border limit (165)
+                if (x2 <= 165 || bufferIdx >= lineBuffer.length - 4) break;
             }
 
             // 5. GPU Render
