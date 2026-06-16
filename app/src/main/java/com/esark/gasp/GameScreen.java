@@ -514,8 +514,8 @@ public class GameScreen extends Screen implements Input {
             for (int n = 1; n < signalBufferLen; n++) {
                 // CALCULATE X EXACTLY BASED ON N
                 // This prevents floating point "creep" and keeps the wave steady
-                int x1 = xRightEdge - (int)((n - 1) * currentXStep);
-                int x2 = xRightEdge - (int)(n * currentXStep);
+                int x1 = xRightEdge - (n - 1);
+                int x2 = xRightEdge - n;
 
                 // Get data from right to left
                 int dataIdx = (signalBufferLen - 1) - n;
