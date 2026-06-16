@@ -50,11 +50,13 @@ public class ConnectedThread extends Thread {
     }
 
     @Override
-    public void run() {
-        Process.setThreadPriority(Process.THREAD_PRIORITY_URGENT_DISPLAY);
+    public void run() {    Process.setThreadPriority(Process.THREAD_PRIORITY_URGENT_DISPLAY);
         byte[] buffer = new byte[4096];
-        final double[] packetSamples = new double[4096];
-        final java.util.concurrent.atomic.AtomicBoolean mathIsBusy = new java.util.concurrent.atomic.AtomicBoolean(false);
+        final double[] packetSamples = new double[8192];
+
+        // Time-base variables to keep 1000Hz perfectly steady
+        long startTimeNs = System.nanoTime();
+        long totalSamplesReleased = 0;
 
         while (!Thread.currentThread().isInterrupted()) {
             try {
@@ -77,7 +79,7 @@ public class ConnectedThread extends Thread {
                 }
 
                 if (samplesFound > 0) {
-                    // 1. Record immediately
+                    // 1. Record 100% of data to RAM immediately (for the CSV)
                     if (GameScreen.isRecording) {
                         synchronized (GameScreen.ramRecordBuffer) {
                             int spaceLeft = GameScreen.ramRecordBuffer.length - GameScreen.ramRecordBufferIdx;
@@ -88,34 +90,37 @@ public class ConnectedThread extends Thread {
                             }
                         }
                     }
-
-                    // 2. ADAPTIVE DRIP (The Smoothness Fix)
+//
+                    // 2. THE PRECISION ENGINE: Release samples based on the clock, not the packet size
                     int processed = 0;
                     while (processed < samplesFound) {
-                        // Move 16 samples (16ms of data)
-                        int chunkSize = Math.min(16, samplesFound - processed);
-                        final double[] subBatch = new double[chunkSize];
-                        System.arraycopy(packetSamples, processed, subBatch, 0, chunkSize);
+                        long nowNs = System.nanoTime();
+                        // How many ms have passed since we started?
+                        long elapsedMs = (nowNs - startTimeNs) / 1000000;
 
-                        synchronized (A2DVal) {
-                            System.arraycopy(A2DVal, chunkSize, A2DVal, 0, signalBufferLen - chunkSize);
-                            System.arraycopy(subBatch, 0, A2DVal, signalBufferLen - chunkSize, chunkSize);
-                        }
+                        // How many samples SHOULD have been shown by now to be "Real Time"?
+                        int debt = (int) (elapsedMs - totalSamplesReleased);
 
-                        if (GameScreen.view != null) {
-                            GameScreen.view.postInvalidateOnAnimation();
-                        }
+                        if (debt > 0) {
+                            // Release either the "debt" or what's left in the packet, whichever is smaller
+                            int chunkSize = Math.min(debt, samplesFound - processed);
+                            // Cap chunk size to prevent "jumping" if the OS stalls
+                            chunkSize = Math.min(chunkSize, 32);
 
-                        processed += chunkSize;
+                            synchronized (A2DVal) {
+                                System.arraycopy(A2DVal, chunkSize, A2DVal, 0, signalBufferLen - chunkSize);
+                                System.arraycopy(packetSamples, processed, A2DVal, signalBufferLen - chunkSize, chunkSize);
+                            }
 
-                        // --- ADAPTIVE SLEEP ---
-                        // If we have a lot of data left in this packet (backlog),
-                        // sleep less (12ms) to "catch up" smoothly.
-                        // Otherwise, sleep 16ms to match the screen.
-                        if (samplesFound - processed > 32) {
-                            SystemClock.sleep(10); // Fast catch-up
+                            if (GameScreen.view != null) {
+                                GameScreen.view.postInvalidateOnAnimation();
+                            }
+
+                            processed += chunkSize;
+                            totalSamplesReleased += chunkSize;
                         } else {
-                            SystemClock.sleep(16); // Normal steady flow
+                            // We are ahead of the clock, wait 1ms and check again
+                            SystemClock.sleep(1);
                         }
                     }
                 }

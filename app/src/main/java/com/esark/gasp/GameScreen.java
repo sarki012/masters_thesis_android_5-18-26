@@ -172,7 +172,6 @@ public class GameScreen extends Screen implements Input {
     private void updateRunning(List<TouchEvent> touchEvents, float deltaTime, Context context) {
         //updateRunning() contains controller code of our MVC scheme
         Graphics g = game.getGraphics();
-        g.drawPortraitPixmap(Assets.laryngospasmBackgroundMain, 0, 0);
         len = touchEvents.size();
         //Check to see if paused
         for (int i = 0; i < len; i++) {
@@ -289,7 +288,9 @@ public class GameScreen extends Screen implements Input {
                                     }
                                     pw.flush();
                                     pw.close();
-                                } catch (IOException e) { e.printStackTrace(); }
+                                } catch (IOException e) {
+                                    e.printStackTrace();
+                                }
                             }).start();
                         }
                     }
@@ -394,8 +395,14 @@ public class GameScreen extends Screen implements Input {
             String rmsWidthThreshStr = String.valueOf(rmsWidthThresh);
             g.drawText(rmsWidthThreshStr, 1330, 2235);    //Manual RMS Height Above Threshold Text
         }
-
+    }
 ///////////////////////////////////////////////////////////////////////////////////
+
+    @Override
+    public void present ( float deltaTime){
+        Graphics g = game.getGraphics();
+        Canvas canvas = ((AndroidGraphics) g).getCanvas();
+        g.drawPortraitPixmap(Assets.laryngospasmBackgroundMain, 0, 0);
         // --- LIVE RMS & PSD (Only shows when NOT replaying) ---
         if (!isReplaying) {
             int latestY = 0;
@@ -470,13 +477,11 @@ public class GameScreen extends Screen implements Input {
         // THINNER STROKE: 5.0f was too fat, making peaks look flat. 2.5f is sharper.
         signalPaint.setStrokeWidth(2.5f);
 
-
+//
         if (!isReplaying) {
             // --- LIVE BLACK LINE ---
             signalPaint.setColor(android.graphics.Color.BLACK);
 
-            // Optimization: Get the canvas once
-            Canvas canvas = ((AndroidGraphics) g).getCanvas();
             // 3. COPY DATA (Atomic Lock)
             // We copy and get out immediately so we don't block ConnectedThread
             synchronized (A2DVal) {
@@ -525,7 +530,6 @@ public class GameScreen extends Screen implements Input {
 
             // --- REPLAY RED LINE (Full Screen & Moving) ---
             signalPaint.setColor(android.graphics.Color.RED);
-            Canvas canvas = ((AndroidGraphics) g).getCanvas();
             bufferIdx = 0;
 
             // We iterate through 'k' which represents pixels back from the right edge
@@ -613,11 +617,6 @@ public class GameScreen extends Screen implements Input {
         }
     }
 
-
-    @Override
-    public void present ( float deltaTime){
-        Graphics g = game.getGraphics();
-    }
 
     @Override
     public void pause () {
