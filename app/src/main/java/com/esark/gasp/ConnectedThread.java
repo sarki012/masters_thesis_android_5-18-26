@@ -90,7 +90,7 @@ public class ConnectedThread extends Thread {
                             }
                         }
                     }
-
+//
                     // 2. THE PRECISION ENGINE: Release samples based on the clock, not the packet size
                     int processed = 0;
                     while (processed < samplesFound) {

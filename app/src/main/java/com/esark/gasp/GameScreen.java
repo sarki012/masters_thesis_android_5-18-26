@@ -477,7 +477,7 @@ public class GameScreen extends Screen implements Input {
         // THINNER STROKE: 5.0f was too fat, making peaks look flat. 2.5f is sharper.
         signalPaint.setStrokeWidth(2.5f);
 
-
+//
         if (!isReplaying) {
             // --- LIVE BLACK LINE ---
             signalPaint.setColor(android.graphics.Color.BLACK);
