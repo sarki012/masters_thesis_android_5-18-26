@@ -460,6 +460,11 @@ public class GameScreen extends Screen implements Input {
 
         float xRightEdge = 1600.0f;
         int bufferIdx = 0;
+        // 2. Setup Drawing Constants
+        final float centerY = 440.0f;  // Adjusted to give peaks more room
+        final float gMult = 0.15f;    // Adjusted gain to prevent clipping
+        final float base = 410.0f;
+        final float currentXStep = 1.4027f;
 
         signalPaint.setAntiAlias(true);
         // THINNER STROKE: 5.0f was too fat, making peaks look flat. 2.5f is sharper.
@@ -472,51 +477,39 @@ public class GameScreen extends Screen implements Input {
 
             // Optimization: Get the canvas once
             Canvas canvas = ((AndroidGraphics) g).getCanvas();
-
-            // 1. Copy data to PRE-ALLOCATED array (Zero Allocation)
-            // We use drawingSnapshot which is a class field, not a local variable
+            // 3. COPY DATA (Atomic Lock)
+            // We copy and get out immediately so we don't block ConnectedThread
             synchronized (A2DVal) {
                 System.arraycopy(A2DVal, 0, drawingSnapshot, 0, signalBufferLen);
             }
-            // LOCK RELEASED IMMEDIATELY
 
-            bufferIdx = 0;
             float xCurrent = xRightEdge;
 
-            // Pre-calculate constants to save 1024 multiplications per frame
-            final float gMult = gain;
-            final float base = (float)dataBaseline;
-            final float centerY = (float)screenCenterY;
-
-            // Calculate the first point's Y once
+            // Calculate initial Y
             float yLast = centerY - ((float)drawingSnapshot[signalBufferLen - 1] - base) * gMult;
             if (yLast < topLimit) yLast = topLimit;
             if (yLast > bottomLimit) yLast = bottomLimit;
 
-            // 2. Optimized Loop: Zero allocations inside
+            // 4. Optimized drawing loop
             for (int n = signalBufferLen - 2; n >= 0; n--) {
                 float xNext = xCurrent - currentXStep;
                 float yNext = centerY - ((float)drawingSnapshot[n] - base) * gMult;
 
-                // Clamping
                 if (yNext < topLimit) yNext = topLimit;
                 if (yNext > bottomLimit) yNext = bottomLimit;
 
-                // Load line segment [x1, y1, x2, y2]
                 lineBuffer[bufferIdx++] = xCurrent;
                 lineBuffer[bufferIdx++] = yLast;
                 lineBuffer[bufferIdx++] = xNext;
                 lineBuffer[bufferIdx++] = yNext;
 
-                // Reuse variables for next iteration
                 xCurrent = xNext;
                 yLast = yNext;
 
-                // Exit if we hit the UI border or buffer is full
                 if (xCurrent <= 165 || bufferIdx >= lineBuffer.length - 4) break;
             }
 
-            // 3. GPU Draw
+            // 5. GPU Render
             if (bufferIdx > 0) {
                 canvas.drawLines(lineBuffer, 0, bufferIdx, signalPaint);
             }
