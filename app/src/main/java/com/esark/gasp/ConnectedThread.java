@@ -56,14 +56,12 @@ public class ConnectedThread extends Thread {
         byte[] buffer = new byte[2048];
         final double[] packetSamples = new double[4096];
 
-        // Precision constants
-        final long NS_PER_SAMPLE = 1000000L; // Exactly 1ms in nanoseconds
+        // Time-base for 1000Hz (1ms per sample)
         long startTimeNs = System.nanoTime();
         long samplesReleased = 0;
 
         while (!Thread.currentThread().isInterrupted()) {
             try {
-                // 1. BLOCKING READ
                 int bytesRead = mmInStream.read(buffer);
                 if (bytesRead <= 0) continue;
 
@@ -83,31 +81,43 @@ public class ConnectedThread extends Thread {
                 }
 
                 if (samplesFound > 0) {
-                    int processed = 0;
-                    while (processed < samplesFound) {
-                        long now = System.nanoTime();
-                        long elapsedNs = now - startTimeNs;
+                    // 1. Immediate Recording for CSV
+                    if (GameScreen.isRecording) {
+                        synchronized (GameScreen.ramRecordBuffer) {
+                            int spaceLeft = GameScreen.ramRecordBuffer.length - GameScreen.ramRecordBufferIdx;
+                            int toCopy = Math.min(samplesFound, spaceLeft);
+                            if (toCopy > 0) {
+                                System.arraycopy(packetSamples, 0, GameScreen.ramRecordBuffer, GameScreen.ramRecordBufferIdx, toCopy);
+                                GameScreen.ramRecordBufferIdx += toCopy;
+                            }
+                        }
+                    }
 
-                        // Determine how many samples SHOULD have been displayed by now
-                        int targetTotal = (int) (elapsedNs / NS_PER_SAMPLE);
-                        int debt = targetTotal - (int) samplesReleased;
+                    // 2. PRECISION DRIP: Release 1 sample every 1ms
+                    int processedInPacket = 0;
+                    while (processedInPacket < samplesFound) {
+                        long now = System.nanoTime();
+                        long elapsedMs = (now - startTimeNs) / 1000000L;
+                        int debt = (int) (elapsedMs - samplesReleased);
 
                         if (debt > 0) {
-                            // Release samples to satisfy the time debt
-                            int chunkSize = Math.min(debt, samplesFound - processed);
-                            chunkSize = Math.min(chunkSize, 10); // Micro-batches for smoothness
+                            // Release only 1 sample at a time for maximum smoothness
+                            int chunkSize = 1;
 
                             synchronized (A2DVal) {
                                 System.arraycopy(A2DVal, chunkSize, A2DVal, 0, signalBufferLen - chunkSize);
-                                System.arraycopy(packetSamples, processed, A2DVal, signalBufferLen - chunkSize, chunkSize);
+                                A2DVal[signalBufferLen - chunkSize] = packetSamples[processedInPacket];
                             }
-                            if (GameScreen.view != null) GameScreen.view.postInvalidate();
 
-                            processed += chunkSize;
-                            samplesReleased += chunkSize;
+                            if (GameScreen.view != null) {
+                                GameScreen.view.postInvalidateOnAnimation();
+                            }
+
+                            processedInPacket++;
+                            samplesReleased++;
                         } else {
-                            // We are ahead of real-time, yield to the OS
-                            java.util.concurrent.locks.LockSupport.parkNanos(100000L);
+                            // Ahead of schedule, yield for 0.5ms
+                            java.util.concurrent.locks.LockSupport.parkNanos(500000L);
                         }
                     }
                 }

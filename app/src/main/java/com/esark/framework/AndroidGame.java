@@ -106,7 +106,7 @@ public abstract class AndroidGame extends Activity implements Game {
 
     public static int bufferFlag = 0;
     //public static int signalBufferLen = 287;
-    public static int signalBufferLen = 200; //Was 2000  //Was 1436       // Was 2048
+    public static int signalBufferLen = 1436; //Was 2000  //Was 1436       // Was 2048
     //public static int signalBufferLen = 1024;
     // In your class members
     Sound alertSound;
