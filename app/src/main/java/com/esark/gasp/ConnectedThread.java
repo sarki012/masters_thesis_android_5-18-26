@@ -83,56 +83,35 @@ public class ConnectedThread extends Thread {
                 }
 
                 if (samplesFound > 0) {
-                    // Immediate Recording for CSV integrity
-                    if (GameScreen.isRecording) {
-                        synchronized (GameScreen.ramRecordBuffer) {
-                            int spaceLeft = GameScreen.ramRecordBuffer.length - GameScreen.ramRecordBufferIdx;
-                            int toCopy = Math.min(samplesFound, spaceLeft);
-                            if (toCopy > 0) {
-                                System.arraycopy(packetSamples, 0, GameScreen.ramRecordBuffer, GameScreen.ramRecordBufferIdx, toCopy);
-                                GameScreen.ramRecordBufferIdx += toCopy;
-                            }
-                        }
-                    }
-
-                    // 2. PRECISION RELEASE ENGINE
-                    int processedInPacket = 0;
-                    while (processedInPacket < samplesFound) {
+                    int processed = 0;
+                    while (processed < samplesFound) {
                         long now = System.nanoTime();
-                        // Calculate debt in fractional samples for perfect accuracy
                         long elapsedNs = now - startTimeNs;
-                        int targetSamples = (int) (elapsedNs / 1000000L); // 1ms = 1,000,000ns
-                        int debt = targetSamples - (int) samplesReleased;
+
+                        // Determine how many samples SHOULD have been displayed by now
+                        int targetTotal = (int) (elapsedNs / NS_PER_SAMPLE);
+                        int debt = targetTotal - (int) samplesReleased;
 
                         if (debt > 0) {
-                            // Release small chunks (max 10) to keep duty cycle consistent
-                            int chunkSize = Math.min(debt, samplesFound - processedInPacket);
-                            chunkSize = Math.min(chunkSize, 4);
+                            // Release samples to satisfy the time debt
+                            int chunkSize = Math.min(debt, samplesFound - processed);
+                            chunkSize = Math.min(chunkSize, 10); // Micro-batches for smoothness
 
                             synchronized (A2DVal) {
-                                // Shift display array
                                 System.arraycopy(A2DVal, chunkSize, A2DVal, 0, signalBufferLen - chunkSize);
-                                // Insert new data
-                                System.arraycopy(packetSamples, processedInPacket, A2DVal, signalBufferLen - chunkSize, chunkSize);
+                                System.arraycopy(packetSamples, processed, A2DVal, signalBufferLen - chunkSize, chunkSize);
                             }
+                            if (GameScreen.view != null) GameScreen.view.postInvalidate();
 
-                            if (GameScreen.view != null) {
-                                GameScreen.view.postInvalidateOnAnimation();
-                            }
-
-                            processedInPacket += chunkSize;
+                            processed += chunkSize;
                             samplesReleased += chunkSize;
                         } else {
-                            // We are ahead of the clock.
-                            // Using a very short sleep to avoid CPU maxing,
-                            // but keeping it shorter than 1ms to maintain precision.
-                            LockSupport.parkNanos(100000L); // Wait 0.1ms
+                            // We are ahead of real-time, yield to the OS
+                            java.util.concurrent.locks.LockSupport.parkNanos(100000L);
                         }
                     }
                 }
-            } catch (IOException e) {
-                break;
-            }
+            } catch (IOException e) { break; }
         }
     }
 

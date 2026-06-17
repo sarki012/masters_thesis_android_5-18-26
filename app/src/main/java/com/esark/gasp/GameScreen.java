@@ -453,92 +453,57 @@ public class GameScreen extends Screen implements Input {
             }
         }
 
-        // --- 4. RAW SIGNAL DRAWING (GPU Optimized - Right to Left) ---
-        // --- 4. RAW SIGNAL DRAWING (Fixed for Clipping) ---
+        // --- 1. CONSTANTS FOR 2-SECOND WINDOW ---
+        final float xRightLimit = 1600.0f;
+        final float xLeftLimit = 165.0f;
+        final float totalWidth = xRightLimit - xLeftLimit; // 1435 pixels
 
-        final int xRightLimit = 1600;
-        final int xLeftLimit = 165;
-        final float drawWidth = xRightLimit - xLeftLimit;
-
-        // CRITICAL: Calculate step as a double to prevent duty cycle "wobble"
-        // (1435 pixels / 1435 segments)
-        final double currentXStep = drawWidth / (signalBufferLen - 1);
+        // This maps 2000 samples to 1435 pixels (0.7175 pixels per sample)
+        final float timeScaledXStep = totalWidth / (signalBufferLen - 1);
 
         final float drawCenterY = 440.0f;
-        final float drawGain = 0.2f;
+        final float drawGain = 0.15f;
         final float drawBase = 410.0f;
-
-        // Setup Paint for sharp square waves
-        signalPaint.setAntiAlias(true);
-        signalPaint.setStrokeWidth(5.0f);
-        // BUTT cap prevents the "vibrating" ends on vertical lines
-        signalPaint.setStrokeCap(Paint.Cap.BUTT);
-
-        // dataBaseline should match the middle of your raw ADC signal (e.g., 512 or 2048)
-        double dataBaseline = 410.0;
-        int screenCenterY = 500;    // Was 460
-
-        // REDUCED GAIN: Changing from 0.2f to 0.1f prevents the peaks from hitting the limits
-        float gain = 0.2f;      // Was 0.2f
-
-        // WIDENED LIMITS: Giving the signal more "headroom" and "footroom"
-        int topLimit = 10;      //Was 50             // Moved up from 230
-        int bottomLimit = 880;      // Was 820        // Moved down from 690
-
-        // Total width is 1600 - 165 = 1435 pixels.
-
-        int xRightEdge = 1600;
         int bufferIdx = 0;
-        // 2. Setup Drawing Constants
-        final float centerY = 440.0f;  // Adjusted to give peaks more room
-        final float gMult = 0.15f;    // Adjusted gain to prevent clipping
-        final float base = 410.0f;
 
-//
+        // --- 2. PAINT SETUP ---
+        signalPaint.setAntiAlias(false); // Sharp edges for square waves
+        signalPaint.setStrokeCap(Paint.Cap.BUTT);
+        signalPaint.setStrokeWidth(3.0f);
 
-
-        if (!isReplaying) {            // --- LIVE BLACK LINE ---
+        if (!isReplaying) {
             signalPaint.setColor(android.graphics.Color.BLACK);
-            signalPaint.setStrokeWidth(2.5f);
-            // BUTT cap ensures square wave edges are sharp and don't "vibrate"
-            signalPaint.setStrokeCap(Paint.Cap.BUTT);
 
+            // 3. ATOMIC SNAPSHOT
             synchronized (A2DVal) {
                 System.arraycopy(A2DVal, 0, drawingSnapshot, 0, signalBufferLen);
             }
 
             bufferIdx = 0;
-            final int xRight = 1600;
-
-
-            // First point (the most recent sample)
-            float yLast = centerY - ((float)drawingSnapshot[signalBufferLen - 1] - base) * gMult;
-            if (yLast < 10) yLast = 10;
-            if (yLast > 880) yLast = 880;
+            // Start at the right (most recent time)
+            float yLast = drawCenterY - ((float)drawingSnapshot[signalBufferLen - 1] - drawBase) * drawGain;
 
             for (int n = 1; n < signalBufferLen; n++) {
-                // PERFECT 1:1 PIXEL MAPPING
-                // We use integer subtraction. n is the pixel offset from the right.
-                int x1 = xRight - (n - 1);
-                int x2 = xRight - n;
+                // n = samples back in time.
+                // Each 'n' is exactly 1ms of time.
+                float x1 = xRightLimit - ((n - 1) * timeScaledXStep);
+                float x2 = xRightLimit - (n * timeScaledXStep);
 
-                // Data index moves right-to-left
                 int dataIdx = (signalBufferLen - 1) - n;
-                float yNext = centerY - ((float)drawingSnapshot[dataIdx] - base) * gMult;
+                float yNext = drawCenterY - ((float)drawingSnapshot[dataIdx] - drawBase) * drawGain;
 
                 if (yNext < 10) yNext = 10;
                 if (yNext > 880) yNext = 880;
 
-                // Load segment: [xStart, yStart, xEnd, yEnd]
-                lineBuffer[bufferIdx++] = (float)x1;
+                lineBuffer[bufferIdx++] = x1;
                 lineBuffer[bufferIdx++] = yLast;
-                lineBuffer[bufferIdx++] = (float)x2;
+                lineBuffer[bufferIdx++] = x2;
                 lineBuffer[bufferIdx++] = yNext;
 
                 yLast = yNext;
 
-                // Stop exactly at 165 (1600 - 1435 = 165)
-                if (x2 <= 165 || bufferIdx >= lineBuffer.length - 4) break;
+                // Stop drawing when we reach the 2-second time boundary (165px)
+                if (x2 <= xLeftLimit || bufferIdx >= lineBuffer.length - 4) break;
             }
 
             if (bufferIdx > 0) {
@@ -558,8 +523,8 @@ public class GameScreen extends Screen implements Input {
         float yLastReplay = drawCenterY - (float)((replayList.get(safeStartIdx) - drawBase) * drawGain);
 
         for (int n = 1; n < signalBufferLen; n++) {
-            int x1 = xRightLimit - (n - 1);
-            int x2 = xRightLimit - n;
+            float x1 = xRightLimit - (n - 1);
+            float x2 = xRightLimit - n;
 
             // Look backwards in the replay list
             int posIdx = replayPosition - n;
