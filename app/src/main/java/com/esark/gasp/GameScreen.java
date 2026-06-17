@@ -357,25 +357,7 @@ public class GameScreen extends Screen implements Input {
         //  g.drawRect(1600, 1610, 100, 310, 0);       //Replay
 
 
-        String eventCountStr = String.valueOf(eventCount);
-        g.drawText(eventCountStr, 570, 2660);
-        ////////////////// Start / Stop Recording //////////////////////////////////////////
-        if (startRecording == 0) {
-            recDeltaTimeMillis = 0;
-            minutes = 0;
-            seconds = 0;
-            remainingMilliseconds = 0;
-            String formattedTime = String.format("%02d:%02d:%03d", minutes, seconds, remainingMilliseconds);
-            g.drawText(formattedTime, 840, 2070);
-        } else if (startRecording == 1) {
-            currentTimeMillis = System.currentTimeMillis();
-            recDeltaTimeMillis = (int) (currentTimeMillis - startTimeMillis);
-            minutes = (int) recDeltaTimeMillis / 60000;
-            seconds = (int) recDeltaTimeMillis / 1000;
-            remainingMilliseconds = (int) recDeltaTimeMillis % 1000;
-            String formattedTime = String.format("%02d:%02d:%03d", minutes, seconds, remainingMilliseconds);
-            g.drawText(formattedTime, 840, 2070);
-        }
+
 
         //////////////////// RMS Threshold to Trigger Event //////////////////////////////////
         if (rmsThresholdTouch == 0) {
@@ -403,6 +385,27 @@ public class GameScreen extends Screen implements Input {
         Graphics g = game.getGraphics();
         Canvas canvas = ((AndroidGraphics) g).getCanvas();
         g.drawPortraitPixmap(Assets.laryngospasmBackgroundMain, 0, 0);
+
+        String eventCountStr = String.valueOf(eventCount);
+        g.drawText(eventCountStr, 570, 2660);
+        ////////////////// Start / Stop Recording //////////////////////////////////////////
+        if (startRecording == 0) {
+            recDeltaTimeMillis = 0;
+            minutes = 0;
+            seconds = 0;
+            remainingMilliseconds = 0;
+            String formattedTime = String.format("%02d:%02d:%03d", minutes, seconds, remainingMilliseconds);
+            g.drawText(formattedTime, 840, 2070);
+        } else if (startRecording == 1) {
+            currentTimeMillis = System.currentTimeMillis();
+            recDeltaTimeMillis = (int) (currentTimeMillis - startTimeMillis);
+            minutes = (int) recDeltaTimeMillis / 60000;
+            seconds = (int) recDeltaTimeMillis / 1000;
+            remainingMilliseconds = (int) recDeltaTimeMillis % 1000;
+            String formattedTime = String.format("%02d:%02d:%03d", minutes, seconds, remainingMilliseconds);
+            g.drawText(formattedTime, 840, 2070);
+        }
+
         // --- LIVE RMS & PSD (Only shows when NOT replaying) ---
         if (!isReplaying) {
             int latestY = 0;
@@ -453,8 +456,8 @@ public class GameScreen extends Screen implements Input {
         // --- 4. RAW SIGNAL DRAWING (GPU Optimized - Right to Left) ---
         // --- 4. RAW SIGNAL DRAWING (Fixed for Clipping) ---
 
-        final float xRightLimit = 1600.0f;
-        final float xLeftLimit = 165.0f;
+        final int xRightLimit = 1600;
+        final int xLeftLimit = 165;
         final float drawWidth = xRightLimit - xLeftLimit;
 
         // CRITICAL: Calculate step as a double to prevent duty cycle "wobble"
@@ -492,113 +495,108 @@ public class GameScreen extends Screen implements Input {
         final float base = 410.0f;
 
 //
-        if (!isReplaying) {
-            // --- LIVE BLACK LINE ---
-            signalPaint.setColor(android.graphics.Color.BLACK);
 
-            // 3. COPY DATA (Atomic Lock)
-            // We copy and get out immediately so we don't block ConnectedThread
+
+        if (!isReplaying) {            // --- LIVE BLACK LINE ---
+            signalPaint.setColor(android.graphics.Color.BLACK);
+            signalPaint.setStrokeWidth(2.5f);
+            // BUTT cap ensures square wave edges are sharp and don't "vibrate"
+            signalPaint.setStrokeCap(Paint.Cap.BUTT);
+
             synchronized (A2DVal) {
                 System.arraycopy(A2DVal, 0, drawingSnapshot, 0, signalBufferLen);
             }
+
             bufferIdx = 0;
+            final int xRight = 1600;
 
-            int xCurrent = xRightEdge;
 
-            // Calculate initial Y
-            // Start drawing from the right (most recent data)
-            float yLast = drawCenterY - ((float)drawingSnapshot[signalBufferLen - 1] - base) * gMult;
+            // First point (the most recent sample)
+            float yLast = centerY - ((float)drawingSnapshot[signalBufferLen - 1] - base) * gMult;
             if (yLast < 10) yLast = 10;
             if (yLast > 880) yLast = 880;
 
             for (int n = 1; n < signalBufferLen; n++) {
-                // CALCULATE X EXACTLY BASED ON N
-                // This prevents floating point "creep" and keeps the wave steady
-                int x1 = xRightEdge - (n - 1);
-                int x2 = xRightEdge - n;
+                // PERFECT 1:1 PIXEL MAPPING
+                // We use integer subtraction. n is the pixel offset from the right.
+                int x1 = xRight - (n - 1);
+                int x2 = xRight - n;
 
-                // Get data from right to left
+                // Data index moves right-to-left
                 int dataIdx = (signalBufferLen - 1) - n;
-                float yNext = drawCenterY - ((float)drawingSnapshot[dataIdx] - base) * gMult;
+                float yNext = centerY - ((float)drawingSnapshot[dataIdx] - base) * gMult;
 
                 if (yNext < 10) yNext = 10;
                 if (yNext > 880) yNext = 880;
 
-                lineBuffer[bufferIdx++] = x1;
+                // Load segment: [xStart, yStart, xEnd, yEnd]
+                lineBuffer[bufferIdx++] = (float)x1;
                 lineBuffer[bufferIdx++] = yLast;
-                lineBuffer[bufferIdx++] = x2;
+                lineBuffer[bufferIdx++] = (float)x2;
                 lineBuffer[bufferIdx++] = yNext;
 
                 yLast = yNext;
 
-                // Stop if we hit the left border limit (165)
+                // Stop exactly at 165 (1600 - 1435 = 165)
                 if (x2 <= 165 || bufferIdx >= lineBuffer.length - 4) break;
             }
 
-            // 5. GPU Render
             if (bufferIdx > 0) {
                 canvas.drawLines(lineBuffer, 0, bufferIdx, signalPaint);
             }
-        } else if (isReplaying && !replayList.isEmpty()) {// --- DEBUG: Show how many samples were loaded ---
-            g.drawText("Loaded: " + replayList.size(), 170, 200);
-            g.drawText("Pos: " + replayPosition, 170, 250);
+        } else if (isReplaying && !replayList.isEmpty()) {
+        // --- DEBUG: Show progress ---
+        g.drawText("Loaded: " + replayList.size(), 170, 200);
+        g.drawText("Pos: " + replayPosition, 170, 250);
 
-            // --- REPLAY RED LINE (Full Screen & Moving) ---
-            signalPaint.setColor(android.graphics.Color.RED);
-            bufferIdx = 0;
+        // --- REPLAY RED LINE ---
+        signalPaint.setColor(android.graphics.Color.RED);
+        bufferIdx = 0;
 
-            // We iterate through 'k' which represents pixels back from the right edge
-            // k=0 is the right edge (1600), k=1435 is the left edge (165)
-            for (int k = 0; k < signalBufferLen; k++) {
-                // We map the playhead (replayPosition) to the right edge.
-                // As k increases, we look back in the file indices.
-                int pos1 = replayPosition - k;
-                int pos2 = replayPosition - (k + 1);
+        // FIX: Clamp the index so it never exceeds (size - 1)
+        int safeStartIdx = Math.min(replayPosition, replayList.size() - 1);
+        float yLastReplay = drawCenterY - (float)((replayList.get(safeStartIdx) - drawBase) * drawGain);
 
-                // If the file is short, we only draw what we have
-                if (pos1 >= 0 && pos1 < replayList.size() && pos2 >= 0 && pos2 < replayList.size()) {
+        for (int n = 1; n < signalBufferLen; n++) {
+            int x1 = xRightLimit - (n - 1);
+            int x2 = xRightLimit - n;
 
-                    float x1 = xRightEdge - (float)(k * currentXStep);
-                    float y1 = (float) (screenCenterY - (replayList.get(pos1) - dataBaseline) * gain);
+            // Look backwards in the replay list
+            int posIdx = replayPosition - n;
 
-                    float x2 = xRightEdge - (float)((k + 1) * currentXStep);
-                    float y2 = (float) (screenCenterY - (replayList.get(pos2) - dataBaseline) * gain);
+            // Only draw if the index is within the actual data range
+            if (posIdx >= 0 && posIdx < replayList.size()) {
+                float yNextReplay = drawCenterY - (float)((replayList.get(posIdx) - drawBase) * drawGain);
 
-                    // Clamping
-                    if (y1 < topLimit) y1 = topLimit;
-                    if (y1 > bottomLimit) y1 = bottomLimit;
-                    if (y2 < topLimit) y2 = topLimit;
-                    if (y2 > bottomLimit) y2 = bottomLimit;
+                if (yNextReplay < 10) yNextReplay = 10;
+                if (yNextReplay > 880) yNextReplay = 880;
 
-                    lineBuffer[bufferIdx++] = x1;
-                    lineBuffer[bufferIdx++] = y1;
-                    lineBuffer[bufferIdx++] = x2;
-                    lineBuffer[bufferIdx++] = y2;
-
-                    if (x2 <= 165) break;
-                }
-                if (bufferIdx >= lineBuffer.length - 4) break;
+                lineBuffer[bufferIdx++] = (float)x1;
+                lineBuffer[bufferIdx++] = yLastReplay;
+                lineBuffer[bufferIdx++] = (float)x2;
+                lineBuffer[bufferIdx++] = yNextReplay;
+                yLastReplay = yNextReplay;
             }
-
-            if (bufferIdx > 0) {
-                canvas.drawLines(lineBuffer, 0, bufferIdx, signalPaint);
-            }
-
-            // --- SPEED CONTROL ---
-            // Advance the playhead. At 1000Hz, we need to move roughly 17-25 samples
-            // every frame to look real-time.
-            replayPosition += 17;       // Was 25
-
-            // Loop back to start if we reach the end of the file
-            if (replayPosition >= replayList.size() + signalBufferLen) {
-                replayPosition = 0;
-            }
-
-            // Force the animation to continue
-            if (GameScreen.view != null) {
-                GameScreen.view.postInvalidate();
-            }
+            if (x2 <= xLeftLimit || bufferIdx >= lineBuffer.length - 4) break;
         }
+
+        if (bufferIdx > 0) {
+            canvas.drawLines(lineBuffer, 0, bufferIdx, signalPaint);
+        }
+
+        // Speed Control
+        replayPosition += 17;
+
+        // Loop back to the start once the wave has fully exited the left side
+        if (replayPosition >= replayList.size() + signalBufferLen) {
+            replayPosition = 0;
+        }
+
+        // Force redraw for animation
+        if (GameScreen.view != null) {
+            GameScreen.view.postInvalidate();
+        }
+    }
 
         //////////////////////////////////////////////////////////////////////////
 
