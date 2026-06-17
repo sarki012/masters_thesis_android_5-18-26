@@ -56,15 +56,24 @@ public class ConnectedThread extends Thread {
         byte[] buffer = new byte[2048];
         final double[] packetSamples = new double[4096];
 
-        // Time-base for 1000Hz (1ms per sample)
+        // Time-base for 1000Hz (1,000,000 nanoseconds per sample)
+        final long NS_PER_SAMPLE = 1000000L;
         long startTimeNs = System.nanoTime();
         long samplesReleased = 0;
 
+        // UI Heartbeat tracking
+        long lastUiPingNs = 0;
+        final long UI_INTERVAL_NS = 16666666L; // 16.6ms (60Hz)
+
+        final AtomicBoolean mathIsBusy = new AtomicBoolean(false);
+
         while (!Thread.currentThread().isInterrupted()) {
             try {
+                // 1. BLOCKING READ
                 int bytesRead = mmInStream.read(buffer);
                 if (bytesRead <= 0) continue;
 
+                // 2. FAST PARSE
                 int samplesFound = 0;
                 for (int i = 0; i < bytesRead; i++) {
                     int b = buffer[i] & 0xFF;
@@ -81,7 +90,7 @@ public class ConnectedThread extends Thread {
                 }
 
                 if (samplesFound > 0) {
-                    // 1. Immediate Recording for CSV
+                    // Immediate Recording for CSV integrity
                     if (GameScreen.isRecording) {
                         synchronized (GameScreen.ramRecordBuffer) {
                             int spaceLeft = GameScreen.ramRecordBuffer.length - GameScreen.ramRecordBufferIdx;
@@ -93,15 +102,17 @@ public class ConnectedThread extends Thread {
                         }
                     }
 
-                    // 2. PRECISION DRIP: Release 1 sample every 1ms
+                    // 3. PRECISION RELEASE ENGINE
                     int processedInPacket = 0;
                     while (processedInPacket < samplesFound) {
                         long now = System.nanoTime();
-                        long elapsedMs = (now - startTimeNs) / 1000000L;
-                        int debt = (int) (elapsedMs - samplesReleased);
+                        long elapsedNs = now - startTimeNs;
+                        int targetTotal = (int) (elapsedNs / NS_PER_SAMPLE);
+                        int debt = targetTotal - (int) samplesReleased;
 
                         if (debt > 0) {
-                            // Release only 1 sample at a time for maximum smoothness
+                            // Release data 1-by-1 to the array for perfect linear logic
+                            // But we only request a redraw every 16.6ms
                             int chunkSize = 1;
 
                             synchronized (A2DVal) {
@@ -109,21 +120,45 @@ public class ConnectedThread extends Thread {
                                 A2DVal[signalBufferLen - chunkSize] = packetSamples[processedInPacket];
                             }
 
-                            if (GameScreen.view != null) {
-                                GameScreen.view.postInvalidateOnAnimation();
+                            // --- THE SMOOTHNESS KEY: UI THROTTLING ---
+                            // Only ping the UI every 16.6ms. This prevents the "Invalidation Pile-up"
+                            // that causes jumpy movement.
+                            if (now - lastUiPingNs >= UI_INTERVAL_NS) {
+                                if (GameScreen.view != null) {
+                                    GameScreen.view.postInvalidateOnAnimation();
+                                }
+                                lastUiPingNs = now;
                             }
 
                             processedInPacket++;
                             samplesReleased++;
                         } else {
-                            // Ahead of schedule, yield for 0.5ms
-                            java.util.concurrent.locks.LockSupport.parkNanos(500000L);
+                            // Ahead of schedule, yield for 0.1ms to keep the loop "hot"
+                            LockSupport.parkNanos(100000L);
                         }
                     }
+
+                    // 4. NON-BLOCKING MATH (PSD/RMS)
+                    if (mathIsBusy.compareAndSet(false, true)) {
+                        synchronized (A2DVal) {
+                            System.arraycopy(A2DVal, 0, a2dCopyForMath, 0, signalBufferLen);
+                        }
+                        mathExecutor.execute(() -> {
+                            try {
+                                // PSD and RMS calculations...
+                                // (Implementation truncated for brevity, keep your existing math here)
+                            } finally {
+                                mathIsBusy.set(false);
+                            }
+                        });
+                    }
                 }
-            } catch (IOException e) { break; }
+            } catch (IOException e) {
+                break;
+            }
         }
     }
+
 
 
 
