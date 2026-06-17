@@ -54,27 +54,27 @@ public class ConnectedThread extends Thread {
     public void run() {
         Process.setThreadPriority(Process.THREAD_PRIORITY_URGENT_DISPLAY);
         byte[] buffer = new byte[2048];
-        final double[] packetSamples = new double[4096];
 
-        // Time-base for 1000Hz (1,000,000 nanoseconds per sample)
-        final long NS_PER_SAMPLE = 1000000L;
-        long startTimeNs = System.nanoTime();
-        long samplesReleased = 0;
+        // --- JITTER BUFFER ---
+        final double[] jitterBuffer = new double[8192];
+        int jitterWriteIdx = 0;
+        int jitterReadIdx = 0;
+        int jitterCount = 0;
 
-        // UI Heartbeat tracking
-        long lastUiPingNs = 0;
-        final long UI_INTERVAL_NS = 16666666L; // 16.6ms (60Hz)
+        // --- TIME-BASE ---
+        final long NS_PER_SAMPLE = 1000000L; // 1ms
+        long startTimeNs = 0;
+        long totalSamplesReleased = 0;
 
         final AtomicBoolean mathIsBusy = new AtomicBoolean(false);
 
         while (!Thread.currentThread().isInterrupted()) {
             try {
-                // 1. BLOCKING READ
+                // 1. BLOCKING READ: Wait for the 25-integer burst
                 int bytesRead = mmInStream.read(buffer);
                 if (bytesRead <= 0) continue;
 
-                // 2. FAST PARSE
-                int samplesFound = 0;
+                // 2. PARSE AND ADD TO JITTER BUFFER
                 for (int i = 0; i < bytesRead; i++) {
                     int b = buffer[i] & 0xFF;
                     if (b == 120) { expectingLowByte = false; continue; }
@@ -82,82 +82,88 @@ public class ConnectedThread extends Thread {
                         tempHighByte = b;
                         expectingLowByte = true;
                     } else {
-                        if (samplesFound < packetSamples.length) {
-                            packetSamples[samplesFound++] = ((tempHighByte << 8) | b) / 3.0;
-                        }
+                        double val = ((tempHighByte << 8) | b) / 3.0;
                         expectingLowByte = false;
-                    }
-                }
 
-                if (samplesFound > 0) {
-                    // Immediate Recording for CSV integrity
-                    if (GameScreen.isRecording) {
-                        synchronized (GameScreen.ramRecordBuffer) {
-                            int spaceLeft = GameScreen.ramRecordBuffer.length - GameScreen.ramRecordBufferIdx;
-                            int toCopy = Math.min(samplesFound, spaceLeft);
-                            if (toCopy > 0) {
-                                System.arraycopy(packetSamples, 0, GameScreen.ramRecordBuffer, GameScreen.ramRecordBufferIdx, toCopy);
-                                GameScreen.ramRecordBufferIdx += toCopy;
-                            }
-                        }
-                    }
+                        jitterBuffer[jitterWriteIdx] = val;
+                        jitterWriteIdx = (jitterWriteIdx + 1) % jitterBuffer.length;
+                        jitterCount++;
 
-                    // 3. PRECISION RELEASE ENGINE
-                    int processedInPacket = 0;
-                    while (processedInPacket < samplesFound) {
-                        long now = System.nanoTime();
-                        long elapsedNs = now - startTimeNs;
-                        int targetTotal = (int) (elapsedNs / NS_PER_SAMPLE);
-                        int debt = targetTotal - (int) samplesReleased;
-
-                        if (debt > 0) {
-                            // Release data 1-by-1 to the array for perfect linear logic
-                            // But we only request a redraw every 16.6ms
-                            int chunkSize = 1;
-
-                            synchronized (A2DVal) {
-                                System.arraycopy(A2DVal, chunkSize, A2DVal, 0, signalBufferLen - chunkSize);
-                                A2DVal[signalBufferLen - chunkSize] = packetSamples[processedInPacket];
-                            }
-
-                            // --- THE SMOOTHNESS KEY: UI THROTTLING ---
-                            // Only ping the UI every 16.6ms. This prevents the "Invalidation Pile-up"
-                            // that causes jumpy movement.
-                            if (now - lastUiPingNs >= UI_INTERVAL_NS) {
-                                if (GameScreen.view != null) {
-                                    GameScreen.view.postInvalidateOnAnimation();
+                        if (GameScreen.isRecording) {
+                            synchronized (GameScreen.ramRecordBuffer) {
+                                if (GameScreen.ramRecordBufferIdx < GameScreen.ramRecordBuffer.length) {
+                                    GameScreen.ramRecordBuffer[GameScreen.ramRecordBufferIdx++] = val;
                                 }
-                                lastUiPingNs = now;
                             }
-
-                            processedInPacket++;
-                            samplesReleased++;
-                        } else {
-                            // Ahead of schedule, yield for 0.1ms to keep the loop "hot"
-                            LockSupport.parkNanos(100000L);
                         }
-                    }
-
-                    // 4. NON-BLOCKING MATH (PSD/RMS)
-                    if (mathIsBusy.compareAndSet(false, true)) {
-                        synchronized (A2DVal) {
-                            System.arraycopy(A2DVal, 0, a2dCopyForMath, 0, signalBufferLen);
-                        }
-                        mathExecutor.execute(() -> {
-                            try {
-                                // PSD and RMS calculations...
-                                // (Implementation truncated for brevity, keep your existing math here)
-                            } finally {
-                                mathIsBusy.set(false);
-                            }
-                        });
                     }
                 }
+
+                // Initialize timer on very first data arrival
+                if (startTimeNs == 0 && jitterCount > 0) {
+                    startTimeNs = System.nanoTime();
+                }
+
+                // 3. THE LIQUID ENGINE: Adaptive Drip
+                if (startTimeNs > 0) {
+                    long now = System.nanoTime();
+                    long elapsedNs = now - startTimeNs;
+
+                    // targetTotal = how many samples we should have released by now
+                    int targetTotal = (int) (elapsedNs / NS_PER_SAMPLE);
+                    int debt = targetTotal - (int) totalSamplesReleased;
+
+                    // RELEASE LOGIC:
+                    // If we owe samples (debt > 0) and have them (jitterCount > 0)
+                    if (debt > 0 && jitterCount > 0) {
+                        // Release either the debt or the count, whichever is smaller
+                        // This prevents the "Permanent Blackout" crash
+                        int chunkSize = Math.min(debt, jitterCount);
+
+                        // We cap the visual jump to 32ms to keep it "Liquid"
+                        // If the phone lags, it will slide fast to catch up rather than jumping
+                        chunkSize = Math.min(chunkSize, 32);
+
+                        double[] outputBatch = new double[chunkSize];
+                        for (int k = 0; k < chunkSize; k++) {
+                            outputBatch[k] = jitterBuffer[jitterReadIdx];
+                            jitterReadIdx = (jitterReadIdx + 1) % jitterBuffer.length;
+                        }
+                        jitterCount -= chunkSize;
+
+                        synchronized (A2DVal) {
+                            System.arraycopy(A2DVal, chunkSize, A2DVal, 0, signalBufferLen - chunkSize);
+                            System.arraycopy(outputBatch, 0, A2DVal, signalBufferLen - chunkSize, chunkSize);
+                        }
+
+                        if (GameScreen.view != null) {
+                            GameScreen.view.postInvalidateOnAnimation();
+                        }
+
+                        totalSamplesReleased += chunkSize;
+                    }
+                }
+
+                // 4. MATH (Non-Blocking)
+                if (mathIsBusy.compareAndSet(false, true)) {
+                    synchronized (A2DVal) {
+                        System.arraycopy(A2DVal, 0, a2dCopyForMath, 0, signalBufferLen);
+                    }
+                    mathExecutor.execute(() -> {
+                        try {
+                            // PSD/RMS Math here...
+                        } finally {
+                            mathIsBusy.set(false);
+                        }
+                    });
+                }
+
             } catch (IOException e) {
                 break;
             }
         }
     }
+
 
 
 
