@@ -550,7 +550,7 @@ public class GameScreen extends Screen implements Input {
         }
 
         // Speed Control
-        replayPosition += 17;
+        replayPosition += 1;       // Was 17
 
         // Loop back to the start once the wave has fully exited the left side
         if (replayPosition >= replayList.size() + signalBufferLen) {
