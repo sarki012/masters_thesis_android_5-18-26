@@ -474,7 +474,7 @@ public class GameScreen extends Screen implements Input {
 
         if (!isReplaying) {
             signalPaint.setColor(android.graphics.Color.BLACK);
-            signalPaint.setStrokeWidth(2.5f);
+            signalPaint.setStrokeWidth(5.0f);
             signalPaint.setAntiAlias(false); // Keeps square wave edges sharp
             signalPaint.setStrokeCap(Paint.Cap.BUTT);
 
