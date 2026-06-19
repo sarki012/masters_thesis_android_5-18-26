@@ -55,7 +55,7 @@ public class ConnectedThread extends Thread {
         Process.setThreadPriority(Process.THREAD_PRIORITY_URGENT_DISPLAY);
         byte[] buffer = new byte[2048];
 
-        // --- THE JITTER BUFFER ---
+        // --- THE JITTER BUFFER (Shock Absorber) ---
         final double[] jitterBuffer = new double[8192];
         int jWrite = 0;
         int jRead = 0;
@@ -63,7 +63,7 @@ public class ConnectedThread extends Thread {
 
         while (!Thread.currentThread().isInterrupted()) {
             try {
-                // 1. BLOCKING READ: Empty the Bluetooth hardware buffer
+                // 1. BLOCKING READ: Capture the 25-integer burst
                 int bytesRead = mmInStream.read(buffer);
                 if (bytesRead <= 0) continue;
 
@@ -71,6 +71,7 @@ public class ConnectedThread extends Thread {
                 for (int i = 0; i < bytesRead; i++) {
                     int b = buffer[i] & 0xFF;
                     if (b == 120) { expectingLowByte = false; continue; }
+
                     if (!expectingLowByte) {
                         tempHighByte = b;
                         expectingLowByte = true;
@@ -93,18 +94,17 @@ public class ConnectedThread extends Thread {
                 }
 
                 // 3. ELASTIC RELEASE ENGINE (The Smoothness Secret)
-                // We want to update the UI at roughly 60Hz (every 16ms)
-                // But we adjust the number of samples released to keep the buffer stable.
+                // We release data based on how much is "waiting" to smooth out Bluetooth jitter
                 while (jCount > 0) {
-                    int idealBuffer = 60; // 60ms cushion
+                    int idealBuffer = 50; // 50ms cushion
                     int releaseSize;
 
-                    if (jCount > idealBuffer + 40) {
-                        releaseSize = 20; // Too much data: Speed up
+                    if (jCount > idealBuffer + 30) {
+                        releaseSize = 20; // Falling behind: Speed up release
                     } else if (jCount < idealBuffer - 20) {
-                        releaseSize = 12; // Too little data: Slow down
+                        releaseSize = 12; // Running low: Slow down release
                     } else {
-                        releaseSize = 16; // Perfectly on time (16ms @ 1000Hz)
+                        releaseSize = 16; // Perfect: 16 samples per 16ms = 1000Hz
                     }
 
                     int toProcess = Math.min(jCount, releaseSize);
@@ -125,10 +125,11 @@ public class ConnectedThread extends Thread {
                         GameScreen.view.postInvalidateOnAnimation();
                     }
 
-                    // Sleep for 16ms to match the screen's 60Hz refresh rate
-                    SystemClock.sleep(16);
+                    // Sleep for 16ms to align with the phone's 60Hz hardware clock
+                //    SystemClock.sleep(16);
 
-                    // If more data arrived while we were sleeping, exit and read Bluetooth again
+                    // If more data hit the Bluetooth antenna while we slept, stop dripping
+                    // and go back to the read() loop to empty the hardware buffer.
                     if (mmInStream.available() > 0) break;
                 }
 
@@ -137,6 +138,7 @@ public class ConnectedThread extends Thread {
             }
         }
     }
+
 
 
 
