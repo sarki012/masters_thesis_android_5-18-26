@@ -52,59 +52,69 @@ public class ConnectedThread extends Thread {
 
     @Override
     public void run() {
+        // HIGHEST PRIORITY: Same as the UI and Audio engines
         Process.setThreadPriority(Process.THREAD_PRIORITY_URGENT_DISPLAY);
-        byte[] buffer = new byte[2048];
 
-        // --- THE JITTER BUFFER (Shock Absorber) ---
-        final double[] jitterBuffer = new double[8192];
+        byte[] buffer = new byte[4096];
+        final double[] jitterBuffer = new double[16384]; // Large shock absorber
         int jWrite = 0;
         int jRead = 0;
         int jCount = 0;
 
+        final AtomicBoolean mathIsBusy = new AtomicBoolean(false);
+
+        // Target: 1000 samples per second = 16.66 samples per 60Hz frame
+        long lastFrameNs = System.nanoTime();
+        final long NS_PER_FRAME = 16666666L; // 16.66ms
+
         while (!Thread.currentThread().isInterrupted()) {
             try {
-                // 1. BLOCKING READ: Capture the 25-integer burst
-                int bytesRead = mmInStream.read(buffer);
-                if (bytesRead <= 0) continue;
+                // 1. FAST DRAIN: Empty the hardware antenna buffer immediately
+                int bytesAvailable = mmInStream.available();
+                if (bytesAvailable > 0) {
+                    int bytesRead = mmInStream.read(buffer, 0, Math.min(bytesAvailable, buffer.length));
+                    for (int i = 0; i < bytesRead; i++) {
+                        int b = buffer[i] & 0xFF;
+                        if (b == 120) { expectingLowByte = false; continue; }
+                        if (!expectingLowByte) {
+                            tempHighByte = b;
+                            expectingLowByte = true;
+                        } else {
+                            double val = ((tempHighByte << 8) | b) / 3.0;
+                            expectingLowByte = false;
 
-                // 2. PARSE AND FILL JITTER BUFFER
-                for (int i = 0; i < bytesRead; i++) {
-                    int b = buffer[i] & 0xFF;
-                    if (b == 120) { expectingLowByte = false; continue; }
+                            // Add to Jitter Buffer
+                            jitterBuffer[jWrite] = val;
+                            jWrite = (jWrite + 1) % jitterBuffer.length;
+                            jCount++;
 
-                    if (!expectingLowByte) {
-                        tempHighByte = b;
-                        expectingLowByte = true;
-                    } else {
-                        double val = ((tempHighByte << 8) | b) / 3.0;
-                        expectingLowByte = false;
-
-                        jitterBuffer[jWrite] = val;
-                        jWrite = (jWrite + 1) % jitterBuffer.length;
-                        jCount++;
-
-                        if (GameScreen.isRecording) {
-                            synchronized (GameScreen.ramRecordBuffer) {
-                                if (GameScreen.ramRecordBufferIdx < GameScreen.ramRecordBuffer.length) {
-                                    GameScreen.ramRecordBuffer[GameScreen.ramRecordBufferIdx++] = val;
+                            // Immediate Recording (CSV stays 100% accurate)
+                            if (GameScreen.isRecording) {
+                                synchronized (GameScreen.ramRecordBuffer) {
+                                    if (GameScreen.ramRecordBufferIdx < GameScreen.ramRecordBuffer.length) {
+                                        GameScreen.ramRecordBuffer[GameScreen.ramRecordBufferIdx++] = val;
+                                    }
                                 }
                             }
                         }
                     }
                 }
 
-                // 3. ELASTIC RELEASE ENGINE (The Smoothness Secret)
-                // We release data based on how much is "waiting" to smooth out Bluetooth jitter
-                while (jCount > 0) {
-                    int idealBuffer = 50; // 50ms cushion
+                // 2. THE ELASTIC ENGINE: This runs even if no new data arrived this millisecond
+                long nowNs = System.nanoTime();
+                if (nowNs - lastFrameNs >= NS_PER_FRAME && jCount > 0) {
+
+                    // --- ELASTIC CALCULATION ---
+                    // We want to keep exactly 60 samples in the buffer as a "safety cushion"
+                    int idealCushion = 60;
                     int releaseSize;
 
-                    if (jCount > idealBuffer + 30) {
-                        releaseSize = 20; // Falling behind: Speed up release
-                    } else if (jCount < idealBuffer - 20) {
-                        releaseSize = 12; // Running low: Slow down release
+                    if (jCount > idealCushion + 40) {
+                        releaseSize = 20; // Falling behind: Release more to catch up
+                    } else if (jCount < idealCushion - 20) {
+                        releaseSize = 12; // Running low: Release fewer to slow down
                     } else {
-                        releaseSize = 16; // Perfect: 16 samples per 16ms = 1000Hz
+                        releaseSize = 16; // Perfect cadence (16ms worth of data)
                     }
 
                     int toProcess = Math.min(jCount, releaseSize);
@@ -116,6 +126,7 @@ public class ConnectedThread extends Thread {
                     }
                     jCount -= toProcess;
 
+                    // 3. ATOMIC UI UPDATE
                     synchronized (A2DVal) {
                         System.arraycopy(A2DVal, toProcess, A2DVal, 0, signalBufferLen - toProcess);
                         System.arraycopy(outputBatch, 0, A2DVal, signalBufferLen - toProcess, toProcess);
@@ -125,16 +136,43 @@ public class ConnectedThread extends Thread {
                         GameScreen.view.postInvalidateOnAnimation();
                     }
 
-                    // Sleep for 16ms to align with the phone's 60Hz hardware clock
-                //    SystemClock.sleep(16);
+                    lastFrameNs = nowNs;
 
-                    // If more data hit the Bluetooth antenna while we slept, stop dripping
-                    // and go back to the read() loop to empty the hardware buffer.
-                    if (mmInStream.available() > 0) break;
+                    // 4. MATH HANDOFF (Throttled)
+                    if (mathIsBusy.compareAndSet(false, true)) {
+                        synchronized (A2DVal) {
+                            System.arraycopy(A2DVal, 0, a2dCopyForMath, 0, signalBufferLen);
+                        }
+                        final PowerSpectralDensityCalculator finalPsd = new PowerSpectralDensityCalculator(A2DVal, 1000);
+                        mathExecutor.execute(() -> {
+                            try {
+                                // PSD/RMS math here...
+                                double[] tempResult = finalPsd.calculatePSD(a2dCopyForMath, 1000);
+                                if (tempResult != null && psdResult != null) {
+                                    System.arraycopy(tempResult, 0, psdResult, 0, Math.min(tempResult.length, psdResult.length));
+                                    for (int j = 0; j < psdResult.length; j++) {
+                                        psdResult[j] = psdResult[j] * -1 + 3600;
+                                        if (psdResult[j] < 3165) psdResult[j] = 3165;
+                                    }
+                                }
+                                movingRMS = RMSCalculator.calculateMovingRMS(a2dCopyForMath, 10);
+                                if (movingRMS != null) {
+                                    smoothedRMS = MovingAverageCalculator.calculateMovingAverage(movingRMS, 20);
+                                }
+                            } finally {
+                                mathIsBusy.set(false);
+                            }
+                        });
+                    }
                 }
+
+                // 5. YIELD: Prevents CPU maxing while maintaining sub-ms responsiveness
+                LockSupport.parkNanos(500000L); // 0.5ms pause
 
             } catch (IOException e) {
                 break;
+            } catch (Exception e) {
+                Log.e("ConnectedThread", "Engine Error", e);
             }
         }
     }
