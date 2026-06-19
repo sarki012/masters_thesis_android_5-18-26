@@ -461,126 +461,89 @@ public class GameScreen extends Screen implements Input {
         // This maps 2000 samples to 1435 pixels (0.7175 pixels per sample)
         final float timeScaledXStep = totalWidth / (signalBufferLen - 1);
 
-        final float drawCenterY = 440.0f;
-        final float drawGain = 0.15f;
-        final float drawBase = 410.0f;
+        // 2. Constants
+        final int xRight = 1600;
+        final int xLeft = 165;
+        final float centerY = 440.0f;
+        final float gMult = 0.15f;
+        final float base = 410.0f;
         int bufferIdx = 0;
 
         // --- 2. PAINT SETUP ---
         signalPaint.setAntiAlias(false); // Sharp edges for square waves
         signalPaint.setStrokeCap(Paint.Cap.BUTT);
-        signalPaint.setStrokeWidth(3.0f);
+        signalPaint.setStrokeWidth(5.0f);
 
 
         if (!isReplaying) {
+            // --- LIVE BLACK LINE ---
             signalPaint.setColor(android.graphics.Color.BLACK);
-            signalPaint.setStrokeWidth(5.0f);
-            signalPaint.setAntiAlias(false); // Keeps square wave edges sharp
+            signalPaint.setStrokeWidth(5.0f); // Thinner is better for square waves
+            signalPaint.setAntiAlias(false);
             signalPaint.setStrokeCap(Paint.Cap.BUTT);
 
-            // 2. Atomic Snapshot (Zero Allocation)
             synchronized (A2DVal) {
                 System.arraycopy(A2DVal, 0, drawingSnapshot, 0, signalBufferLen);
             }
 
             bufferIdx = 0;
-            final int xRight = 1600;
-            final float centerY = 440.0f;
-            final float gMult = 0.15f;
-            final float base = 410.0f;
+            // Start from most recent (right edge)
+            float yLast = centerY - ((float)drawingSnapshot[signalBufferLen - 1] - base) * gMult;
 
-            // Calculate the first point (most recent data)
-            float yLast = centerY - ((float) drawingSnapshot[signalBufferLen - 1] - base) * gMult;
-            if (yLast < 10) yLast = 10;
-            if (yLast > 880) yLast = 880;
-
-            // 3. Perfect 1:1 Pixel Mapping Loop
             for (int n = 1; n < signalBufferLen; n++) {
-                // Integer subtraction ensures no floating point jitter
+                // FIXED INTEGER STEP: This fixes the Duty Cycle variation
                 int x1 = xRight - (n - 1);
                 int x2 = xRight - n;
 
-                // Map data from right-to-left
                 int dataIdx = (signalBufferLen - 1) - n;
-                float yNext = centerY - ((float) drawingSnapshot[dataIdx] - base) * gMult;
+                float yNext = centerY - ((float)drawingSnapshot[dataIdx] - base) * gMult;
 
-                // Clamping
                 if (yNext < 10) yNext = 10;
                 if (yNext > 880) yNext = 880;
 
-                // Segment coordinates
-                lineBuffer[bufferIdx++] = (float) x1;
+                lineBuffer[bufferIdx++] = (float)x1;
                 lineBuffer[bufferIdx++] = yLast;
-                lineBuffer[bufferIdx++] = (float) x2;
+                lineBuffer[bufferIdx++] = (float)x2;
                 lineBuffer[bufferIdx++] = yNext;
-
                 yLast = yNext;
 
-                // Stop exactly at the left boundary
-                if (x2 <= 165 || bufferIdx >= lineBuffer.length - 4) break;
+                if (x2 <= xLeft || bufferIdx >= lineBuffer.length - 4) break;
             }
+            if (bufferIdx > 0) canvas.drawLines(lineBuffer, 0, bufferIdx, signalPaint);
 
-            // 4. GPU Draw Call
-            if (bufferIdx > 0) {
-                canvas.drawLines(lineBuffer, 0, bufferIdx, signalPaint);
-            } else if (isReplaying && !replayList.isEmpty()) {
-                // --- DEBUG: Show progress ---
-                g.drawText("Loaded: " + replayList.size(), 170, 200);
-                g.drawText("Pos: " + replayPosition, 170, 250);
 
-                // --- REPLAY RED LINE ---
-                signalPaint.setColor(android.graphics.Color.RED);
-                bufferIdx = 0;
+        } else if (isReplaying && !replayList.isEmpty()) {
+            // --- REPLAY RED LINE ---
+            signalPaint.setColor(android.graphics.Color.RED);
+            bufferIdx = 0;
 
-                // FIX: Clamp the index so it never exceeds (size - 1)
-                int safeStartIdx = Math.min(replayPosition, replayList.size() - 1);
-                float yLastReplay = drawCenterY - (float) ((replayList.get(safeStartIdx) - drawBase) * drawGain);
+            int safePos = Math.min(replayPosition, replayList.size() - 1);
+            float yLastRep = centerY - (float)((replayList.get(safePos) - base) * gMult);
 
-                for (int n = 1; n < signalBufferLen; n++) {
-                    float x1 = xRightLimit - (n - 1);
-                    float x2 = xRightLimit - n;
+            for (int n = 1; n < signalBufferLen; n++) {
+                int x1 = xRight - (n - 1);
+                int x2 = xRight - n;
+                int posIdx = replayPosition - n;
 
-                    // Look backwards in the replay list
-                    int posIdx = replayPosition - n;
-
-                    // Only draw if the index is within the actual data range
-                    if (posIdx >= 0 && posIdx < replayList.size()) {
-                        float yNextReplay = drawCenterY - (float) ((replayList.get(posIdx) - drawBase) * drawGain);
-
-                        if (yNextReplay < 10) yNextReplay = 10;
-                        if (yNextReplay > 880) yNextReplay = 880;
-
-                        lineBuffer[bufferIdx++] = (float) x1;
-                        lineBuffer[bufferIdx++] = yLastReplay;
-                        lineBuffer[bufferIdx++] = (float) x2;
-                        lineBuffer[bufferIdx++] = yNextReplay;
-                        yLastReplay = yNextReplay;
-                    }
-                    if (x2 <= xLeftLimit || bufferIdx >= lineBuffer.length - 4) break;
+                if (posIdx >= 0 && posIdx < replayList.size()) {
+                    float yNextRep = centerY - (float)((replayList.get(posIdx) - base) * gMult);
+                    lineBuffer[bufferIdx++] = (float)x1;
+                    lineBuffer[bufferIdx++] = yLastRep;
+                    lineBuffer[bufferIdx++] = (float)x2;
+                    lineBuffer[bufferIdx++] = yNextRep;
+                    yLastRep = yNextRep;
                 }
-
-                if (bufferIdx > 0) {
-                    canvas.drawLines(lineBuffer, 0, bufferIdx, signalPaint);
-                }
-
-                // Speed Control
-                replayPosition += 1;       // Was 17
-
-                // Loop back to the start once the wave has fully exited the left side
-                if (replayPosition >= replayList.size() + signalBufferLen) {
-                    replayPosition = 0;
-                }
-
-                // Force redraw for animation
-                if (GameScreen.view != null) {
-                    GameScreen.view.postInvalidate();
-                }
+                if (x2 <= xLeft || bufferIdx >= lineBuffer.length - 4) break;
             }
+            if (bufferIdx > 0) canvas.drawLines(lineBuffer, 0, bufferIdx, signalPaint);
 
-            //////////////////////////////////////////////////////////////////////////
+            replayPosition += 17;
+            if (replayPosition >= replayList.size() + signalBufferLen) replayPosition = 0;
+            if (GameScreen.view != null) GameScreen.view.postInvalidate();
         }
     }
 
+            //////////////////////////////////////////////////////////////////////////
 
     /////////////// LoadReplayData Helper Method ///////////////////////////////////////////////////
     private void loadReplayData(Context context) {

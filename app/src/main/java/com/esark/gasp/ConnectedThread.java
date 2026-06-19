@@ -54,20 +54,20 @@ public class ConnectedThread extends Thread {
     public void run() {
         Process.setThreadPriority(Process.THREAD_PRIORITY_URGENT_DISPLAY);
         byte[] buffer = new byte[2048];
-        final double[] packetSamples = new double[4096];
 
-        // Precision constants
-        final long NS_PER_SAMPLE = 1000000L; // Exactly 1ms in nanoseconds
-        long startTimeNs = System.nanoTime();
-        long samplesReleased = 0;
+        // --- THE JITTER BUFFER ---
+        final double[] jitterBuffer = new double[8192];
+        int jWrite = 0;
+        int jRead = 0;
+        int jCount = 0;
 
         while (!Thread.currentThread().isInterrupted()) {
             try {
-                // 1. BLOCKING READ
+                // 1. BLOCKING READ: Empty the Bluetooth hardware buffer
                 int bytesRead = mmInStream.read(buffer);
                 if (bytesRead <= 0) continue;
 
-                int samplesFound = 0;
+                // 2. PARSE AND FILL JITTER BUFFER
                 for (int i = 0; i < bytesRead; i++) {
                     int b = buffer[i] & 0xFF;
                     if (b == 120) { expectingLowByte = false; continue; }
@@ -75,61 +75,63 @@ public class ConnectedThread extends Thread {
                         tempHighByte = b;
                         expectingLowByte = true;
                     } else {
-                        if (samplesFound < packetSamples.length) {
-                            packetSamples[samplesFound++] = ((tempHighByte << 8) | b) / 3.0;
-                        }
+                        double val = ((tempHighByte << 8) | b) / 3.0;
                         expectingLowByte = false;
-                    }
-                }
 
-                if (samplesFound > 0) {
-                    // Immediate Recording for CSV integrity
-                    if (GameScreen.isRecording) {
-                        synchronized (GameScreen.ramRecordBuffer) {
-                            int spaceLeft = GameScreen.ramRecordBuffer.length - GameScreen.ramRecordBufferIdx;
-                            int toCopy = Math.min(samplesFound, spaceLeft);
-                            if (toCopy > 0) {
-                                System.arraycopy(packetSamples, 0, GameScreen.ramRecordBuffer, GameScreen.ramRecordBufferIdx, toCopy);
-                                GameScreen.ramRecordBufferIdx += toCopy;
+                        jitterBuffer[jWrite] = val;
+                        jWrite = (jWrite + 1) % jitterBuffer.length;
+                        jCount++;
+
+                        if (GameScreen.isRecording) {
+                            synchronized (GameScreen.ramRecordBuffer) {
+                                if (GameScreen.ramRecordBufferIdx < GameScreen.ramRecordBuffer.length) {
+                                    GameScreen.ramRecordBuffer[GameScreen.ramRecordBufferIdx++] = val;
+                                }
                             }
                         }
                     }
-
-                    // 2. PRECISION RELEASE ENGINE
-                    int processedInPacket = 0;
-                    while (processedInPacket < samplesFound) {
-                        long now = System.nanoTime();
-                        // Calculate debt in fractional samples for perfect accuracy
-                        long elapsedNs = now - startTimeNs;
-                        int targetSamples = (int) (elapsedNs / 1000000L); // 1ms = 1,000,000ns
-                        int debt = targetSamples - (int) samplesReleased;
-
-                        if (debt > 0) {
-                            // Release small chunks (max 10) to keep duty cycle consistent
-                            int chunkSize = Math.min(debt, samplesFound - processedInPacket);
-                            chunkSize = Math.min(chunkSize, 4);
-
-                            synchronized (A2DVal) {
-                                // Shift display array
-                                System.arraycopy(A2DVal, chunkSize, A2DVal, 0, signalBufferLen - chunkSize);
-                                // Insert new data
-                                System.arraycopy(packetSamples, processedInPacket, A2DVal, signalBufferLen - chunkSize, chunkSize);
-                            }
-
-                            if (GameScreen.view != null) {
-                                GameScreen.view.postInvalidateOnAnimation();
-                            }
-
-                            processedInPacket += chunkSize;
-                            samplesReleased += chunkSize;
-                        } else {
-                            // We are ahead of the clock.
-                            // Using a very short sleep to avoid CPU maxing,
-                            // but keeping it shorter than 1ms to maintain precision.
-                            LockSupport.parkNanos(100000L); // Wait 0.1ms
-                        }
-                    }
                 }
+
+                // 3. ELASTIC RELEASE ENGINE (The Smoothness Secret)
+                // We want to update the UI at roughly 60Hz (every 16ms)
+                // But we adjust the number of samples released to keep the buffer stable.
+                while (jCount > 0) {
+                    int idealBuffer = 60; // 60ms cushion
+                    int releaseSize;
+
+                    if (jCount > idealBuffer + 40) {
+                        releaseSize = 20; // Too much data: Speed up
+                    } else if (jCount < idealBuffer - 20) {
+                        releaseSize = 12; // Too little data: Slow down
+                    } else {
+                        releaseSize = 16; // Perfectly on time (16ms @ 1000Hz)
+                    }
+
+                    int toProcess = Math.min(jCount, releaseSize);
+                    double[] outputBatch = new double[toProcess];
+
+                    for (int k = 0; k < toProcess; k++) {
+                        outputBatch[k] = jitterBuffer[jRead];
+                        jRead = (jRead + 1) % jitterBuffer.length;
+                    }
+                    jCount -= toProcess;
+
+                    synchronized (A2DVal) {
+                        System.arraycopy(A2DVal, toProcess, A2DVal, 0, signalBufferLen - toProcess);
+                        System.arraycopy(outputBatch, 0, A2DVal, signalBufferLen - toProcess, toProcess);
+                    }
+
+                    if (GameScreen.view != null) {
+                        GameScreen.view.postInvalidateOnAnimation();
+                    }
+
+                    // Sleep for 16ms to match the screen's 60Hz refresh rate
+                    SystemClock.sleep(16);
+
+                    // If more data arrived while we were sleeping, exit and read Bluetooth again
+                    if (mmInStream.available() > 0) break;
+                }
+
             } catch (IOException e) {
                 break;
             }
