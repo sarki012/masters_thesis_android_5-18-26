@@ -411,8 +411,8 @@ public class GameScreen extends Screen implements Input {
             int latestY = 0;
             if (smoothedRMS.length > 2) {
                 xStart = 1600;
-                int blueCenterY = 1300;
-                float rmsYScale = 0.3f;
+                int blueCenterY = 1400;
+                float rmsYScale = 0.5f;
 
                 for (int n = smoothedRMS.length - 1; n > 1; n--) {
                     int y1 = (int) (blueCenterY - smoothedRMS[n] * rmsYScale);
@@ -426,8 +426,8 @@ public class GameScreen extends Screen implements Input {
                     if (y2 < 869) y2 = 869;
                     if (y2 > 1308) y2 = 1308;
 
-                    g.drawBlueLine(xStart, y1, xStart - 2, y2, 0);
-                    xStart -= 2;
+                    g.drawBlueLine(xStart, y1, xStart - 1, y2, 0);
+                    xStart -= 1;
                     if (xStart <= 180) break;
                 }
 
