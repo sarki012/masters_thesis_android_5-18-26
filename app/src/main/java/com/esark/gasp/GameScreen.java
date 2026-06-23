@@ -104,6 +104,7 @@ public class GameScreen extends Screen implements Input {
     private static List<Double> replayList = new ArrayList<>();
     private static int replayPosition = 0;
     private String fileName = "sEMG_Data.csv";
+    private String fileNameLoop = "sEMG_data_loop.csv";
     // signalBufferLen is 1435.// We draw (1435 - 1) line segments. Each segment needs 4 floats (x1, y1, x2, y2).
     private final float[] lineBuffer = new float[(signalBufferLen - 1) * 4];
     // Initialize the Paint object
@@ -177,17 +178,70 @@ public class GameScreen extends Screen implements Input {
         for (int i = 0; i < len; i++) {
             TouchEvent event = touchEvents.get(i);
             if (event.type == TouchEvent.TOUCH_DRAGGED || event.type == TouchEvent.TOUCH_DOWN) {
-                if (event.x > 1245 && event.x < 1715 && event.y > 2610 && event.y < 2710) {
-                    //Back to Bluetooth Connect Screen
+                if (event.x > 1245 && event.x < 1715 && event.y > 2535 && event.y < 2735) {
+                    //Back to Bluetooth Connect Screen      //Bluetooth Connect
                     Intent intent2 = new Intent(context.getApplicationContext(), GaspSemg.class);
                     context.startActivity(intent2);
                     return;
                 }
-                //Start Recording Buttono
+                //////////////////// Start Recording Buttono (Green Button) ////////////////////////////////////////////////
                 else if (event.x > 45 && event.x < 1240 && event.y > 1240 && event.y < 2100) {
                     //Start
                     startTimeMillis = System.currentTimeMillis();
                     startRecording = 1;
+
+                    if (!isRecording) {
+                        // --- START ---
+                        synchronized (ramRecordBuffer) {
+                            // Reset the index pointer to start recording at the beginning of the array
+                            ramRecordBufferIdx = 0;
+                        }
+                        isRecording = true;
+                        isReplaying = false;
+                        Log.d("RECORD", "Recording Started");
+                    }
+                }
+                else if (event.x > 910 && event.x < 1265 && event.y > 2000 && event.y < 2100) {
+                    //Stop Recording (Red Button)
+                    //game.setScreen(gameScreenLastEvent);
+                    // eventCount = 0;
+                    // --- STOP ---
+                    startRecording = 0;
+                    isRecording = false; // Stop adding to RAM immediately
+
+                    // Launch the Save Thread
+                    // Inside GameScreen.java Stop logic
+                    new Thread(() -> {
+                        try {
+                            File path = context.getExternalFilesDir(null);
+                            File file = new File(path, fileNameLoop);
+                            PrintWriter pw = new PrintWriter(new BufferedWriter(new OutputStreamWriter(new FileOutputStream(file, false)), 65536));
+
+                            synchronized (ramRecordBuffer) {
+                                for (int k = 0; k < ramRecordBufferIdx; k++) {
+                                    pw.println(ramRecordBuffer[k]);
+                                }
+                                ramRecordBufferIdx = 0; // Reset for next recording
+                            }
+                            pw.flush();
+                            pw.close();
+                        } catch (IOException e) {
+                            e.printStackTrace();
+                        }
+                    }).start();
+                }  /////////////////////// Replay Recording (Blue Button) ///////////////////////////////////////////)///////////////////////////////////////////
+                else if (event.x > 1310 && event.x < 1665 && event.y > 2000 && event.y < 2100) {
+                    if (!isReplaying) {
+                        loadReplayDataLoop(context);
+                        if (!replayList.isEmpty()) {
+                            // Start at 0 to see the wave emerge from the right side
+                            replayPosition = 0;
+                            isReplaying = true;
+                            isRecording = false;
+                        }
+                    } else {
+                        isReplaying = false;
+                    }
                 }
                 //////////////////// Left Up Button ////////////////////////////////////////////////
                 else if (event.x > 685 && event.x < 840 && event.y > 2110 && event.y < 2215) {
@@ -228,11 +282,8 @@ public class GameScreen extends Screen implements Input {
                 } else if (event.x > 720 && event.x < 1190 && event.y > 2600 && event.y < 2700) {
                     //Event Log Screen
                     game.setScreen(gameScreenEventLog);
-                } else if (event.x > 1315 && event.x < 1660 && event.y > 2000 && event.y < 2100) {
-                    //Stop Now clear events
-                    //game.setScreen(gameScreenLastEvent);
-                    eventCount = 0;
-                } else if (event.x > 10 && event.x < 675 && event.y > 2450 && event.y < 2800) {
+                }
+                else if (event.x > 10 && event.x < 675 && event.y > 2450 && event.y < 2800) {
                     //Manual Patient Event
                     if (manualPatientEventUpCount == 0 && eventCount < 50) {
                         // Fast array copy instead of loop
@@ -329,32 +380,8 @@ public class GameScreen extends Screen implements Input {
 
         //   if(landscape == 0) {
 
-        /*
-        g.drawRect(1245, 2610, 470, 100, 0);       //Bluetooth Connect
-        g.drawRect(45, 2000, 1195, 100, 0);       //Start
-        g.drawRect(1315, 2000, 345, 100, 0);       //Stop
-      //  g.drawRect(350, 2185, 250, 85, 0);       //Manual RMS Height Above Threshold Text
-        g.drawText("50", 395, 2235);    //Manual RMS Height Above Threshold Text
-       // g.drawRect(350, 2380, 250, 85, 0);       //Auto RMS Height Threshold Text
-        g.drawText("50", 395, 2445);        //Auto RMS Height Threshold Text
-        g.drawRect(685, 2110, 155, 105, 0);       //Left Up Button
-        g.drawRect(685, 2220, 155, 105, 0);       //Left Down Button
-     //   g.drawRect(1240, 2180, 250, 85, 0);       //Manual RMS Width Above Threshold Text
-        g.drawText("50", 1330, 2235);       //Manual RMS Width Above Threshold Text
-        g.drawRect(1560, 2110, 155, 105, 0);       //Right Up Button
-        g.drawRect(1560, 2220, 155, 105, 0);       //Right Down Button
-        g.drawRect(720, 2600, 470, 100, 0);       //Event Log
-        g.drawRect(25, 2580, 650, 200, 0);       //Manual Patient Event
 
-     //   g.drawRect(725, 2400, 285, 150, 0);       //True Positive
-        g.drawText("50", 880, 2480);    //True Positive Text
-     //   g.drawRect(1055, 2400, 285, 150, 0);       //False Positive
-        g.drawText("50", 1235, 2480);       //False Positive Text
-     //   g.drawRect(1400, 2400, 285, 150, 0);       //False Negative
-        g.drawText("50", 1560, 2480);       //False Negative Text
-*/
-        //   g.drawRect(1600, 1330, 100, 270, 0);       //Start/Stop Save a Sample
-        //  g.drawRect(1600, 1610, 100, 310, 0);       //Replay
+
 
 
 
@@ -386,6 +413,35 @@ public class GameScreen extends Screen implements Input {
         Canvas canvas = ((AndroidGraphics) g).getCanvas();
         g.drawPortraitPixmap(Assets.laryngospasmBackgroundMain, 0, 0);
 
+//        g.drawRect(1245, 2535, 470, 200, 0);       //Bluetooth Connect
+  //      g.drawRect(45, 2000, 800, 100, 0);       //Start
+    //    g.drawRect(910, 2000, 355, 100, 0);       //Stop
+      //  g.drawRect(1310, 2000, 355, 100, 0);       //Replay (Blue Button)
+      //  g.drawRect(350, 2185, 250, 85, 0);       //Manual RMS Height Above Threshold Text
+   //     g.drawText("50", 395, 2235);    //Manual RMS Height Above Threshold Text
+       // g.drawRect(350, 2380, 250, 85, 0);       //Auto RMS Height Threshold Text
+     //   g.drawText("50", 395, 2445);        //Auto RMS Height Threshold Text
+    //    g.drawRect(685, 2110, 155, 105, 0);       //Left Up Button
+      //  g.drawRect(685, 2220, 155, 105, 0);       //Left Down Button
+     //   g.drawRect(1240, 2180, 250, 85, 0);       //Manual RMS Width Above Threshold Text
+      //  g.drawText("50", 1330, 2235);       //Manual RMS Width Above Threshold Text
+      //  g.drawRect(1560, 2110, 155, 105, 0);       //Right Up Button
+      //  g.drawRect(1560, 2220, 155, 105, 0);       //Right Down Button
+   //     g.drawRect(720, 2535, 470, 200, 0);       //Event Log
+     //   g.drawRect(25, 2535, 650, 200, 0);       //Manual Patient Event
+
+     //   g.drawRect(725, 2400, 285, 150, 0);       //True Positive
+      //  g.drawText("50", 880, 2480);    //True Positive Text
+     //   g.drawRect(1055, 2400, 285, 150, 0);       //False Positive
+      //  g.drawText("50", 1235, 2480);       //False Positive Text
+     //   g.drawRect(1400, 2400, 285, 150, 0);       //False Negative
+      //  g.drawText("50", 1560, 2480);       //False Negative Text
+
+        //   g.drawRect(1600, 1330, 100, 270, 0);       //Start/Stop Save a Sample
+        //  g.drawRect(1600, 1610, 100, 310, 0);       //Replay
+
+
+
         String eventCountStr = String.valueOf(eventCount);
         g.drawText(eventCountStr, 570, 2660);
         ////////////////// Start / Stop Recording //////////////////////////////////////////
@@ -395,7 +451,7 @@ public class GameScreen extends Screen implements Input {
             seconds = 0;
             remainingMilliseconds = 0;
             String formattedTime = String.format("%02d:%02d:%03d", minutes, seconds, remainingMilliseconds);
-            g.drawText(formattedTime, 840, 2070);
+            g.drawText(formattedTime, 245, 2070);
         } else if (startRecording == 1) {
             currentTimeMillis = System.currentTimeMillis();
             recDeltaTimeMillis = (int) (currentTimeMillis - startTimeMillis);
@@ -403,7 +459,7 @@ public class GameScreen extends Screen implements Input {
             seconds = (int) recDeltaTimeMillis / 1000;
             remainingMilliseconds = (int) recDeltaTimeMillis % 1000;
             String formattedTime = String.format("%02d:%02d:%03d", minutes, seconds, remainingMilliseconds);
-            g.drawText(formattedTime, 840, 2070);
+            g.drawText(formattedTime, 245, 2070);
         }
 
         // --- LIVE RMS & PSD (Only shows when NOT replaying) ---
@@ -546,6 +602,29 @@ public class GameScreen extends Screen implements Input {
             //////////////////////////////////////////////////////////////////////////
 
     /////////////// LoadReplayData Helper Method ///////////////////////////////////////////////////
+    private void loadReplayDataLoop(Context context) {
+        replayList.clear();
+        replayPosition = 0;
+        try {
+            File path = context.getExternalFilesDir(null);
+            File file = new File(path, fileNameLoop);
+            BufferedReader br = new BufferedReader(new FileReader(file));
+            String line;
+            while ((line = br.readLine()) != null) {
+                // Ensure we don't add empty lines
+                if (!line.trim().isEmpty()) {
+                    replayList.add(Double.parseDouble(line));
+                }
+            }
+            br.close();
+            if (!replayList.isEmpty()) {
+                isReplaying = true;
+                isRecording = false;
+            }
+        } catch (IOException | NumberFormatException e) {
+            e.printStackTrace();
+        }
+    }
     private void loadReplayData(Context context) {
         replayList.clear();
         replayPosition = 0;
