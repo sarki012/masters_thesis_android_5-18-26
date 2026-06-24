@@ -51,7 +51,7 @@ import java.util.UUID;
 
 public abstract class AndroidGame extends Activity implements Game {
     Bundle newBundy = new Bundle();
-    protected AndroidFastRenderView renderView;
+    public AndroidFastRenderView renderView;
     Graphics graphics;
     Audio audio;
     Input input;
