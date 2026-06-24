@@ -128,6 +128,7 @@ public class GameScreen extends Screen implements Input {
     // FIX 2: Declare these here, but do NOT initialize them here
     public GameScreenLastEvent gameScreenLastEvent;
     public GameScreenEventLog gameScreenEventLog;
+    private long totalRecordingTime = 0;
 
     // Constructor
     public GameScreen(Game game) {
@@ -177,67 +178,62 @@ public class GameScreen extends Screen implements Input {
         //Check to see if paused
         for (int i = 0; i < len; i++) {
             TouchEvent event = touchEvents.get(i);
-            if (event.type == TouchEvent.TOUCH_DRAGGED || event.type == TouchEvent.TOUCH_DOWN) {
+            if (event.type == TouchEvent.TOUCH_DOWN) {
                 if (event.x > 1245 && event.x < 1715 && event.y > 2535 && event.y < 2735) {
                     //Back to Bluetooth Connect Screen      //Bluetooth Connect
                     Intent intent2 = new Intent(context.getApplicationContext(), GaspSemg.class);
                     context.startActivity(intent2);
                     return;
                 }
-                //////////////////// Start Recording Buttono (Green Button) ////////////////////////////////////////////////
-                else if (event.x > 45 && event.x < 1240 && event.y > 1240 && event.y < 2100) {
-                    //Start
-                    startTimeMillis = System.currentTimeMillis();
-                    startRecording = 1;
-
+               //////////////////// Start Recording Button (Green Button) ////////////////////////////////////////////////
+                else if (event.x > 45 && event.x < 845 && event.y > 2000 && event.y < 2100) {//Start
                     if (!isRecording) {
-                        // --- START ---
+                        startTimeMillis = System.currentTimeMillis();
+                        startRecording = 1; // Timer starts counting
                         synchronized (ramRecordBuffer) {
-                            // Reset the index pointer to start recording at the beginning of the array
-                            ramRecordBufferIdx = 0;
+                            ramRecordBufferIdx = 0; // Reset index for new data
                         }
                         isRecording = true;
                         isReplaying = false;
                         Log.d("RECORD", "Recording Started");
                     }
                 }
+                //////////////////// Stop Recording Button (Red Button) ////////////////////////////////////////////////
                 else if (event.x > 910 && event.x < 1265 && event.y > 2000 && event.y < 2100) {
-                    //Stop Recording (Red Button)
-                    //game.setScreen(gameScreenLastEvent);
-                    // eventCount = 0;
-                    // --- STOP ---
-                    startRecording = 0;
-                    isRecording = false; // Stop adding to RAM immediately
+                    if (isRecording) {
+                        // Freeze the timer at the current duration
+                        totalRecordingTime = System.currentTimeMillis() - startTimeMillis;
+                        startRecording = 2; // State 2: Display frozen totalRecordingTime
+                        isRecording = false;
 
-                    // Launch the Save Thread
-                    // Inside GameScreen.java Stop logic
-                    new Thread(() -> {
-                        try {
-                            File path = context.getExternalFilesDir(null);
-                            File file = new File(path, fileNameLoop);
-                            PrintWriter pw = new PrintWriter(new BufferedWriter(new OutputStreamWriter(new FileOutputStream(file, false)), 65536));
-
-                            synchronized (ramRecordBuffer) {
-                                for (int k = 0; k < ramRecordBufferIdx; k++) {
-                                    pw.println(ramRecordBuffer[k]);
+                        new Thread(() -> {
+                            try {
+                                File path = context.getExternalFilesDir(null);
+                                File file = new File(path, fileNameLoop);
+                                PrintWriter pw = new PrintWriter(new BufferedWriter(new OutputStreamWriter(new FileOutputStream(file, false)), 65536));
+                                synchronized (ramRecordBuffer) {
+                                    for (int k = 0; k < ramRecordBufferIdx; k++) {
+                                        pw.println(ramRecordBuffer[k]);
+                                    }
                                 }
-                                ramRecordBufferIdx = 0; // Reset for next recording
+                                pw.flush();
+                                pw.close();
+                                Log.d("SAVE", "Saved " + ramRecordBufferIdx + " samples");
+                            } catch (IOException e) {
+                                e.printStackTrace();
                             }
-                            pw.flush();
-                            pw.close();
-                        } catch (IOException e) {
-                            e.printStackTrace();
-                        }
-                    }).start();
-                }  /////////////////////// Replay Recording (Blue Button) ///////////////////////////////////////////)///////////////////////////////////////////
+                        }).start();
+                    }
+                }
+                /////////////////////// Replay Recording (Blue Button) ///////////////////////////////////////////
                 else if (event.x > 1310 && event.x < 1665 && event.y > 2000 && event.y < 2100) {
                     if (!isReplaying) {
                         loadReplayDataLoop(context);
                         if (!replayList.isEmpty()) {
-                            // Start at 0 to see the wave emerge from the right side
                             replayPosition = 0;
                             isReplaying = true;
                             isRecording = false;
+                            startRecording = 2; // Show the length of the recording on the timer
                         }
                     } else {
                         isReplaying = false;
@@ -414,9 +410,10 @@ public class GameScreen extends Screen implements Input {
         g.drawPortraitPixmap(Assets.laryngospasmBackgroundMain, 0, 0);
 
 //        g.drawRect(1245, 2535, 470, 200, 0);       //Bluetooth Connect
-  //      g.drawRect(45, 2000, 800, 100, 0);       //Start
-    //    g.drawRect(910, 2000, 355, 100, 0);       //Stop
-      //  g.drawRect(1310, 2000, 355, 100, 0);       //Replay (Blue Button)
+   //     g.drawRect(45, 2000, 800, 100, 0);       //Start
+     //   g.drawRect(910, 2000, 355, 100, 0);       //Stop
+
+       // g.drawRect(1310, 2000, 355, 100, 0);       //Replay (Blue Button)
       //  g.drawRect(350, 2185, 250, 85, 0);       //Manual RMS Height Above Threshold Text
    //     g.drawText("50", 395, 2235);    //Manual RMS Height Above Threshold Text
        // g.drawRect(350, 2380, 250, 85, 0);       //Auto RMS Height Threshold Text
@@ -444,6 +441,21 @@ public class GameScreen extends Screen implements Input {
 
         String eventCountStr = String.valueOf(eventCount);
         g.drawText(eventCountStr, 570, 2660);
+
+        // Inside present() method
+        if (startRecording == 0) {
+            g.drawText("00:00:000", 245, 2070);
+        } else if (startRecording == 1) {
+            // Mode 1: Timer is actively counting
+            long delta = System.currentTimeMillis() - startTimeMillis;
+            String time = String.format("%02d:%02d:%03d", (delta/60000), (delta/1000)%60, (delta%1000));
+            g.drawText(time, 245, 2070);
+        } else if (startRecording == 2) {
+            // Mode 2: Timer is stopped/frozen at totalRecordingTime
+            String time = String.format("%02d:%02d:%03d", (totalRecordingTime/60000), (totalRecordingTime/1000)%60, (totalRecordingTime%1000));
+            g.drawText(time, 245, 2070);
+        }
+        /*
         ////////////////// Start / Stop Recording //////////////////////////////////////////
         if (startRecording == 0) {
             recDeltaTimeMillis = 0;
@@ -461,6 +473,8 @@ public class GameScreen extends Screen implements Input {
             String formattedTime = String.format("%02d:%02d:%03d", minutes, seconds, remainingMilliseconds);
             g.drawText(formattedTime, 245, 2070);
         }
+        */
+
 
         // --- LIVE RMS & PSD (Only shows when NOT replaying) ---
         if (!isReplaying) {
@@ -568,7 +582,49 @@ public class GameScreen extends Screen implements Input {
             if (bufferIdx > 0) canvas.drawLines(lineBuffer, 0, bufferIdx, signalPaint);
 
 
-        } else if (isReplaying && !replayList.isEmpty()) {
+        }
+        if (isReplaying && !replayList.isEmpty()) {
+            // --- REPLAY RED SIGNAL ---
+            signalPaint.setColor(android.graphics.Color.RED);
+            signalPaint.setStrokeWidth(5.0f);
+            bufferIdx = 0;
+
+            // Corrected Replay Indexing
+            int safeIdx = Math.min(replayPosition, replayList.size() - 1);
+            float yLast = centerY - (float)((replayList.get(safeIdx) - base) * gMult);
+
+            for (int n = 1; n < signalBufferLen; n++) {
+                int x1 = xRight - (n - 1);
+                int x2 = xRight - n;
+                int dataIdx = replayPosition - n;
+
+                if (dataIdx >= 0 && dataIdx < replayList.size()) {
+                    float yNext = centerY - (float)((replayList.get(dataIdx) - base) * gMult);
+                    if (yNext < 10) yNext = 10;
+                    if (yNext > 880) yNext = 880;
+
+                    lineBuffer[bufferIdx++] = (float)x1;
+                    lineBuffer[bufferIdx++] = yLast;
+                    lineBuffer[bufferIdx++] = (float)x2;
+                    lineBuffer[bufferIdx++] = yNext;
+                    yLast = yNext;
+                }
+                if (x2 <= xLeft || bufferIdx >= lineBuffer.length - 4) break;
+            }
+            if (bufferIdx > 0) canvas.drawLines(lineBuffer, 0, bufferIdx, signalPaint);
+
+            // Movement speed: 1000Hz = 17 samples per 60Hz frame
+            replayPosition += 17;
+            if (replayPosition >= replayList.size() + signalBufferLen) replayPosition = 0;
+
+            // Ensure the screen keeps refreshing during replay
+            if (GameScreen.view != null) {
+                GameScreen.view.postInvalidate();
+            }
+        }
+
+        /*
+        else if (isReplaying && !replayList.isEmpty()) {
             // --- REPLAY RED LINE ---
             signalPaint.setColor(android.graphics.Color.RED);
             bufferIdx = 0;
@@ -597,6 +653,8 @@ public class GameScreen extends Screen implements Input {
             if (replayPosition >= replayList.size() + signalBufferLen) replayPosition = 0;
             if (GameScreen.view != null) GameScreen.view.postInvalidate();
         }
+        *
+         */
     }
 
             //////////////////////////////////////////////////////////////////////////
