@@ -58,14 +58,10 @@ public class GameScreen extends Screen implements Input {
     double[] psd = new double[2048];
 
     double[] sineWave = new double[2048];
-    public static double[][] eventArray = new double [50][2048];
-    public static double[] lastEventArray = new double[2048];
 
     // Remove volatile, use final to keep the reference stable
 // Ensure the size matches what your PSD calculator actually outputs
-    public static volatile double[] psdResult = new double[2048];
-    public static double[][] PSDArray = new double[50][2048];
-    public static double[] lastEventPSDArray = new double[2048];
+
     int freq = 0;
 
     double freqScalar = 100;
@@ -91,7 +87,13 @@ public class GameScreen extends Screen implements Input {
     // public static int len = 0;
     public static int len = 0;
     public static String[] timeStamp = new String[100];
+    public static double[] eventData = new double[100];
     public static int eventCount = 0;
+    public static volatile double[] psdResult = new double[signalBufferLen];
+    public static double[][] PSDArray = new double[100][signalBufferLen];
+    public static double[] lastEventPSDArray = new double[signalBufferLen];
+    public static double[][] eventArray = new double [100][signalBufferLen];
+    public static double[] lastEventArray = new double[signalBufferLen];
     public int manualPatientEventUpCount = 0;
     public int rmsWidthThreshTouch = 0;
     public static android.view.View view;
@@ -275,13 +277,13 @@ public class GameScreen extends Screen implements Input {
                         rmsWidthThresh -= 5;
                         rightDownCount = 1;
                     }
-                } else if (event.x > 720 && event.x < 1190 && event.y > 2600 && event.y < 2700) {
+                } else if (event.x > 720 && event.x < 1190 && event.y > 2535 && event.y < 2735) {
                     //Event Log Screen
                     game.setScreen(gameScreenEventLog);
                 }
                 else if (event.x > 10 && event.x < 675 && event.y > 2450 && event.y < 2800) {
                     //Manual Patient Event
-                    if (manualPatientEventUpCount == 0 && eventCount < 50) {
+                    if (manualPatientEventUpCount == 0 && eventCount < timeStamp.length) {
                         // Fast array copy instead of loop
                         System.arraycopy(A2DVal, 0, eventArray[eventCount], 0, Math.min(signalBufferLen, 2048));
                         System.arraycopy(psdResult, 0, PSDArray[eventCount], 0, psdResult.length);
@@ -290,6 +292,7 @@ public class GameScreen extends Screen implements Input {
                         timeStamp[eventCount] = dateFormat.format(new Date());
                         eventCount++;
                         manualPatientEventUpCount = 1;
+                        Log.d("EVENT", "Event added. Total: " + eventCount);
                     }
                 }
 

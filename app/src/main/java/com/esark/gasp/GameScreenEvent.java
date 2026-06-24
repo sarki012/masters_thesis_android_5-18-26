@@ -22,9 +22,10 @@ public class GameScreenEvent extends Screen implements Input {
     private static final String TAG = "GameScreenEvent";
     int xStart = 0, xStop = 0;
     public static double[] A2DVal = new double[signalBufferLen];
-    double[] psd = new double[2048];
+    double[] psd = new double[signalBufferLen];
     double[] sineWave = new double[2048];
-    double[] psdResult = new double[2048];
+    double[] psdResult = new double[signalBufferLen];
+
     
     // Field to track which event we are currently viewing
     public int selectedEventIdx = 0;
