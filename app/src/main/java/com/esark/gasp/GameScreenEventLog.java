@@ -16,8 +16,8 @@ public class GameScreenEventLog extends Screen implements Input {
     // --- 1. UNIFIED GRID CONSTANTS ---
     private final int cols = 4;
     private final int rows = 16;
-    private final int startX = 50;
-    private final int startY = 300;
+    private final int startX = 65;
+    private final int startY = 200;
     private final int buttonWidth = 350;
     private final int buttonHeight = 100;
     private final int spacingX = 50;
@@ -114,7 +114,7 @@ public class GameScreenEventLog extends Screen implements Input {
                 // Draw the timestamp text
                 if (timeStamp[i] != null) {
                     // Center the text: 75 pixels in, 65 pixels down
-                    g.drawText(timeStamp[i], x + 75, y + 65);
+                    g.drawText(timeStamp[i], x + 60, y + 70);
                 }
             }
         }

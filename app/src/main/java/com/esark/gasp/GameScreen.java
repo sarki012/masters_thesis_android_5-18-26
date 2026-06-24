@@ -11,6 +11,7 @@ import android.os.HandlerThread;
 import android.os.Looper;
 import android.util.Log;
 
+import com.esark.framework.AndroidGame;
 import com.esark.framework.Game;
 import com.esark.framework.Graphics;
 import com.esark.framework.Input;
@@ -713,12 +714,16 @@ public class GameScreen extends Screen implements Input {
 
     @Override
     public void pause () {
-
+        // This stops the ConnectedThread from trying to redraw a screen that isn't visible
+        view = null;
     }
 
     @Override
     public void resume () {
-
+        // When we come back to the live screen, re-enable drawing
+        // 'game' is your AndroidGame instance which holds the SurfaceView
+      //  view = ((AndroidGame)game).getSurfaceView();
+        view = ((AndroidGame)game).renderView;
     }
 
     @Override
