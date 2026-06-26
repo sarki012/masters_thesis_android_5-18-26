@@ -132,11 +132,14 @@ public class GameScreen extends Screen implements Input {
     public GameScreenLastEvent gameScreenLastEvent;
     public GameScreenEventLog gameScreenEventLog;
     private long totalRecordingTime = 0;
-
+    public static int[] eventBufferPointers = new int[100]; // Stores the index of each event
+    public static int selectedEventPointer = -1;           // Which event we are currently replaying
+    // Inside GameScreen.java
+    public static GameScreen liveScreen;
     // Constructor
     public GameScreen(Game game) {
         super(game);
-
+        liveScreen = this; // Store this instance
         // Cast the 'game' object to Context.
         // This works because AndroidGame extends Activity, which is a Context.
         this.context = (Context) game;
@@ -283,17 +286,63 @@ public class GameScreen extends Screen implements Input {
                     game.setScreen(gameScreenEventLog);
                 }
                 else if (event.x > 10 && event.x < 675 && event.y > 2450 && event.y < 2800) {
-                    //Manual Patient Event
-                    if (manualPatientEventUpCount == 0 && eventCount < timeStamp.length) {
-                        // Fast array copy instead of loop
-                        System.arraycopy(A2DVal, 0, eventArray[eventCount], 0, Math.min(signalBufferLen, 2048));
-                        System.arraycopy(psdResult, 0, PSDArray[eventCount], 0, psdResult.length);
+                    // Manual Patient Event
+                    // SAFETY CHECK: Ensure we have room in ALL static arrays
+                    // and that we only trigger once per press (manualPatientEventUpCount)
+                    if (manualPatientEventUpCount == 0 && isRecording && eventCount < timeStamp.length) {
 
-                        SimpleDateFormat dateFormat = new SimpleDateFormat("HH:mm:ss");
-                        timeStamp[eventCount] = dateFormat.format(new Date());
+                        // 1. Capture current status immediately on the UI thread
+                        final int endIdx = ramRecordBufferIdx;
+                        final int currentEventID = eventCount;
+                        final Context threadContext = this.context; // Use the class context variable
+
+                        // 2. Save UI info immediately
+                        long delta = System.currentTimeMillis() - startTimeMillis;
+                        String formattedTime = String.format("%02d:%02d:%03d",
+                                (delta/60000), (delta/1000)%60, (delta%1000));
+
+                        // Safety: ensure no null pointer for timeStamp
+                        if (timeStamp != null) {
+                            timeStamp[currentEventID] = formattedTime;
+                        }
+
+                        // 3. Increment eventCount AFTER assigning values but BEFORE starting the thread
                         eventCount++;
                         manualPatientEventUpCount = 1;
-                        Log.d("EVENT", "Event added. Total: " + eventCount);
+
+                        // 4. Save to SD Card in a background thread to prevent UI stutter/crash
+                        new Thread(() -> {
+                            try {
+                                if (threadContext == null) return;
+
+                                File path = threadContext.getExternalFilesDir(null);
+                                String fileName = "Event_" + currentEventID + ".csv";
+                                File file = new File(path, fileName);
+
+                                // Use a large buffer for fast writing
+                                PrintWriter pw = new PrintWriter(new BufferedWriter(
+                                        new OutputStreamWriter(new FileOutputStream(file, false)), 65536));
+
+                                // 1000Hz * 5 seconds = 5000 samples
+                                int startIdx = endIdx - 5000;
+                                if (startIdx < 0) startIdx = 0;
+
+                                // Sync on the buffer so the Bluetooth thread doesn't conflict
+                                synchronized (ramRecordBuffer) {
+                                    for (int k = startIdx; k < endIdx; k++) {
+                                        // Double check index bounds
+                                        if (k >= 0 && k < ramRecordBuffer.length) {
+                                            pw.println(ramRecordBuffer[k]);
+                                        }
+                                    }
+                                }
+                                pw.flush();
+                                pw.close();
+                                Log.d("MANUAL_EVENT", "Saved 5s to: " + fileName);
+                            } catch (Exception e) {
+                                Log.e("MANUAL_EVENT", "Save failed: " + e.getMessage());
+                            }
+                        }).start();
                     }
                 }
 
@@ -661,8 +710,34 @@ public class GameScreen extends Screen implements Input {
          */
     }
 
-            //////////////////////////////////////////////////////////////////////////
+    /////////////////////////// Replay Helper Method ////////////////////////////////////
 
+    // Call this from GameScreenEventLog when a button is pressed
+    public void loadSpecificEvent(int id, Context context) {
+        replayList.clear();
+        replayPosition = 0;
+        try {
+            File path = context.getExternalFilesDir(null);
+            File file = new File(path, "Event_" + id + ".csv");
+            if (!file.exists()) return;
+
+            BufferedReader br = new BufferedReader(new FileReader(file));
+            String line;
+            while ((line = br.readLine()) != null) {
+                if (!line.trim().isEmpty()) {
+                    replayList.add(Double.parseDouble(line));
+                }
+            }
+            br.close();
+
+            isReplaying = true;
+            isRecording = false;
+            startRecording = 2; // Freeze timer
+            if (view != null) view.postInvalidate();
+        } catch (IOException | NumberFormatException e) {
+            e.printStackTrace();
+        }
+    }
     /////////////// LoadReplayData Helper Method ///////////////////////////////////////////////////
     private void loadReplayDataLoop(Context context) {
         replayList.clear();
