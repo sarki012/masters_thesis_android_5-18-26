@@ -14,31 +14,35 @@ import java.util.List;
 
 public class GameScreenEventLog extends Screen implements Input {
     // --- 1. UNIFIED GRID CONSTANTS ---
-    private final int cols = 4;
-    private final int rows = 16;
-    private final int startX = 65;
-    private final int startY = 200;
-    private final int buttonWidth = 350;
-    private final int buttonHeight = 100;
-    private final int spacingX = 50;
-    private final int spacingY = 30;
-
-    // DO NOT initialize here to prevent recursive memory leaks
-    public GameScreenEvent gameScreenEvent = null;
+    // Making these constants ensures update and present always use the same math
+    private static final int COLS = 4;
+    private static final int ROWS = 12;
+    private static final int START_X = 65;
+    private static final int START_Y = 200;
+    private static final int BTN_W = 350;
+    private static final int BTN_H = 100;
+    private static final int SPACING_X = 50;
+    private static final int SPACING_Y = 30;
 
     public GameScreenEventLog(Game game) {
         super(game);
-        // We load assets only if they were cleared from memory
+        // Load assets once
         loadAssets();
     }
 
     private void loadAssets() {
         Graphics g = game.getGraphics();
-        if (Assets.eventLogBackground == null) {
-            Assets.eventLogBackground = g.newPixmap("eventLogBackground.png", Graphics.PixmapFormat.ARGB4444);
-        }
-        if (Assets.eventLogButton == null) {
-            Assets.eventLogButton = g.newPixmap("eventLogButton.png", Graphics.PixmapFormat.ARGB4444);
+        if (g == null) return;
+        try {
+            // Use ARGB4444 to save 50% memory
+            if (Assets.eventLogBackground == null) {
+                Assets.eventLogBackground = g.newPixmap("eventLogBackground.png", Graphics.PixmapFormat.ARGB4444);
+            }
+            if (Assets.eventLogButton == null) {
+                Assets.eventLogButton = g.newPixmap("eventLogButton.png", Graphics.PixmapFormat.ARGB4444);
+            }
+        } catch (Exception e) {
+            Log.e("EventLog", "Memory Error loading pixmaps: " + e.getMessage());
         }
     }
 
@@ -57,23 +61,27 @@ public class GameScreenEventLog extends Screen implements Input {
                     return;
                 }
 
-                // Grid detection for event buttons
+                // Grid detection
+                if (timeStamp == null) return;
                 int limit = Math.min(eventCount, timeStamp.length);
-                limit = Math.min(limit, cols * rows);
+                limit = Math.min(limit, COLS * ROWS);
 
                 for (int j = 0; j < limit; j++) {
-                    int row = j / cols;
-                    int col = j % cols;
-                    int x = startX + col * (buttonWidth + spacingX);
-                    int y = startY + row * (buttonHeight + spacingY);
+                    int row = j / COLS;
+                    int col = j % COLS;
+                    int x = START_X + col * (BTN_W + SPACING_X);
+                    int y = START_Y + row * (BTN_H + SPACING_Y);
 
-                    if (event.x > x && event.x < x + buttonWidth && event.y > y && event.y < y + buttonHeight) {
-                        // LAZY INITIALIZATION: Only create the event detail screen when clicked
-                        if (gameScreenEvent == null) {
-                            gameScreenEvent = new GameScreenEvent(game);
+                    if (event.x > x && event.x < x + BTN_W && event.y > y && event.y < y + BTN_H) {
+                        // FIX: Use the EXISTING GameScreen instance instead of 'new GameScreen'
+                        // This prevents the OutOfMemory crash
+                        GameScreen gs = GameScreen.liveScreen;
+                        if (gs == null) {
+                            gs = new GameScreen(game);
                         }
-                        gameScreenEvent.selectedEventIdx = j;
-                        game.setScreen(gameScreenEvent);
+
+                        gs.loadSpecificEvent(j, context);
+                        game.setScreen(gs);
                         return;
                     }
                 }
@@ -84,8 +92,9 @@ public class GameScreenEventLog extends Screen implements Input {
     @Override
     public void present(float deltaTime) {
         Graphics g = game.getGraphics();
+        if (g == null) return;
 
-        // If the Android OS reclaimed memory while we were recording, reload assets
+        // Reload assets if Android cleared them from RAM
         if (Assets.eventLogBackground == null || Assets.eventLogButton == null) {
             loadAssets();
         }
@@ -95,36 +104,42 @@ public class GameScreenEventLog extends Screen implements Input {
             g.drawPortraitPixmap(Assets.eventLogBackground, 0, 0);
         }
 
-        // 2. Determine how many buttons to draw
+        // 2. Safety Check for empty logs
+        if (timeStamp == null || eventCount == 0) {
+            g.drawText("No Events", 170, 400);
+            return;
+        }
+
+        // 3. Boundary Calculation
         int displayLimit = Math.min(eventCount, timeStamp.length);
-        displayLimit = Math.min(displayLimit, cols * rows);
+        displayLimit = Math.min(displayLimit, COLS * ROWS);
 
-        // 3. Optimized Drawing Loop
-        if (displayLimit > 0 && Assets.eventLogButton != null) {
+        // 4. Draw Grid
+        if (Assets.eventLogButton != null) {
             for (int i = 0; i < displayLimit; i++) {
-                int row = i / cols;
-                int col = i % cols;
+                int row = i / COLS;
+                int col = i % COLS;
+                int x = START_X + col * (BTN_W + SPACING_X);
+                int y = START_Y + row * (BTN_H + SPACING_Y);
 
-                int x = startX + col * (buttonWidth + spacingX);
-                int y = startY + row * (buttonHeight + spacingY);
-
-                // Draw the button
                 g.drawEventLogButtonPixmap(Assets.eventLogButton, x, y);
 
-                // Draw the timestamp text
-                if (timeStamp[i] != null) {
-                    // Center the text: 75 pixels in, 65 pixels down
-                    g.drawText(timeStamp[i], x + 60, y + 70);
+                // NULL STRING SAFETY
+                String label = timeStamp[i];
+                if (label != null) {
+                    // Optimized Centering for 350x100 button
+                    g.drawText(label, x + 60, y + 70);
                 }
             }
         }
     }
 
-    @Override public void pause() {}
     @Override public void resume() {
-        // Ensure assets are re-synced when returning to this screen
+        System.gc(); // Clear memory from recording session
         loadAssets();
     }
+
+    @Override public void pause() {}
     @Override public void dispose() {}
     @Override public boolean isTouchDown(int pointer) { return false; }
     @Override public int getTouchX(int pointer) { return 0; }
