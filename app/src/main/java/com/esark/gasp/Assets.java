@@ -8,7 +8,7 @@ public class Assets {
     public static Pixmap laryngospasmBackgroundMain;
     public static Pixmap lastEventBackground;
     public static Pixmap eventLogBackground;
-    public static Pixmap eventLogButton;
+    public static Pixmap eventLogButtonJpeg;
     public static Pixmap eventLogButtonBlue;
     public static Pixmap eventLogButtonBrown;
     public static Pixmap eventLogButtonPurple;
