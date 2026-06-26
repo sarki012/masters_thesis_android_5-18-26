@@ -123,7 +123,7 @@ public class GameScreen extends Screen implements Input {
 // Pre-allocate 100,000 samples (~100 seconds) so the list doesn't have to resize
     //  public static List<Double> ramRecordBuffer = java.util.Collections.synchronizedList(new ArrayList<>(100000));
     // Inside GameScreen.java - replace your current ramRecordBuffer declaration
-    public static double[] ramRecordBuffer = new double[400000]; // Fits 5 minutes at 1000Hz
+    public static double[] ramRecordBuffer = new double[600000]; //Was 400,000 // Fits 5 minutes at 1000Hz
     public static int ramRecordBufferIdx =0;
     private final static int currentXStep = 1;
 
@@ -299,59 +299,43 @@ public class GameScreen extends Screen implements Input {
                 }
                 else if (event.x > 10 && event.x < 675 && event.y > 2450 && event.y < 2800) {
                     // Manual Patient Event
-                    if (manualPatientEventUpCount == 0 && isRecording && eventCount < timeStamp.length) {
-                        // 1. Capture snapshots immediately on the UI thread
-                        final int currentEventID = eventCount;
-                        final int endSnapshotIdx = ramRecordBufferIdx; // Where the buffer is NOW
+                    if (manualPatientEventUpCount == 0 && isRecording && eventCount < 100) {
+                        // 1. Snapshot the current buffer position
+                        final int currentEndIdx = ramRecordBufferIdx;
+                        final int currentID = eventCount;
                         final Context threadContext = this.context;
 
-                        // 2. Save UI info immediately
+                        // 2. Save Timestamp for the Log Screen
                         long delta = System.currentTimeMillis() - startTimeMillis;
-                        String formattedTime = String.format("%02d:%02d:%03d",
-                                (delta / 60000), (delta / 1000) % 60, (delta % 1000));
+                        timeStamp[eventCount] = String.format("%02d:%02d:%03d", (delta/60000), (delta/1000)%60, (delta%1000));
 
-                        if (timeStamp != null) {
-                            timeStamp[currentEventID] = formattedTime;
-                        }
-
-                        // Increment BEFORE starting the thread to reserve the slot
-                        eventCount++;
-                        manualPatientEventUpCount = 1;
-
-                        // 3. Save to SD Card using the Executor
+                        // 3. Queue the 5-second background save
                         saveExecutor.execute(() -> {
                             try {
                                 if (threadContext == null) return;
+                                File path = threadContext.getExternalFilesDir(null);
+                                File file = new File(path, "Event_" + currentID + ".csv");
+                                PrintWriter pw = new PrintWriter(new BufferedWriter(new OutputStreamWriter(new FileOutputStream(file, false)), 65536));
 
-                                // CALCULATE BOUNDS CAREFULLY
-                                // 1000Hz * 5 seconds = 5000 samples
-                                int startIdx = endSnapshotIdx - 5000;
+                                // Look back 5 seconds (5000 samples)
+                                int startIdx = currentEndIdx - 5000;
                                 if (startIdx < 0) startIdx = 0;
 
-                                File path = threadContext.getExternalFilesDir(null);
-                                File file = new File(path, "Event_" + currentEventID + ".csv");
-
-                                // Use a large buffer (64kb) to minimize SD card wear and lag
-                                PrintWriter pw = new PrintWriter(new BufferedWriter(
-                                        new OutputStreamWriter(new FileOutputStream(file, false)), 65536));
-
-                                // Sync on the buffer while reading to prevent the Bluetooth thread from
-                                // modifying it mid-write
                                 synchronized (ramRecordBuffer) {
-                                    // Use the captured endSnapshotIdx, not the live ramRecordBufferIdx
-                                    for (int k = startIdx; k < endSnapshotIdx; k++) {
-                                        if (k >= 0 && k < ramRecordBuffer.length) {
-                                            pw.println(ramRecordBuffer[k]);
-                                        }
+                                    for (int k = startIdx; k < currentEndIdx; k++) {
+                                        pw.println(ramRecordBuffer[k]);
                                     }
                                 }
                                 pw.flush();
                                 pw.close();
-                                Log.d("SAVE_EVENT", "Saved 5s window to Event_" + currentEventID + ".csv");
+                                Log.d("LOOP_REC", "Saved 5s to Event_" + currentID + ".csv");
                             } catch (Exception e) {
-                                Log.e("SAVE_ERROR", "Failed to save event: " + e.getMessage());
+                                e.printStackTrace();
                             }
                         });
+
+                        eventCount++;
+                        manualPatientEventUpCount = 1;
                     }
                 }
 
