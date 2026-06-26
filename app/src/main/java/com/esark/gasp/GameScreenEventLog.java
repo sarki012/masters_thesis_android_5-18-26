@@ -21,11 +21,11 @@ public class GameScreenEventLog extends Screen implements Input {
     private static final int MAX_EVENTS = 64;
 
     private static final int START_X = 65;
-    private static final int START_Y = 120;   // Moved up slightly to ensure bottom row fits
+    private static final int START_Y = 120;
     private static final int BTN_W = 350;
     private static final int BTN_H = 100;
     private static final int SPACING_X = 50;
-    private static final int SPACING_Y = 20;  // Tightened to ensure all 16 rows fit in screen height
+    private static final int SPACING_Y = 20;
 
     public GameScreenEventLog(Game game) {
         super(game);
@@ -36,12 +36,13 @@ public class GameScreenEventLog extends Screen implements Input {
         Graphics g = game.getGraphics();
         if (g == null) return;
         try {
-            // Using ARGB4444 saves 50% memory compared to the default
+            // Using RGB565 instead of ARGB4444 saves even more memory
+            // as it removes the transparency (Alpha) channel entirely.
             if (Assets.eventLogBackground == null) {
-                Assets.eventLogBackground = g.newPixmap("eventLogBackground.png", Graphics.PixmapFormat.ARGB4444);
+                Assets.eventLogBackground = g.newPixmap("eventLogBackground.png", Graphics.PixmapFormat.RGB565);
             }
             if (Assets.eventLogButtonJpeg == null) {
-                Assets.eventLogButtonJpeg = g.newPixmap("eventLogButtonJpeg.jpg", Graphics.PixmapFormat.ARGB4444);
+                Assets.eventLogButtonJpeg = g.newPixmap("eventLogButtonJpeg.jpg", Graphics.PixmapFormat.RGB565);
             }
         } catch (Exception e) {
             Log.e("EventLog", "Memory Error loading assets: " + e.getMessage());
@@ -62,26 +63,29 @@ public class GameScreenEventLog extends Screen implements Input {
                     return;
                 }
 
-                int limit = Math.min(eventCount, timeStamp.length);
-                limit = Math.min(limit, MAX_EVENTS);
+                // --- THREAD-SAFE INDEXING ---
+                // Synchronize on the array so a background save doesn't change
+                // the count while we are calculating grid hits.
+                synchronized (timeStamp) {
+                    int limit = Math.min(eventCount, timeStamp.length);
+                    limit = Math.min(limit, MAX_EVENTS);
 
-                for (int j = 0; j < limit; j++) {
-                    int row = j / COLS;
-                    int col = j % COLS;
-                    int x = START_X + col * (BTN_W + SPACING_X);
-                    int y = START_Y + row * (BTN_H + SPACING_Y);
+                    for (int j = 0; j < limit; j++) {
+                        int row = j / COLS;
+                        int col = j % COLS;
+                        int x = START_X + col * (BTN_W + SPACING_X);
+                        int y = START_Y + row * (BTN_H + SPACING_Y);
 
-                    if (event.x > x && event.x < x + BTN_W && event.y > y && event.y < y + BTN_H) {
-                        // --- CRITICAL FIX: Reuse the LIVE screen instance ---
-                        GameScreen gs = GameScreen.liveScreen;
-                        if (gs == null) {
-                            gs = new GameScreen(game);
+                        if (event.x > x && event.x < x + BTN_W && event.y > y && event.y < y + BTN_H) {
+                            GameScreen gs = GameScreen.liveScreen;
+                            if (gs == null) {
+                                gs = new GameScreen(game);
+                            }
+                            // Call this outside the loop but keep j
+                            gs.loadSpecificEvent(j, context);
+                            game.setScreen(gs);
+                            return;
                         }
-                        // Stop any current recording/replay before switching
-                        GameScreen.isRecording = false;
-                        gs.loadSpecificEvent(j, context);
-                        game.setScreen(gs);
-                        return;
                     }
                 }
             }
@@ -93,51 +97,54 @@ public class GameScreenEventLog extends Screen implements Input {
         Graphics g = game.getGraphics();
         if (g == null) return;
 
-        // Force a re-load if the OS cleared images to save memory
+        // Ensure assets are loaded
         if (Assets.eventLogBackground == null || Assets.eventLogButtonJpeg == null) {
             loadAssets();
         }
 
-        // 1. Draw Background
+        // 1. Draw Background (The base layer)
         if (Assets.eventLogBackground != null) {
             g.drawPortraitPixmap(Assets.eventLogBackground, 0, 0);
         }
 
-        // 2. Bound Calculation
-        if (timeStamp == null || eventCount == 0) {
-            g.drawText("No Events Recorded", 170, 400);
-            return;
-        }
+        // 2. Thread-Safe Drawing Loop
+        // We synchronize on timeStamp to prevent a NullPointerException if
+        // the background save thread is currently writing to the 17th slot.
+        synchronized (timeStamp) {
+            if (timeStamp == null || eventCount == 0) {
+                g.drawText("No Events Recorded", 170, 400);
+                return;
+            }
 
-        // Display up to 64 events on one page
-        int displayLimit = Math.min(eventCount, timeStamp.length);
-        displayLimit = Math.min(displayLimit, MAX_EVENTS);
+            int displayLimit = Math.min(eventCount, timeStamp.length);
+            displayLimit = Math.min(displayLimit, MAX_EVENTS);
 
-        // 3. OPTIMIZED Drawing Loop
-        if (Assets.eventLogButtonJpeg != null) {
-            for (int i = 0; i < displayLimit; i++) {
-                int row = i / COLS;
-                int col = i % COLS;
-                int x = START_X + col * (BTN_W + SPACING_X);
-                int y = START_Y + row * (BTN_H + SPACING_Y);
+            if (Assets.eventLogButtonJpeg != null) {
+                for (int i = 0; i < displayLimit; i++) {
+                    int row = i / COLS;
+                    int col = i % COLS;
+                    int x = START_X + col * (BTN_W + SPACING_X);
+                    int y = START_Y + row * (BTN_H + SPACING_Y);
 
-                // DRAW IMAGE
-                g.drawEventLogButtonPixmap(Assets.eventLogButtonJpeg, x, y);
+                    // 3. Command Buffer Limit Safety
+                    // If Y coordinate is off-screen, skip drawing to save GPU resources
+                    if (y > 2500) break;
 
-                // DRAW TEXT (With Absolute Null Safety)
-                String label = timeStamp[i];
-                if (label != null && !label.isEmpty()) {
-                    g.drawText(label, x + 75, y + 68);
-                } else {
-                    g.drawText("Wait...", x + 75, y + 68);
+                    // DRAW IMAGE
+                    g.drawEventLogButtonPixmap(Assets.eventLogButtonJpeg, x, y);
+
+                    // DRAW TEXT (Absolute Null Guard)
+                    String label = timeStamp[i];
+                    if (label != null) {
+                        g.drawText(label, x + 75, y + 68);
+                    }
                 }
             }
         }
     }
 
-
     @Override public void resume() {
-        // Clear old garbage before starting heavy drawing
+        // Force memory cleanup when entering this screen
         System.gc();
         loadAssets();
     }
