@@ -39,6 +39,8 @@ import android.graphics.Canvas;
 import android.graphics.Paint;
 import com.esark.framework.AndroidGraphics;
 
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 
 public class GameScreen extends Screen implements Input {
     boolean isAlertPlaying = false;
@@ -121,7 +123,7 @@ public class GameScreen extends Screen implements Input {
 // Pre-allocate 100,000 samples (~100 seconds) so the list doesn't have to resize
     //  public static List<Double> ramRecordBuffer = java.util.Collections.synchronizedList(new ArrayList<>(100000));
     // Inside GameScreen.java - replace your current ramRecordBuffer declaration
-    public static double[] ramRecordBuffer = new double[300000]; // Fits 5 minutes at 1000Hz
+    public static double[] ramRecordBuffer = new double[400000]; // Fits 5 minutes at 1000Hz
     public static int ramRecordBufferIdx =0;
     private final static int currentXStep = 1;
 
@@ -136,6 +138,7 @@ public class GameScreen extends Screen implements Input {
     public static int selectedEventPointer = -1;           // Which event we are currently replaying
     // Inside GameScreen.java
     public static GameScreen liveScreen;
+    private final ExecutorService saveExecutor = Executors.newSingleThreadExecutor();
     // Constructor
     public GameScreen(Game game) {
         super(game);
@@ -212,7 +215,8 @@ public class GameScreen extends Screen implements Input {
                         startRecording = 2; // State 2: Display frozen totalRecordingTime
                         isRecording = false;
 
-                        new Thread(() -> {
+                        // Replace the "new Thread(() -> { ... }).start();" block with:
+                        saveExecutor.execute(() -> {
                             try {
                                 File path = context.getExternalFilesDir(null);
                                 File file = new File(path, fileNameLoop);
@@ -228,7 +232,7 @@ public class GameScreen extends Screen implements Input {
                             } catch (IOException e) {
                                 e.printStackTrace();
                             }
-                        }).start();
+                        });
                     }
                 }
                 /////////////////////// Replay Recording (Blue Button) ///////////////////////////////////////////
