@@ -148,8 +148,8 @@ public class GameScreen extends Screen implements Input {
         this.context = (Context) game;
 
         // FIX 4: Initialize sub-screens here so 'game' is valid
-        gameScreenLastEvent = new GameScreenLastEvent(game);
-        gameScreenEventLog = new GameScreenEventLog(game);
+     //   gameScreenLastEvent = new GameScreenLastEvent(game);
+     //   gameScreenEventLog = new GameScreenEventLog(game);
 
         // Create a dedicated thread for writing to disk
         if (loggerThread == null) {
@@ -218,6 +218,8 @@ public class GameScreen extends Screen implements Input {
                         // Replace the "new Thread(() -> { ... }).start();" block with:
                         saveExecutor.execute(() -> {
                             try {
+                                // Wait 5 seconds to capture the "future" data
+                                Thread.sleep(5000);
                                 File path = context.getExternalFilesDir(null);
                                 File file = new File(path, fileNameLoop);
                                 PrintWriter pw = new PrintWriter(new BufferedWriter(new OutputStreamWriter(new FileOutputStream(file, false)), 65536));
@@ -229,7 +231,7 @@ public class GameScreen extends Screen implements Input {
                                 pw.flush();
                                 pw.close();
                                 Log.d("SAVE", "Saved " + ramRecordBufferIdx + " samples");
-                            } catch (IOException e) {
+                            } catch (Exception e) {
                                 e.printStackTrace();
                             }
                         });
@@ -287,55 +289,57 @@ public class GameScreen extends Screen implements Input {
                     }
                 } else if (event.x > 720 && event.x < 1190 && event.y > 2535 && event.y < 2735) {
                     //Event Log Screen
+                    // Only create it when the user actually wants to see it
+                    if (gameScreenEventLog == null) {
+                        gameScreenEventLog = new GameScreenEventLog(game);
+                    }
+                    // Stop recording or any heavy UI tasks before switching to save memory
+                    isRecording = false;
                     game.setScreen(gameScreenEventLog);
                 }
                 else if (event.x > 10 && event.x < 675 && event.y > 2450 && event.y < 2800) {
                     // Manual Patient Event
-                    // SAFETY CHECK: Ensure we have room in ALL static arrays
-                    // and that we only trigger once per press (manualPatientEventUpCount)
                     if (manualPatientEventUpCount == 0 && isRecording && eventCount < timeStamp.length) {
-
-                        // 1. Capture current status immediately on the UI thread
-                        final int endIdx = ramRecordBufferIdx;
+                        // 1. Capture snapshots immediately on the UI thread
                         final int currentEventID = eventCount;
-                        final Context threadContext = this.context; // Use the class context variable
+                        final int endSnapshotIdx = ramRecordBufferIdx; // Where the buffer is NOW
+                        final Context threadContext = this.context;
 
                         // 2. Save UI info immediately
                         long delta = System.currentTimeMillis() - startTimeMillis;
                         String formattedTime = String.format("%02d:%02d:%03d",
-                                (delta/60000), (delta/1000)%60, (delta%1000));
+                                (delta / 60000), (delta / 1000) % 60, (delta % 1000));
 
-                        // Safety: ensure no null pointer for timeStamp
                         if (timeStamp != null) {
                             timeStamp[currentEventID] = formattedTime;
                         }
 
-                        // 3. Increment eventCount AFTER assigning values but BEFORE starting the thread
+                        // Increment BEFORE starting the thread to reserve the slot
                         eventCount++;
                         manualPatientEventUpCount = 1;
 
-                        // 4. Save to SD Card in a background thread to prevent UI stutter/crash
-                        // 2. Inside the Manual Event button logic, replace "new Thread(...).start()" with:
+                        // 3. Save to SD Card using the Executor
                         saveExecutor.execute(() -> {
                             try {
                                 if (threadContext == null) return;
 
-                                File path = threadContext.getExternalFilesDir(null);
-                                String fileName = "Event_" + currentEventID + ".csv";
-                                File file = new File(path, fileName);
+                                // CALCULATE BOUNDS CAREFULLY
+                                // 1000Hz * 5 seconds = 5000 samples
+                                int startIdx = endSnapshotIdx - 5000;
+                                if (startIdx < 0) startIdx = 0;
 
-                                // Use a large buffer for fast writing
+                                File path = threadContext.getExternalFilesDir(null);
+                                File file = new File(path, "Event_" + currentEventID + ".csv");
+
+                                // Use a large buffer (64kb) to minimize SD card wear and lag
                                 PrintWriter pw = new PrintWriter(new BufferedWriter(
                                         new OutputStreamWriter(new FileOutputStream(file, false)), 65536));
 
-                                // 1000Hz * 5 seconds = 5000 samples
-                                int startIdx = endIdx - 5000;
-                                if (startIdx < 0) startIdx = 0;
-
-                                // Sync on the buffer so the Bluetooth thread doesn't conflict
+                                // Sync on the buffer while reading to prevent the Bluetooth thread from
+                                // modifying it mid-write
                                 synchronized (ramRecordBuffer) {
-                                    for (int k = startIdx; k < endIdx; k++) {
-                                        // Double check index bounds
+                                    // Use the captured endSnapshotIdx, not the live ramRecordBufferIdx
+                                    for (int k = startIdx; k < endSnapshotIdx; k++) {
                                         if (k >= 0 && k < ramRecordBuffer.length) {
                                             pw.println(ramRecordBuffer[k]);
                                         }
@@ -343,9 +347,9 @@ public class GameScreen extends Screen implements Input {
                                 }
                                 pw.flush();
                                 pw.close();
-                                Log.d("MANUAL_EVENT", "Saved 5s to: " + fileName);
+                                Log.d("SAVE_EVENT", "Saved 5s window to Event_" + currentEventID + ".csv");
                             } catch (Exception e) {
-                                Log.e("MANUAL_EVENT", "Save failed: " + e.getMessage());
+                                Log.e("SAVE_ERROR", "Failed to save event: " + e.getMessage());
                             }
                         });
                     }
