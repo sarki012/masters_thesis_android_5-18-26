@@ -315,7 +315,8 @@ public class GameScreen extends Screen implements Input {
                         manualPatientEventUpCount = 1;
 
                         // 4. Save to SD Card in a background thread to prevent UI stutter/crash
-                        new Thread(() -> {
+                        // 2. Inside the Manual Event button logic, replace "new Thread(...).start()" with:
+                        saveExecutor.execute(() -> {
                             try {
                                 if (threadContext == null) return;
 
@@ -346,7 +347,7 @@ public class GameScreen extends Screen implements Input {
                             } catch (Exception e) {
                                 Log.e("MANUAL_EVENT", "Save failed: " + e.getMessage());
                             }
-                        }).start();
+                        });
                     }
                 }
 
