@@ -62,10 +62,6 @@ public class GameScreenEventLog extends Screen implements Input {
                     return;
                 }
 
-                // Grid detection
-                if (timeStamp == null) return;
-
-                // CRITICAL SAFETY: Limit loop to the physical array size and visual grid
                 int limit = Math.min(eventCount, timeStamp.length);
                 limit = Math.min(limit, MAX_EVENTS);
 
@@ -76,13 +72,13 @@ public class GameScreenEventLog extends Screen implements Input {
                     int y = START_Y + row * (BTN_H + SPACING_Y);
 
                     if (event.x > x && event.x < x + BTN_W && event.y > y && event.y < y + BTN_H) {
-                        // Use existing GameScreen instance to save memory
+                        // --- CRITICAL FIX: Reuse the LIVE screen instance ---
                         GameScreen gs = GameScreen.liveScreen;
                         if (gs == null) {
                             gs = new GameScreen(game);
                         }
-
-                        // Pass j (the selected index) to the replay loader
+                        // Stop any current recording/replay before switching
+                        GameScreen.isRecording = false;
                         gs.loadSpecificEvent(j, context);
                         game.setScreen(gs);
                         return;
@@ -113,6 +109,7 @@ public class GameScreenEventLog extends Screen implements Input {
             return;
         }
 
+        // Display up to 64 events on one page
         int displayLimit = Math.min(eventCount, timeStamp.length);
         displayLimit = Math.min(displayLimit, MAX_EVENTS);
 
@@ -127,15 +124,17 @@ public class GameScreenEventLog extends Screen implements Input {
                 // DRAW IMAGE
                 g.drawEventLogButtonPixmap(Assets.eventLogButtonJpeg, x, y);
 
-                // DRAW TEXT (Centered)
+                // DRAW TEXT (With Absolute Null Safety)
                 String label = timeStamp[i];
-                if (label != null) {
-                    // Coordinates x+65, y+68 provide decent centering for 350x100 buttons
-                    g.drawText(label, x + 65, y + 68);
+                if (label != null && !label.isEmpty()) {
+                    g.drawText(label, x + 75, y + 68);
+                } else {
+                    g.drawText("Wait...", x + 75, y + 68);
                 }
             }
         }
     }
+
 
     @Override public void resume() {
         // Clear old garbage before starting heavy drawing
