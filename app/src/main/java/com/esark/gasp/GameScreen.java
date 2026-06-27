@@ -51,6 +51,7 @@ public class GameScreen extends Screen implements Input {
     int xStart = 0, xStop = 0;
     double xStartPSD = 0, xStopPSD = 0;
     //public static double[] A2DVal = new double[3500];
+    public static int signalBufferLen = 1436;
     public static volatile double[] A2DVal = new double[signalBufferLen];   //was 1435
     //  public double[] A2DValMean = new double[signalBufferLen];
     public double A2DValMean = 0;
@@ -138,6 +139,7 @@ public class GameScreen extends Screen implements Input {
     // Inside GameScreen.java
     public static GameScreen liveScreen;
     private final ExecutorService saveExecutor = Executors.newSingleThreadExecutor();
+    public static String btStatus = "Bluetooth: Disconnected";
     // Constructor
     public GameScreen(Game game) {
         super(game);
@@ -477,6 +479,9 @@ public class GameScreen extends Screen implements Input {
         Canvas canvas = ((AndroidGraphics) g).getCanvas();
         g.drawPortraitPixmap(Assets.laryngospasmBackgroundMain, 0, 0);
 
+        // 2. DRAW BLUETOOTH STATUS AT THE TOP
+        // White text, centered at top (adjust 850/100 based on your font size)
+        g.drawText(btStatus, 600, 100);
 //        g.drawRect(1245, 2535, 470, 200, 0);       //Bluetooth Connect
         //     g.drawRect(45, 2000, 800, 100, 0);       //Start
         //   g.drawRect(910, 2000, 355, 100, 0);       //Stop
