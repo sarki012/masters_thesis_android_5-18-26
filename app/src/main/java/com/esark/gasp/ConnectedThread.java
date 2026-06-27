@@ -96,6 +96,9 @@ public class ConnectedThread extends Thread {
                                 synchronized (GameScreen.ramRecordBuffer) {
                                     if (GameScreen.ramRecordBufferIdx < GameScreen.ramRecordBuffer.length) {
                                         GameScreen.ramRecordBuffer[GameScreen.ramRecordBufferIdx++] = val;
+                                    } else {
+                                        GameScreen.isRecording = false;
+                                        Log.w("BT", "RAM Buffer Full - Recording Stopped Safely");
                                     }
                                 }
                             }
