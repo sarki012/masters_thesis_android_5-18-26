@@ -1,143 +1,120 @@
 package com.esark.gasp;
 
-import static com.esark.framework.AndroidGame.signalBufferLen;
-import static com.esark.gasp.GameScreen.A2DVal;
-import static com.esark.gasp.GameScreen.movingRMS;
-import static com.esark.gasp.GameScreen.psdResult;
-import static com.esark.gasp.GameScreen.smoothedRMS;
-
-import android.bluetooth.BluetoothSocket;
-import android.os.Handler;
+import static com.esark.gasp.GameScreen.*;
 import android.os.Process;
-import android.os.SystemClock;
 import android.util.Log;
-
 import java.io.IOException;
 import java.io.InputStream;
-import java.io.OutputStream;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.locks.LockSupport;
 
 public class ConnectedThread extends Thread {
-    private final BluetoothSocket mmSocket;
     private final InputStream mmInStream;
-    private final OutputStream mmOutStream;
-    private final Handler mHandler;
-
-    private int mathSkipCount = 0;
+    private int tempHighByte;
     private boolean expectingLowByte = false;
-    private int tempHighByte = 0;
 
-    // displayExecutor is removed for UI updates to prevent queue lag
     private final ExecutorService mathExecutor = Executors.newSingleThreadExecutor();
-    private final ExecutorService recordExecutor = Executors.newSingleThreadExecutor();
+    private final AtomicBoolean mathIsBusy = new AtomicBoolean(false);
     private final double[] a2dCopyForMath = new double[signalBufferLen];
 
-    public ConnectedThread(BluetoothSocket socket, Handler handler) {
-        mmSocket = socket;
-        mHandler = handler;
-        InputStream tmpIn = null;
-        OutputStream tmpOut = null;
-        try {
-            tmpIn = socket.getInputStream();
-            tmpOut = socket.getOutputStream();
-        } catch (IOException e) {
-            Log.e("ConnectedThread", "Error creating streams", e);
-        }
-        mmInStream = tmpIn;
-        mmOutStream = tmpOut;
+    public ConnectedThread(InputStream stream) {
+        this.mmInStream = stream;
     }
 
     @Override
     public void run() {
-        // Boost priority to Audio level to get the tightest timing possible from the Linux kernel
         Process.setThreadPriority(Process.THREAD_PRIORITY_URGENT_AUDIO);
+        GameScreen.btStatus = "BT: Connected";
 
-        byte[] buffer = new byte[4096];
+        byte[] buffer = new byte[1024];
         final double[] jitterBuffer = new double[65536];
-        int jWrite = 0;
+        final int[] jWrite = {0};
         int jRead = 0;
-        int jCount = 0;
+        // Use volatile/Atomic for the count to ensure thread visibility
+        java.util.concurrent.atomic.AtomicInteger jCount = new java.util.concurrent.atomic.AtomicInteger(0);
 
-        final AtomicBoolean mathIsBusy = new AtomicBoolean(false);
-
-        // --- PRECISION 1ms ENGINE VARIABLES ---
         long startTimeNs = 0;
         long totalSamplesReleased = 0;
-        final long NS_PER_SAMPLE = 1000000L; // Exactly 1ms
-
-        // UI Heartbeat: Target 60Hz (16.66ms)
+        final long NS_PER_SAMPLE = 1000000L; // 1ms
         long lastUiPingNs = 0;
-        final long UI_INTERVAL_NS = 16666666L;
+        final long UI_INTERVAL_NS = 16666666L; // 60Hz
 
-        while (!Thread.currentThread().isInterrupted()) {
-            try {
-                // 1. DRAIN THE HARDWARE (Get data off the antenna ASAP)
-                int bytesAvailable = mmInStream.available();
-                if (bytesAvailable > 0) {
-                    int bytesRead = mmInStream.read(buffer, 0, Math.min(bytesAvailable, buffer.length));
-                    for (int i = 0; i < bytesRead; i++) {
-                        int b = buffer[i] & 0xFF;
-                        if (b == 120) { expectingLowByte = false; continue; }
-                        if (!expectingLowByte) {
-                            tempHighByte = b;
-                            expectingLowByte = true;
-                        } else {
-                            double val = ((tempHighByte << 8) | b) / 3.0;
-                            expectingLowByte = false;
+        // 1. DATA ACQUISITION SUB-THREAD
+        // We run the "Read" in a separate loop so it doesn't block the Metronome
+        Thread rxThread = new Thread(() -> {
+            while (!Thread.currentThread().isInterrupted()) {
+                try {
+                    int bytesRead = mmInStream.read(buffer);
+                    if (bytesRead == -1) {
+                        // Connection closed gracefully by remote
+                        throw new IOException("End of stream reached");
+                    }
+                    if (bytesRead > 0) {
+                        for (int i = 0; i < bytesRead; i++) {
+                            int b = buffer[i] & 0xFF;
+                            if (b == 120) { expectingLowByte = false; continue; }
+                            if (!expectingLowByte) {
+                                tempHighByte = b;
+                                expectingLowByte = true;
+                            } else {
+                                double val = ((tempHighByte << 8) | b) / 3.0;
+                                expectingLowByte = false;
 
-                            jitterBuffer[jWrite] = val;
-                            jWrite = (jWrite + 1) % jitterBuffer.length;
-                            jCount++;
+                                // Load Jitter Buffer
+                                int nextWrite = (jWrite[0] + 1) % jitterBuffer.length;
+                                jitterBuffer[jWrite[0]] = val;
+                                jWrite[0] = nextWrite;
+                                jCount.incrementAndGet();
 
-                            if (GameScreen.isRecording) {
-                                synchronized (GameScreen.ramRecordBuffer) {
-                                    if (GameScreen.ramRecordBufferIdx < GameScreen.ramRecordBuffer.length) {
-                                        GameScreen.ramRecordBuffer[GameScreen.ramRecordBufferIdx++] = val;
-                                    } else {
-                                        GameScreen.isRecording = false;
-                                        Log.w("BT", "RAM Buffer Full - Recording Stopped Safely");
+                                if (GameScreen.isRecording) {
+                                    synchronized (GameScreen.ramRecordBuffer) {
+                                        if (ramRecordBufferIdx < ramRecordBuffer.length) {
+                                            ramRecordBuffer[ramRecordBufferIdx++] = val;
+                                        }
                                     }
                                 }
                             }
                         }
                     }
+                } catch (IOException e) {
+                    Log.e("BT_FATAL", "Disconnected during read: " + e.getMessage());
+                    GameScreen.btStatus = "BT: Connection Lost";
+                    break;
                 }
+            }
+        });
+        rxThread.start();
 
-                // 2. THE PRECISION METRONOME (The Smoothness Secret)
-                if (startTimeNs == 0 && jCount > 0) {
-                    startTimeNs = System.nanoTime();
-                    lastUiPingNs = startTimeNs;
-                }
+        // 2. MAIN METRONOME LOOP (The "Drip" Engine)
+        while (!Thread.currentThread().isInterrupted()) {
+            // Check if RxThread died
+            if (!rxThread.isAlive()) break;
 
-                if (startTimeNs > 0) {
-                    long now = System.nanoTime();
-                    long elapsedNs = now - startTimeNs;
+            if (startTimeNs == 0 && jCount.get() > 0) {
+                startTimeNs = System.nanoTime();
+                lastUiPingNs = startTimeNs;
+            }
 
-                    // targetReleased = How many 1ms steps should have occurred by now
-                    long targetReleased = elapsedNs / NS_PER_SAMPLE;
+            if (startTimeNs > 0) {
+                long now = System.nanoTime();
+                long elapsedNs = now - startTimeNs;
+                long targetTotal = elapsedNs / NS_PER_SAMPLE;
 
-                    // DRIP-FEED: Release samples to catch up to the clock.
-                    // We remove the 'while' loop catch-up to prevent "Jumping".
-                    // Instead, we release max 1 sample per "loop tick" (0.1ms).
-                    // This creates a smooth slide instead of a teleport.
-                    if (totalSamplesReleased < targetReleased && jCount > 0) {
-                        double singleSample = jitterBuffer[jRead];
-                        jRead = (jRead + 1) % jitterBuffer.length;
-                        jCount--;
+                // Move data into the display array based on the CLOCK
+                while (totalSamplesReleased < targetTotal && jCount.get() > 0) {
+                    double sample = jitterBuffer[jRead];
+                    jRead = (jRead + 1) % jitterBuffer.length;
+                    jCount.decrementAndGet();
 
-                        synchronized (A2DVal) {
-                            // Perfect 1-pixel/1ms shift
-                            System.arraycopy(A2DVal, 1, A2DVal, 0, signalBufferLen - 1);
-                            A2DVal[signalBufferLen - 1] = singleSample;
-                        }
-                        totalSamplesReleased++;
+                    synchronized (A2DVal) {
+                        System.arraycopy(A2DVal, 1, A2DVal, 0, signalBufferLen - 1);
+                        A2DVal[signalBufferLen - 1] = sample;
                     }
+                    totalSamplesReleased++;
 
-                    // 3. UI HEARTBEAT (Steady 60Hz)
-                    // Decoupling UI pings from data release fixes Duty Cycle "shimmer"
+                    // Redraw logic
                     if (now - lastUiPingNs >= UI_INTERVAL_NS) {
                         if (GameScreen.view != null) {
                             GameScreen.view.postInvalidateOnAnimation();
@@ -145,54 +122,40 @@ public class ConnectedThread extends Thread {
                         lastUiPingNs = now;
                     }
                 }
-
-                // 4. MATH HANDOFF (Throttled)
-                if (mathIsBusy.compareAndSet(false, true)) {
-                    synchronized (A2DVal) {
-                        System.arraycopy(A2DVal, 0, a2dCopyForMath, 0, signalBufferLen);
-                    }
-                    mathExecutor.execute(() -> {
-                        try {
-                            double[] tempResult = new PowerSpectralDensityCalculator(a2dCopyForMath, 1000).calculatePSD(a2dCopyForMath, 1000);
-                            if (tempResult != null && psdResult != null) {
-                                System.arraycopy(tempResult, 0, psdResult, 0, Math.min(tempResult.length, psdResult.length));
-                                for (int j = 0; j < psdResult.length; j++) {
-                                    psdResult[j] = psdResult[j] * -1 + 3600;
-                                    if (psdResult[j] < 3165) psdResult[j] = 3165;
-                                }
-                            }
-                            movingRMS = RMSCalculator.calculateMovingRMS(a2dCopyForMath, 10);
-                            if (movingRMS != null) {
-                                smoothedRMS = MovingAverageCalculator.calculateMovingAverage(movingRMS, 20);
-                            }
-                        } finally {
-                            mathIsBusy.set(false);
-                        }
-                    });
-                }
-
-                // 5. HIGH-PRECISION YIELD (0.1ms)
-                // This allows the engine to check for clock "debt" 10 times every millisecond.
-                LockSupport.parkNanos(100000L);
-
-            } catch (IOException e) {
-                break;
-            } catch (Exception e) {
-                Log.e("ConnectedThread", "Engine Error", e);
             }
+
+            // 3. MATH HAND-OFF
+            if (mathIsBusy.compareAndSet(false, true)) {
+                synchronized (A2DVal) {
+                    System.arraycopy(A2DVal, 0, a2dCopyForMath, 0, signalBufferLen);
+                }
+                mathExecutor.execute(() -> {
+                    try {
+                        PowerSpectralDensityCalculator psdCalc = new PowerSpectralDensityCalculator(a2dCopyForMath, 1000);
+                        double[] tempPsd = psdCalc.calculatePSD(a2dCopyForMath, 1000);
+                        if (tempPsd != null && psdResult != null) {
+                            int limit = Math.min(tempPsd.length, psdResult.length);
+                            for (int j = 0; j < limit; j++) {
+                                psdResult[j] = tempPsd[j] * -1 + 3600;
+                                if (psdResult[j] < 3165) psdResult[j] = 3165;
+                            }
+                        }
+                        movingRMS = RMSCalculator.calculateMovingRMS(a2dCopyForMath, 10);
+                        if (movingRMS != null) {
+                            smoothedRMS = MovingAverageCalculator.calculateMovingAverage(movingRMS, 20);
+                        }
+                    } catch (Exception e) {
+                        Log.e("MATH_ERROR", "Error in PSD/RMS: " + e.getMessage());
+                    } finally {
+                        mathIsBusy.set(false);
+                    }
+                });
+            }
+
+            // Tight yield to check the clock again
+            LockSupport.parkNanos(100000L); // 0.1ms
         }
-    }
 
-
-
-
-
-
-    public void cancel() {
-        try {
-            mmSocket.close();
-        } catch (IOException e) {
-            Log.e("ConnectedThread", "Could not close socket", e);
-        }
+        rxThread.interrupt();
     }
 }
