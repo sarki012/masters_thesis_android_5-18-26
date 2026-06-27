@@ -15,9 +15,10 @@ import com.esark.framework.Screen;
 import java.util.List;
 
 public class GameScreenEventLog extends Screen implements Input {
+    // --- GRID CONSTANTS (64 Buttons: 4 cols x 16 rows) ---
     private static final int COLS = 4;
     private static final int ROWS = 16;
-    private static final int MAX_EVENTS = 64;
+    private static final int MAX_CAPACITY = 64;
 
     private static final int START_X = 65;
     private static final int START_Y = 120;
@@ -25,6 +26,10 @@ public class GameScreenEventLog extends Screen implements Input {
     private static final int BTN_H = 100;
     private static final int SPACING_X = 50;
     private static final int SPACING_Y = 20;
+
+    // DO NOT initialize here. Initializing other screens in fields
+    // is what causes the "20 event crash" due to memory recursion.
+    private GameScreenEvent gameScreenEvent = null;
 
     public GameScreenEventLog(Game game) {
         super(game);
@@ -35,7 +40,7 @@ public class GameScreenEventLog extends Screen implements Input {
         Graphics g = game.getGraphics();
         if (g == null) return;
         try {
-            // Using RGB565 uses 50% less RAM than default
+            // RGB565 uses the least amount of RAM possible for images
             if (Assets.eventLogBackground == null) {
                 Assets.eventLogBackground = g.newPixmap("eventLogBackground.png", Graphics.PixmapFormat.RGB565);
             }
@@ -43,7 +48,7 @@ public class GameScreenEventLog extends Screen implements Input {
                 Assets.eventLogButtonJpeg = g.newPixmap("eventLogButtonJpeg.jpg", Graphics.PixmapFormat.RGB565);
             }
         } catch (Exception e) {
-            Log.e("EventLog", "Bitmap Load Error: " + e.getMessage());
+            Log.e("EventLog", "Memory Error: " + e.getMessage());
         }
     }
 
@@ -52,23 +57,23 @@ public class GameScreenEventLog extends Screen implements Input {
         List<TouchEvent> touchEvents = game.getInput().getTouchEvents();
         if (touchEvents == null) return;
 
-        // SNAPSHOT variables once per frame to prevent race conditions
-        int currentCount;
+        // Take a snapshot of the count so it doesn't change during the loop
+        int currentTotal;
         synchronized (timeStamp) {
-            currentCount = eventCount;
+            currentTotal = eventCount;
         }
 
         for (int i = 0; i < touchEvents.size(); i++) {
             TouchEvent event = touchEvents.get(i);
             if (event.type == TouchEvent.TOUCH_UP) {
-                // Back button
-                if (event.x > 25 && event.x < 675 && event.y > 2583 && event.y < 2780) {
+                // 1. Back Button
+                if (event.x > 25 && event.x < 675 && event.y > 2583) {
                     game.setScreen(game.getStartScreen());
                     return;
                 }
 
-                // Grid detection
-                int limit = Math.min(currentCount, MAX_EVENTS);
+                // 2. Grid Detection
+                int limit = Math.min(currentTotal, MAX_CAPACITY);
                 for (int j = 0; j < limit; j++) {
                     int row = j / COLS;
                     int col = j % COLS;
@@ -76,11 +81,17 @@ public class GameScreenEventLog extends Screen implements Input {
                     int y = START_Y + row * (BTN_H + SPACING_Y);
 
                     if (event.x > x && event.x < x + BTN_W && event.y > y && event.y < y + BTN_H) {
-                        GameScreen gs = GameScreen.liveScreen;
-                        if (gs == null) gs = new GameScreen(game);
+                        // LAZY INITIALIZATION: Create the sub-screen ONLY when clicked
+                        if (gameScreenEvent == null) {
+                            gameScreenEvent = new GameScreenEvent(game);
+                        }
 
-                        gs.loadSpecificEvent(j, context);
-                        game.setScreen(gs);
+                        // Pass the index to GameScreen to load the specific CSV
+                        GameScreen gs = GameScreen.liveScreen;
+                        if (gs != null) {
+                            gs.loadSpecificEvent(j, context);
+                            game.setScreen(gs);
+                        }
                         return;
                     }
                 }
@@ -97,55 +108,50 @@ public class GameScreenEventLog extends Screen implements Input {
             loadAssets();
         }
 
-        // 1. Draw Background
+        // Draw Background
         if (Assets.eventLogBackground != null) {
             g.drawPortraitPixmap(Assets.eventLogBackground, 0, 0);
         }
 
-        // 2. SNAPSHOT DATA (The most important part for stability)
-        // We copy the data we need and release the lock immediately
-        int displayLimit;
-        String[] labels = new String[MAX_EVENTS];
+        // THREAD-SAFE DRAWING
+        // Capture a local copy of strings to prevent crash if background thread writes index 20
+        String[] localLabels = new String[MAX_CAPACITY];
+        int displayCount = 0;
+
         synchronized (timeStamp) {
-            displayLimit = Math.min(eventCount, MAX_EVENTS);
-            for (int k = 0; k < displayLimit; k++) {
-                labels[k] = timeStamp[k];
+            displayCount = Math.min(eventCount, MAX_CAPACITY);
+            for (int k = 0; k < displayCount; k++) {
+                if (k < timeStamp.length) {
+                    localLabels[k] = timeStamp[k];
+                }
             }
         }
 
-        if (displayLimit == 0) {
+        if (displayCount == 0) {
             g.drawText("No Events Recorded", 170, 400);
             return;
         }
 
-        // 3. DRAWING LOOP (Now thread-safe and fast)
         if (Assets.eventLogButtonJpeg != null) {
-            for (int i = 0; i < displayLimit; i++) {
+            for (int i = 0; i < displayCount; i++) {
                 int row = i / COLS;
                 int col = i % COLS;
                 int x = START_X + col * (BTN_W + SPACING_X);
                 int y = START_Y + row * (BTN_H + SPACING_Y);
 
-                // Boundary check to prevent framework math crash
+                // Stop if we go off the visual area of the background
                 if (y > 2500) break;
 
                 g.drawEventLogButtonPixmap(Assets.eventLogButtonJpeg, x, y);
 
-                String label = labels[i];
-                if (label != null) {
-                    g.drawText(label, x + 70, y + 68);
-                } else {
-                    // Draw a placeholder so the app doesn't crash on drawText(null)
-                    g.drawText("Recording...", x + 70, y + 65);
+                if (localLabels[i] != null) {
+                    g.drawText(localLabels[i], x + 70, y + 68);
                 }
             }
         }
     }
 
-    @Override public void resume() {
-        System.gc(); // Clear the massive recording arrays from RAM
-        loadAssets();
-    }
+    @Override public void resume() { System.gc(); loadAssets(); }
     @Override public void pause() {}
     @Override public void dispose() {}
     @Override public boolean isTouchDown(int p) { return false; }
