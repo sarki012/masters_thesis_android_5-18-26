@@ -4,7 +4,6 @@ import static com.esark.framework.AndroidGame.signalBufferLen;
 import static com.esark.gasp.GameScreen.PSDArray;
 import static com.esark.gasp.GameScreen.eventArray;
 import static com.esark.gasp.GameScreen.eventCount;
-import static com.esark.gasp.GameScreen.len;
 import static com.esark.gasp.GameScreen.smoothedRMS;
 
 import android.content.Context;
@@ -50,10 +49,11 @@ public class GameScreenEvent extends Screen implements Input {
         if (Assets.gaspMainBackground == null) {
             Assets.gaspMainBackground = g.newPixmap("gaspMainBackground.png", Graphics.PixmapFormat.ARGB4444);
         }
-        
-        len = touchEvents.size();
-        
-        for (int i = 0; i < len; i++) {
+
+        // FIX: Use a local variable 'numEvents' instead of the static 'len'
+        int numEvents = touchEvents.size();
+
+        for (int i = 0; i < numEvents; i++) {
             TouchEvent event = touchEvents.get(i);
             if (event.type == TouchEvent.TOUCH_UP || event.type == TouchEvent.TOUCH_DRAGGED || event.type == TouchEvent.TOUCH_DOWN) {
                 if (event.x > 25 && event.x < 675 && event.y > 2583 && event.y < 2780) {

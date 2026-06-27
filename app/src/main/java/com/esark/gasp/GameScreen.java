@@ -88,7 +88,7 @@ public class GameScreen extends Screen implements Input {
     // The ‘active pointer’ is the one currently moving our object.
     private int mActivePointerId = INVALID_POINTER_ID;
     // public static int len = 0;
-    public static int len = 0;
+    private int len = 0;
     public static String[] timeStamp = new String[100];
     public static double[] eventData = new double[100];
     public static int eventCount = 0;
@@ -97,9 +97,7 @@ public class GameScreen extends Screen implements Input {
     public static double[] lastEventPSDArray = new double[signalBufferLen];
     public static double[][] eventArray = new double [100][signalBufferLen];
     public static double[] lastEventArray = new double[signalBufferLen];
-    public static double[] replayRMSArray;
-    public static double[] replayPSDArray;
-    public int manualPatientEventUpCount = 0;
+    public static int manualPatientEventUpCount = 0;
     public int rmsWidthThreshTouch = 0;
     public static android.view.View view;
 
@@ -133,7 +131,6 @@ public class GameScreen extends Screen implements Input {
     private final double[] drawingSnapshot = new double[signalBufferLen];
 
     // FIX 2: Declare these here, but do NOT initialize them here
-    public GameScreenLastEvent gameScreenLastEvent;
     public GameScreenEventLog gameScreenEventLog;
     private long totalRecordingTime = 0;
     public static int[] eventBufferPointers = new int[100]; // Stores the index of each event
@@ -150,8 +147,8 @@ public class GameScreen extends Screen implements Input {
         this.context = (Context) game;
 
         // FIX 4: Initialize sub-screens here so 'game' is valid
-     //   gameScreenLastEvent = new GameScreenLastEvent(game);
-     //   gameScreenEventLog = new GameScreenEventLog(game);
+        //   gameScreenLastEvent = new GameScreenLastEvent(game);
+        //   gameScreenEventLog = new GameScreenEventLog(game);
 
         // Create a dedicated thread for writing to disk
         if (loggerThread == null) {
@@ -185,9 +182,14 @@ public class GameScreen extends Screen implements Input {
     private void updateRunning(List<TouchEvent> touchEvents, float deltaTime, Context context) {
         //updateRunning() contains controller code of our MVC scheme
         Graphics g = game.getGraphics();
-        len = touchEvents.size();
-        //Check to see if paused
-        for (int i = 0; i < len; i++) {
+        // FIX: Iterate directly and check size every time to prevent IndexOutOfBounds
+        // if the list is cleared mid-loop by the UI thread.
+        for (int i = 0; i < touchEvents.size(); i++) {
+            // Final safety check: if the list was cleared/shrunk mid-iteration
+            if (i >= touchEvents.size()) {
+                break;
+            }
+
             TouchEvent event = touchEvents.get(i);
             if (event.type == TouchEvent.TOUCH_DOWN) {
                 if (event.x > 1245 && event.x < 1715 && event.y > 2535 && event.y < 2735) {
@@ -196,7 +198,7 @@ public class GameScreen extends Screen implements Input {
                     context.startActivity(intent2);
                     return;
                 }
-               //////////////////// Start Recording Button (Green Button) ////////////////////////////////////////////////
+                //////////////////// Start Recording Button (Green Button) ////////////////////////////////////////////////
                 else if (event.x > 45 && event.x < 845 && event.y > 2000 && event.y < 2100) {//Start
                     if (!isRecording) {
                         startTimeMillis = System.currentTimeMillis();
@@ -299,45 +301,63 @@ public class GameScreen extends Screen implements Input {
                     isRecording = false;
                     game.setScreen(gameScreenEventLog);
                 }
+                //////////////////// Manual Patient Event /////////////////////
                 else if (event.x > 10 && event.x < 675 && event.y > 2450 && event.y < 2800) {
-                    // Manual Patient Event
+                    // Only trigger if we are recording, haven't hit the 100 limit,
+                    // and the button isn't already "held down" (manualPatientEventUpCount)
                     if (manualPatientEventUpCount == 0 && isRecording && eventCount < 100) {
-                        // 1. Snapshot the current buffer position
+
+                        // 1. Snapshot the current state IMMEDIATELY on the UI thread
                         final int currentEndIdx = ramRecordBufferIdx;
                         final int currentID = eventCount;
-                        final Context threadContext = this.context;
+                        // Use the game instance cast to Context to avoid NullPointer
+                        final Context threadContext = (Context) game;
 
-                        // 2. Save Timestamp for the Log Screen
+                        // 2. Save the Timestamp for the Log Screen array
                         long delta = System.currentTimeMillis() - startTimeMillis;
-                        timeStamp[eventCount] = String.format("%02d:%02d:%03d", (delta/60000), (delta/1000)%60, (delta%1000));
+                        String formattedTime = String.format("%02d:%02d:%03d",
+                                (delta / 60000), (delta / 1000) % 60, (delta % 1000));
 
-                        // 3. Queue the 5-second background save
+                        if (timeStamp != null) {
+                            timeStamp[currentID] = formattedTime;
+                        }
+
+                        // 3. Increment counter immediately
+                        eventCount++;
+                        manualPatientEventUpCount = 1;
+
+                        // 4. Save to SD Card in background
                         saveExecutor.execute(() -> {
                             try {
                                 if (threadContext == null) return;
-                                File path = threadContext.getExternalFilesDir(null);
-                                File file = new File(path, "Event_" + currentID + ".csv");
-                                PrintWriter pw = new PrintWriter(new BufferedWriter(new OutputStreamWriter(new FileOutputStream(file, false)), 65536));
 
-                                // Look back 5 seconds (5000 samples)
+                                // CALCULATE BOUNDS: 1000Hz * 5 seconds = 5000 samples
                                 int startIdx = currentEndIdx - 5000;
-                                if (startIdx < 0) startIdx = 0;
+                                if (startIdx < 0) startIdx = 0; // Prevent Negative Index Crash
 
+                                File path = threadContext.getExternalFilesDir(null);
+                                String eventFileName = "Event_" + currentID + ".csv";
+                                File file = new File(path, eventFileName);
+
+                                // Open file with large 64KB buffer for speed
+                                PrintWriter pw = new PrintWriter(new BufferedWriter(
+                                        new OutputStreamWriter(new FileOutputStream(file, false)), 65536));
+
+                                // Synchronize so Bluetooth thread doesn't conflict
                                 synchronized (ramRecordBuffer) {
                                     for (int k = startIdx; k < currentEndIdx; k++) {
-                                        pw.println(ramRecordBuffer[k]);
+                                        if (k >= 0 && k < ramRecordBuffer.length) {
+                                            pw.println(ramRecordBuffer[k]);
+                                        }
                                     }
                                 }
                                 pw.flush();
                                 pw.close();
-                                Log.d("LOOP_REC", "Saved 5s to Event_" + currentID + ".csv");
+                                Log.d("MANUAL_EVENT", "Saved Event_" + currentID);
                             } catch (Exception e) {
-                                e.printStackTrace();
+                                Log.e("CRASH_PREVENT", "Save failed: " + e.getMessage());
                             }
                         });
-
-                        eventCount++;
-                        manualPatientEventUpCount = 1;
                     }
                 }
 
@@ -449,7 +469,7 @@ public class GameScreen extends Screen implements Input {
             g.drawText(rmsWidthThreshStr, 1330, 2235);    //Manual RMS Height Above Threshold Text
         }
     }
-///////////////////////////////////////////////////////////////////////////////////
+    ///////////////////////////////////////////////////////////////////////////////////
 
     @Override
     public void present ( float deltaTime) {
@@ -458,29 +478,29 @@ public class GameScreen extends Screen implements Input {
         g.drawPortraitPixmap(Assets.laryngospasmBackgroundMain, 0, 0);
 
 //        g.drawRect(1245, 2535, 470, 200, 0);       //Bluetooth Connect
-   //     g.drawRect(45, 2000, 800, 100, 0);       //Start
-     //   g.drawRect(910, 2000, 355, 100, 0);       //Stop
+        //     g.drawRect(45, 2000, 800, 100, 0);       //Start
+        //   g.drawRect(910, 2000, 355, 100, 0);       //Stop
 
-       // g.drawRect(1310, 2000, 355, 100, 0);       //Replay (Blue Button)
-      //  g.drawRect(350, 2185, 250, 85, 0);       //Manual RMS Height Above Threshold Text
-   //     g.drawText("50", 395, 2235);    //Manual RMS Height Above Threshold Text
-       // g.drawRect(350, 2380, 250, 85, 0);       //Auto RMS Height Threshold Text
-     //   g.drawText("50", 395, 2445);        //Auto RMS Height Threshold Text
-    //    g.drawRect(685, 2110, 155, 105, 0);       //Left Up Button
-      //  g.drawRect(685, 2220, 155, 105, 0);       //Left Down Button
-     //   g.drawRect(1240, 2180, 250, 85, 0);       //Manual RMS Width Above Threshold Text
-      //  g.drawText("50", 1330, 2235);       //Manual RMS Width Above Threshold Text
-      //  g.drawRect(1560, 2110, 155, 105, 0);       //Right Up Button
-      //  g.drawRect(1560, 2220, 155, 105, 0);       //Right Down Button
-   //     g.drawRect(720, 2535, 470, 200, 0);       //Event Log
-     //   g.drawRect(25, 2535, 650, 200, 0);       //Manual Patient Event
+        // g.drawRect(1310, 2000, 355, 100, 0);       //Replay (Blue Button)
+        //  g.drawRect(350, 2185, 250, 85, 0);       //Manual RMS Height Above Threshold Text
+        //     g.drawText("50", 395, 2235);    //Manual RMS Height Above Threshold Text
+        // g.drawRect(350, 2380, 250, 85, 0);       //Auto RMS Height Threshold Text
+        //   g.drawText("50", 395, 2445);        //Auto RMS Height Threshold Text
+        //    g.drawRect(685, 2110, 155, 105, 0);       //Left Up Button
+        //  g.drawRect(685, 2220, 155, 105, 0);       //Left Down Button
+        //   g.drawRect(1240, 2180, 250, 85, 0);       //Manual RMS Width Above Threshold Text
+        //  g.drawText("50", 1330, 2235);       //Manual RMS Width Above Threshold Text
+        //  g.drawRect(1560, 2110, 155, 105, 0);       //Right Up Button
+        //  g.drawRect(1560, 2220, 155, 105, 0);       //Right Down Button
+        //     g.drawRect(720, 2535, 470, 200, 0);       //Event Log
+        //   g.drawRect(25, 2535, 650, 200, 0);       //Manual Patient Event
 
-     //   g.drawRect(725, 2400, 285, 150, 0);       //True Positive
-      //  g.drawText("50", 880, 2480);    //True Positive Text
-     //   g.drawRect(1055, 2400, 285, 150, 0);       //False Positive
-      //  g.drawText("50", 1235, 2480);       //False Positive Text
-     //   g.drawRect(1400, 2400, 285, 150, 0);       //False Negative
-      //  g.drawText("50", 1560, 2480);       //False Negative Text
+        //   g.drawRect(725, 2400, 285, 150, 0);       //True Positive
+        //  g.drawText("50", 880, 2480);    //True Positive Text
+        //   g.drawRect(1055, 2400, 285, 150, 0);       //False Positive
+        //  g.drawText("50", 1235, 2480);       //False Positive Text
+        //   g.drawRect(1400, 2400, 285, 150, 0);       //False Negative
+        //  g.drawText("50", 1560, 2480);       //False Negative Text
 
         //   g.drawRect(1600, 1330, 100, 270, 0);       //Start/Stop Save a Sample
         //  g.drawRect(1600, 1610, 100, 310, 0);       //Replay
@@ -631,18 +651,19 @@ public class GameScreen extends Screen implements Input {
 
 
         }
-        else if (isReplaying && !replayList.isEmpty()) {
-            // --- 1. DRAW REPLAY RAW SIGNAL (RED) ---
+        if (isReplaying && !replayList.isEmpty()) {
+            // --- REPLAY RED SIGNAL ---
             signalPaint.setColor(android.graphics.Color.RED);
-            signalPaint.setStrokeWidth(2.5f);
+            signalPaint.setStrokeWidth(5.0f);
             bufferIdx = 0;
 
-            int safePos = Math.min(replayPosition, replayList.size() - 1);
-            float yLast = centerY - (float)((replayList.get(safePos) - base) * gMult);
+            // Corrected Replay Indexing
+            int safeIdx = Math.min(replayPosition, replayList.size() - 1);
+            float yLast = centerY - (float)((replayList.get(safeIdx) - base) * gMult);
 
             for (int n = 1; n < signalBufferLen; n++) {
-                int x1 = (int)xRightLimit - (n - 1);
-                int x2 = (int)xRightLimit - n;
+                int x1 = xRight - (n - 1);
+                int x2 = xRight - n;
                 int dataIdx = replayPosition - n;
 
                 if (dataIdx >= 0 && dataIdx < replayList.size()) {
@@ -656,60 +677,18 @@ public class GameScreen extends Screen implements Input {
                     lineBuffer[bufferIdx++] = yNext;
                     yLast = yNext;
                 }
-                if (x2 <= xLeftLimit || bufferIdx >= lineBuffer.length - 4) break;
+                if (x2 <= xLeft || bufferIdx >= lineBuffer.length - 4) break;
             }
             if (bufferIdx > 0) canvas.drawLines(lineBuffer, 0, bufferIdx, signalPaint);
 
-            // --- 2. DRAW REPLAY RMS (BLUE LINE) ---
-            if (replayRMSArray != null) {
-                int blueCenterY = 1300;
-                float rmsYScale = 0.3f;
-
-                // Draw Threshold Line (Static Red)
-                thresholdY = (int) (1050 - (rmsAmpThresh * 2.0f));
-                g.drawRedLine((int)xLeftLimit, thresholdY, (int)xRightLimit, thresholdY, 0);
-
-                // Draw RMS Blue Line
-                for (int n = 1; n < signalBufferLen; n++) {
-                    int x1 = (int)xRightLimit - (n - 1);
-                    int x2 = (int)xRightLimit - n;
-                    int dataIdx = replayPosition - n;
-
-                    if (dataIdx >= 0 && dataIdx < replayRMSArray.length - 1) {
-                        int ry1 = (int) (blueCenterY - replayRMSArray[dataIdx + 1] * rmsYScale);
-                        int ry2 = (int) (blueCenterY - replayRMSArray[dataIdx] * rmsYScale);
-
-                        // Clamping
-                        if (ry1 < 869) ry1 = 869; if (ry1 > 1308) ry1 = 1308;
-                        if (ry2 < 869) ry2 = 869; if (ry2 > 1308) ry2 = 1308;
-
-                        g.drawBlueLine(x1, ry1, x2, ry2, 0);
-                    }
-                    if (x2 <= xLeftLimit) break;
-                }
-            }
-
-            // --- 3. DRAW REPLAY PSD (STATIC RED LINES) ---
-            if (replayPSDArray != null) {
-                float currentXpsd = 170;
-                float xStepPsd = 2.0f;
-                for (int i = 1; i < replayPSDArray.length; i++) {
-                    float nextXpsd = 170 + (i * xStepPsd);
-                    // We subtract 1695 as per your live PSD logic
-                    g.drawRedLine((int) currentXpsd, (int) replayPSDArray[i - 1] - 1695,
-                            (int) nextXpsd, (int) replayPSDArray[i] - 1695, 0);
-                    currentXpsd = nextXpsd;
-                    if (currentXpsd >= 1600) break;
-                }
-            }
-
-            // --- 4. REPLAY SPEED CONTROL ---
-            // Advance replayPosition. 17 is approx real-time for 60Hz screen
+            // Movement speed: 1000Hz = 17 samples per 60Hz frame
             replayPosition += 17;
-            if (replayPosition >= replayList.size() + signalBufferLen) {
-                replayPosition = 0;
+            if (replayPosition >= replayList.size() + signalBufferLen) replayPosition = 0;
+
+            // Ensure the screen keeps refreshing during replay
+            if (GameScreen.view != null) {
+                GameScreen.view.postInvalidate();
             }
-            view.postInvalidate();
         }
 
         /*
@@ -767,29 +746,24 @@ public class GameScreen extends Screen implements Input {
             br.close();
 
             if (!replayList.isEmpty()) {
-                // 1. Convert List to array for Math Calculators
+                // convert List to Array for math
                 double[] rawData = new double[replayList.size()];
-                for (int i = 0; i < replayList.size(); i++) {
-                    rawData[i] = replayList.get(i);
+                for (int i = 0; i < replayList.size(); i++) rawData[i] = replayList.get(i);
+
+                // --- PRE-CALCULATE REPLAY MATH ---
+                // Replay RMS (Blue Line)
+                lastEventArray = RMSCalculator.calculateMovingRMS(rawData, 10);
+                if (lastEventArray != null) {
+                    lastEventArray = MovingAverageCalculator.calculateMovingAverage(lastEventArray, 20);
                 }
 
-                // 2. Calculate RMS for the whole 5-second block
-                // Use 10 for window size as per your live settings
-                replayRMSArray = RMSCalculator.calculateMovingRMS(rawData, 10);
-                if (replayRMSArray != null) {
-                    // Smooth the RMS as you do in live mode
-                    replayRMSArray = MovingAverageCalculator.calculateMovingAverage(replayRMSArray, 20);
-                }
-
-                // 3. Calculate PSD for the block
-                PowerSpectralDensityCalculator tempPsd = new PowerSpectralDensityCalculator(rawData, 1000);
-                double[] psdTemp = tempPsd.calculatePSD(rawData, 1000);
-                if (psdTemp != null) {
-                    replayPSDArray = new double[psdTemp.length];
-                    for (int j = 0; j < psdTemp.length; j++) {
-                        // Apply your specific display scaling
-                        replayPSDArray[j] = psdTemp[j] * -1 + 3600;
-                        if (replayPSDArray[j] < 3165) replayPSDArray[j] = 3165;
+                // Replay PSD (Red Graph)
+                PowerSpectralDensityCalculator psdCalc = new PowerSpectralDensityCalculator(rawData, 1000);
+                double[] tempPsd = psdCalc.calculatePSD(rawData, 1000);
+                if (tempPsd != null) {
+                    for (int j = 0; j < tempPsd.length; j++) {
+                        lastEventPSDArray[j] = tempPsd[j] * -1 + 3600;
+                        if (lastEventPSDArray[j] < 3165) lastEventPSDArray[j] = 3165;
                     }
                 }
 
@@ -802,7 +776,6 @@ public class GameScreen extends Screen implements Input {
             e.printStackTrace();
         }
     }
-
     /////////////// LoadReplayData Helper Method ///////////////////////////////////////////////////
     private void loadReplayDataLoop(Context context) {
         replayList.clear();
@@ -862,7 +835,7 @@ public class GameScreen extends Screen implements Input {
     public void resume () {
         // When we come back to the live screen, re-enable drawing
         // 'game' is your AndroidGame instance which holds the SurfaceView
-      //  view = ((AndroidGame)game).getSurfaceView();
+        //  view = ((AndroidGame)game).getSurfaceView();
         view = ((AndroidGame)game).renderView;
     }
 
