@@ -659,13 +659,13 @@ public class GameScreen extends Screen implements Input {
 
         }
         if (isReplaying && !replayList.isEmpty()) {
-            // --- REPLAY RED SIGNAL ---
+            // --- 1. DRAW REPLAY RAW SIGNAL (RED) ---
             signalPaint.setColor(android.graphics.Color.RED);
             signalPaint.setStrokeWidth(5.0f);
             bufferIdx = 0;
 
+            // Centering raw signal at 500.0f
             int safePos = Math.min(replayPosition, replayList.size() - 1);
-            // Use your specific drawCenterY (e.g., 500.0f)
             float yLast = 500.0f - (float)((replayList.get(safePos) - 410.0f) * 0.15f);
 
             for (int n = 1; n < signalBufferLen; n++) {
@@ -675,8 +675,8 @@ public class GameScreen extends Screen implements Input {
 
                 if (dataIdx >= 0 && dataIdx < replayList.size()) {
                     float yNext = 500.0f - (float)((replayList.get(dataIdx) - 410.0f) * 0.15f);
-                    // Clipping
-                    if (yNext < 50) yNext = 50; if (yNext > 950) yNext = 950;
+                    if (yNext < 50) yNext = 50;
+                    if (yNext > 950) yNext = 950;
 
                     lineBuffer[bufferIdx++] = (float)x1;
                     lineBuffer[bufferIdx++] = yLast;
@@ -692,8 +692,6 @@ public class GameScreen extends Screen implements Input {
             if (replayRMSArray != null) {
                 final int blueCenterY = 1300;
                 final float rmsYScale = 0.3f;
-
-                // Draw Threshold Line (Static Red) inside RMS area
                 int thresholdY = (int) (1050 - (rmsAmpThresh * 2.0f));
                 g.drawRedLine(165, thresholdY, 1600, thresholdY, 0);
 
@@ -705,38 +703,29 @@ public class GameScreen extends Screen implements Input {
                     if (dataIdx >= 0 && dataIdx < replayRMSArray.length - 1) {
                         int ry1 = (int) (blueCenterY - replayRMSArray[dataIdx + 1] * rmsYScale);
                         int ry2 = (int) (blueCenterY - replayRMSArray[dataIdx] * rmsYScale);
-                        // Clamping
                         if (ry1 < 869) ry1 = 869; if (ry1 > 1308) ry1 = 1308;
                         if (ry2 < 869) ry2 = 869; if (ry2 > 1308) ry2 = 1308;
-
                         g.drawBlueLine(x1, ry1, x2, ry2, 0);
                     }
                     if (x2 <= 165) break;
                 }
             }
-            // --- 3. ANIMATED REPLAY PSD (SLIDING WINDOW) ---
-            // We take a 1024 sample window ending at the current replayPosition
+
             // --- 3. ANIMATED REPLAY PSD (SLIDING WINDOW) ---
             int psdWindowSize = 1024;
-            // Check if we have enough data in the list to even pull a window
             if (replayList.size() >= psdWindowSize) {
                 double[] psdWindow = new double[psdWindowSize];
 
-                // FIX: Calculate the window start position
-                // If we are at the beginning, stay at index 0.
-                // Once we pass 1024 samples, start sliding.
-                int windowStart = Math.max(0, replayPosition - psdWindowSize);
+                // Track the window to the current playhead
+                int windowEnd = replayPosition;
+                if (windowEnd < psdWindowSize) windowEnd = psdWindowSize;
+                if (windowEnd > replayList.size()) windowEnd = replayList.size();
 
-                // Ensure we don't overrun the end of the list
-                if (windowStart + psdWindowSize > replayList.size()) {
-                    windowStart = replayList.size() - psdWindowSize;
-                }
-
+                int windowStart = windowEnd - psdWindowSize;
                 for (int i = 0; i < psdWindowSize; i++) {
                     psdWindow[i] = replayList.get(windowStart + i);
                 }
 
-                // Calculate PSD for THIS specific window
                 PowerSpectralDensityCalculator animatedPsdCalc = new PowerSpectralDensityCalculator(psdWindow, 1000);
                 double[] currentPsd = animatedPsdCalc.calculatePSD(psdWindow, 1000);
 
@@ -747,13 +736,15 @@ public class GameScreen extends Screen implements Input {
                     for (int i = 1; i < currentPsd.length; i++) {
                         float nextXpsd = 170 + (i * xStepPsd);
 
-                        // Applying Y-scaling and offset
+                        // MATH FIX: Match Live Mode exactly (3600 - 1695 = 1905 baseline)
                         float y1 = (float) (currentPsd[i - 1] * -1 + 3600) - 1695;
                         float y2 = (float) (currentPsd[i] * -1 + 3600) - 1695;
 
-                        // Clamping to stay in the PSD box
-                        if (y1 < 1470) y1 = 1470;
-                        if (y2 < 1470) y2 = 1470;
+                        // CLAMPING: Ensure visibility within the PSD box area
+                        if (y1 < 1480) y1 = 1480;
+                        if (y1 > 1900) y1 = 1900;
+                        if (y2 < 1480) y2 = 1480;
+                        if (y2 > 1900) y2 = 1900;
 
                         g.drawRedLine((int) currentXpsd, (int) y1, (int) nextXpsd, (int) y2, 0);
 
@@ -763,13 +754,14 @@ public class GameScreen extends Screen implements Input {
                 }
             }
 
-            // --- REPLAY SPEED ---
-            // Advance 17 samples per frame for real-time look
+            // --- 4. SPEED & REFRESH ---
             replayPosition += 17;
             if (replayPosition >= replayList.size() + signalBufferLen) {
                 replayPosition = 0;
             }
-            view.postInvalidate();
+            if (view != null) {
+                view.postInvalidate();
+            }
         }
 
         /*
