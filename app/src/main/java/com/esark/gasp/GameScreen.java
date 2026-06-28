@@ -611,7 +611,7 @@ public class GameScreen extends Screen implements Input {
 
                 g.drawRedLine((int) currentXpsd, (int) y1, (int) nextXpsd, (int) y2, 0);
 
-             // g.drawRedLine((int) currentXpsd, (int) psdResult[i - 1] - 1695, (int) nextXpsd, (int) psdResult[i] - 1695, 0);
+                // g.drawRedLine((int) currentXpsd, (int) psdResult[i - 1] - 1695, (int) nextXpsd, (int) psdResult[i] - 1695, 0);
                 currentXpsd = nextXpsd;
                 if (currentXpsd >= 1600) break;
             }
@@ -730,17 +730,25 @@ public class GameScreen extends Screen implements Input {
             if (replayRawArray.length >= psdWin) {
                 double[] psdBuf = new double[psdWin];
 
+                // 1. Calculate the total "Life" of the animation
+                // This is the 5s of data + the 2s it takes to slide off the screen
                 float totalAnimationDuration = replayRawArray.length + signalBufferLen;
+
+                // 2. Calculate Progress (0.0 to 1.0)
                 float progress = (float) replayPosition / totalAnimationDuration;
                 if (progress > 1.0f) progress = 1.0f;
 
+                // 3. Map progress to the data array
+                // This forces the PSD window to slide from the very start to the very end
+                // perfectly synchronized with the total replay time.
                 int maxPossibleStart = replayRawArray.length - psdWin;
                 int windowStart = (int) (progress * maxPossibleStart);
 
+                // Final safety bounds
                 if (windowStart < 0) windowStart = 0;
                 if (windowStart > maxPossibleStart) windowStart = maxPossibleStart;
 
-                // FAST copy from primitive array
+                // 4. FAST copy and calculate
                 System.arraycopy(replayRawArray, windowStart, psdBuf, 0, psdWin);
 
                 PowerSpectralDensityCalculator psdCalc = new PowerSpectralDensityCalculator(psdBuf, 1000);
@@ -748,32 +756,21 @@ public class GameScreen extends Screen implements Input {
 
                 if (currentPsd != null) {
                     float curX = 170;
-                    // FIX 1: Increase xStep to 3.0f to fix horizontal compression
-                    float xStep = 3.0f;
-
-                    // FIX 2: Apply Live PSD scaling parameters
-                    float psdReplayGain = 0.1f;   // Squashes spikes so they don't flat-top
-                    float yReplayOffset = 1750.0f; // Baseline shift
-
-                    // FIX 3: Draw only the first half (0-500Hz) to uncompress horizontally
-                    int halfLen = currentPsd.length / 2;
-
-                    for (int i = 1; i < halfLen; i++) {
+                    float xStep = 2.0f;
+                    for (int i = 1; i < currentPsd.length; i++) {
                         float nextX = 170 + (i * xStep);
 
-                        // FIX 4: Use the formula: (Value * -Gain + 3600) - Offset
-                        // 3600 - 1750 = 1850 (The visual "floor" of your PSD box)
-                        float y1 = (float) (currentPsd[i - 1] * -psdReplayGain + 3650) - yReplayOffset;
-                        float y2 = (float) (currentPsd[i] * -psdReplayGain + 3650) - yReplayOffset;
+                        // Y-MATH: Use 1715 as the offset to ensure it's centered in the middle box
+                        float y1 = (float) (currentPsd[i - 1] * -1 + 3600) - 1715;
+                        float y2 = (float) (currentPsd[i] * -1 + 3600) - 1715;
 
-                        // FIX 5: CLAMPING - Ceiling at 1445, Floor at 1895
-                        if (y1 < 1445) y1 = 1445;
+                        // CLAMPING: Match the visual box on your background
+                        if (y1 < 1480) y1 = 1480;
                         if (y1 > 1895) y1 = 1895;
-                        if (y2 < 1445) y2 = 1445;
+                        if (y2 < 1480) y2 = 1480;
                         if (y2 > 1895) y2 = 1895;
 
                         g.drawRedLine((int) curX, (int) y1, (int) nextX, (int) y2, 0);
-
                         curX = nextX;
                         if (curX >= 1600) break;
                     }
