@@ -714,18 +714,52 @@ public class GameScreen extends Screen implements Input {
                     if (x2 <= 165) break;
                 }
             }
+            // --- 3. ANIMATED REPLAY PSD (SLIDING WINDOW) ---
+            // We take a 1024 sample window ending at the current replayPosition
+            // --- 3. ANIMATED REPLAY PSD (SLIDING WINDOW) ---
+            int psdWindowSize = 1024;
+            // Check if we have enough data in the list to even pull a window
+            if (replayList.size() >= psdWindowSize) {
+                double[] psdWindow = new double[psdWindowSize];
 
-            // --- 3. DRAW REPLAY PSD (RED GRAPH) ---
-            if (replayPSDArray != null) {
-                float currentXpsd = 170;
-                float xStepPsd = 2.0f;
-                for (int i = 1; i < replayPSDArray.length; i++) {
-                    float nextXpsd = 170 + (i * xStepPsd);
-                    // 1695 is the standard Y-offset used in your live code
-                    g.drawRedLine((int) currentXpsd, (int) replayPSDArray[i - 1] - 1695,
-                            (int) nextXpsd, (int) replayPSDArray[i] - 1695, 0);
-                    currentXpsd = nextXpsd;
-                    if (currentXpsd >= 1600) break;
+                // FIX: Calculate the window start position
+                // If we are at the beginning, stay at index 0.
+                // Once we pass 1024 samples, start sliding.
+                int windowStart = Math.max(0, replayPosition - psdWindowSize);
+
+                // Ensure we don't overrun the end of the list
+                if (windowStart + psdWindowSize > replayList.size()) {
+                    windowStart = replayList.size() - psdWindowSize;
+                }
+
+                for (int i = 0; i < psdWindowSize; i++) {
+                    psdWindow[i] = replayList.get(windowStart + i);
+                }
+
+                // Calculate PSD for THIS specific window
+                PowerSpectralDensityCalculator animatedPsdCalc = new PowerSpectralDensityCalculator(psdWindow, 1000);
+                double[] currentPsd = animatedPsdCalc.calculatePSD(psdWindow, 1000);
+
+                if (currentPsd != null) {
+                    float currentXpsd = 170;
+                    float xStepPsd = 2.0f;
+
+                    for (int i = 1; i < currentPsd.length; i++) {
+                        float nextXpsd = 170 + (i * xStepPsd);
+
+                        // Applying Y-scaling and offset
+                        float y1 = (float) (currentPsd[i - 1] * -1 + 3600) - 1695;
+                        float y2 = (float) (currentPsd[i] * -1 + 3600) - 1695;
+
+                        // Clamping to stay in the PSD box
+                        if (y1 < 1470) y1 = 1470;
+                        if (y2 < 1470) y2 = 1470;
+
+                        g.drawRedLine((int) currentXpsd, (int) y1, (int) nextXpsd, (int) y2, 0);
+
+                        currentXpsd = nextXpsd;
+                        if (currentXpsd >= 1600) break;
+                    }
                 }
             }
 
@@ -794,33 +828,21 @@ public class GameScreen extends Screen implements Input {
             br.close();
 
             if (!replayList.isEmpty()) {
-                // 1. Prepare raw data for math
                 double[] rawData = new double[replayList.size()];
                 for (int i = 0; i < replayList.size(); i++) {
                     rawData[i] = replayList.get(i);
                 }
 
-                // 2. Pre-calculate RMS for the replayed block
+                // Pre-calculate RMS for the whole block (this can stay static)
                 replayRMSArray = RMSCalculator.calculateMovingRMS(rawData, 10);
                 if (replayRMSArray != null) {
                     replayRMSArray = MovingAverageCalculator.calculateMovingAverage(replayRMSArray, 20);
                 }
 
-                // 3. Pre-calculate PSD for the replayed block
-                PowerSpectralDensityCalculator tempPsd = new PowerSpectralDensityCalculator(rawData, 1000);
-                double[] psdTemp = tempPsd.calculatePSD(rawData, 1000);
-                if (psdTemp != null) {
-                    replayPSDArray = new double[psdTemp.length];
-                    for (int j = 0; j < psdTemp.length; j++) {
-                        // Match the display scaling used in live mode
-                        replayPSDArray[j] = psdTemp[j] * -1 + 3600;
-                        if (replayPSDArray[j] < 3165) replayPSDArray[j] = 3165;
-                    }
-                }
-
+                // We do NOT pre-calculate replayPSDArray here anymore
                 isReplaying = true;
                 isRecording = false;
-                startRecording = 2; // Freeze timer
+                startRecording = 2;
                 if (view != null) view.postInvalidate();
             }
         } catch (Exception e) {
