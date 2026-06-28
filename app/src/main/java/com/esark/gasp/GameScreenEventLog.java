@@ -20,8 +20,8 @@ public class GameScreenEventLog extends Screen implements Input {
     private static final int ROWS = 16;
     private static final int MAX_CAPACITY = 64;
 
-    private static final int START_X = 90;
-    private static final int START_Y = 145;
+    private static final int START_X = 95;
+    private static final int START_Y = 165;
     private static final int BTN_W = 350;
     private static final int BTN_H = 100;
     private static final int SPACING_X = 50;
@@ -153,7 +153,7 @@ public class GameScreenEventLog extends Screen implements Input {
                     // Button width is 350. Text length is roughly 200px.
                     // (350 - 180) / 2 = ~85.
                     // x + 85 centers it horizontally. y + 68 centers it vertically.
-                    g.drawText(truncatedLabel, x + 85, y + 68);
+                    g.drawText(truncatedLabel, x + 42, y + 72);
                 }
             }
         }

@@ -193,7 +193,7 @@ public class GameScreen extends Screen implements Input {
             }
 
             TouchEvent event = touchEvents.get(i);
-            if (event.type == TouchEvent.TOUCH_DOWN) {
+            if (event.type == TouchEvent.TOUCH_DOWN || event.type == TouchEvent.TOUCH_DRAGGED) {
                 if (event.x > 1245 && event.x < 1715 && event.y > 2535 && event.y < 2735) {
                     //Back to Bluetooth Connect Screen      //Bluetooth Connect
                     Intent intent2 = new Intent(context.getApplicationContext(), GaspSemg.class);
