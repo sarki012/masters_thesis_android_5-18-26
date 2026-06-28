@@ -8,6 +8,7 @@ import java.io.InputStream;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.locks.LockSupport;
 
 public class ConnectedThread extends Thread {
@@ -26,60 +27,53 @@ public class ConnectedThread extends Thread {
     @Override
     public void run() {
         Process.setThreadPriority(Process.THREAD_PRIORITY_URGENT_AUDIO);
-        GameScreen.btStatus = "BT: Connected";
+        GameScreen.btStatus = "BT: Connected (Liquid Flow)";
 
-        byte[] buffer = new byte[1024];
+        byte[] buffer = new byte[2048];     //Was 2048
         final double[] jitterBuffer = new double[65536];
-        final int[] jWrite = {0};
-        int jRead = 0;
-        // Use volatile/Atomic for the count to ensure thread visibility
-        java.util.concurrent.atomic.AtomicInteger jCount = new java.util.concurrent.atomic.AtomicInteger(0);
+        final AtomicInteger jWrite = new AtomicInteger(0);
+        final AtomicInteger jRead = new AtomicInteger(0);
+        final AtomicInteger jCount = new AtomicInteger(0);
 
-        long startTimeNs = 0;
-        long totalSamplesReleased = 0;
-        final long NS_PER_SAMPLE = 1000000L; // 1ms
+        // --- CONSTANT TIMEBASE VARIABLES ---
+        final long BASE_INTERVAL_NS = 1000000L; // Rigid 1.0ms
+        long nextTickNs = 0;
+
+        // UI Redraw pacing (60Hz)
         long lastUiPingNs = 0;
-        final long UI_INTERVAL_NS = 16666666L; // 60Hz
+        final long UI_INTERVAL_NS = 16666666L;
 
-        // 1. DATA ACQUISITION SUB-THREAD
-        // We run the "Read" in a separate loop so it doesn't block the Metronome
+        // 1. DATA ACQUISITION SUB-THREAD (Drains BT Hardware)
         Thread rxThread = new Thread(() -> {
             while (!Thread.currentThread().isInterrupted()) {
                 try {
                     int bytesRead = mmInStream.read(buffer);
-                    if (bytesRead == -1) {
-                        // Connection closed gracefully by remote
-                        throw new IOException("End of stream reached");
-                    }
-                    if (bytesRead > 0) {
-                        for (int i = 0; i < bytesRead; i++) {
-                            int b = buffer[i] & 0xFF;
-                            if (b == 120) { expectingLowByte = false; continue; }
-                            if (!expectingLowByte) {
-                                tempHighByte = b;
-                                expectingLowByte = true;
-                            } else {
-                                double val = ((tempHighByte << 8) | b) / 3.0;
-                                expectingLowByte = false;
+                    if (bytesRead == -1) break;
+                    for (int i = 0; i < bytesRead; i++) {
+                        int b = buffer[i] & 0xFF;
+                        if (b == 120) { expectingLowByte = false; continue; }
+                        if (!expectingLowByte) {
+                            tempHighByte = b;
+                            expectingLowByte = true;
+                        } else {
+                            double val = ((tempHighByte << 8) | b) / 3.0;
+                            expectingLowByte = false;
 
-                                // Load Jitter Buffer
-                                int nextWrite = (jWrite[0] + 1) % jitterBuffer.length;
-                                jitterBuffer[jWrite[0]] = val;
-                                jWrite[0] = nextWrite;
-                                jCount.incrementAndGet();
+                            int w = jWrite.get();
+                            jitterBuffer[w] = val;
+                            jWrite.set((w + 1) % jitterBuffer.length);
+                            jCount.incrementAndGet();
 
-                                if (GameScreen.isRecording) {
-                                    synchronized (GameScreen.ramRecordBuffer) {
-                                        if (ramRecordBufferIdx < ramRecordBuffer.length) {
-                                            ramRecordBuffer[ramRecordBufferIdx++] = val;
-                                        }
+                            if (GameScreen.isRecording) {
+                                synchronized (GameScreen.ramRecordBuffer) {
+                                    if (ramRecordBufferIdx < ramRecordBuffer.length) {
+                                        ramRecordBuffer[ramRecordBufferIdx++] = val;
                                     }
                                 }
                             }
                         }
                     }
                 } catch (IOException e) {
-                    Log.e("BT_FATAL", "Disconnected during read: " + e.getMessage());
                     GameScreen.btStatus = "BT: Connection Lost";
                     break;
                 }
@@ -87,75 +81,104 @@ public class ConnectedThread extends Thread {
         });
         rxThread.start();
 
-        // 2. MAIN METRONOME LOOP (The "Drip" Engine)
+        // 2. MAIN PRECISION ENGINE (The "Drip" loop)
         while (!Thread.currentThread().isInterrupted()) {
-            // Check if RxThread died
             if (!rxThread.isAlive()) break;
 
-            if (startTimeNs == 0 && jCount.get() > 0) {
-                startTimeNs = System.nanoTime();
-                lastUiPingNs = startTimeNs;
-            }
+            int count = jCount.get();
+            long now = System.nanoTime();
 
-            if (startTimeNs > 0) {
-                long now = System.nanoTime();
-                long elapsedNs = now - startTimeNs;
-                long targetTotal = elapsedNs / NS_PER_SAMPLE;
+            if (count > 0) {
+                // Initialize master clock on first sample arrival
+                if (nextTickNs == 0) {
+                    nextTickNs = now;
+                    lastUiPingNs = now;
+                }
 
-                // Move data into the display array based on the CLOCK
-                while (totalSamplesReleased < targetTotal && jCount.get() > 0) {
-                    double sample = jitterBuffer[jRead];
-                    jRead = (jRead + 1) % jitterBuffer.length;
+                if (now >= nextTickNs) {
+                    // --- HARD SYNC / DISCARD LOGIC ---
+                    // If the buffer is backed up more than 250ms, the Bluetooth link is lagging.
+                    // Instead of speeding up (Accordion), we "Teleport" (Skip) to the newest data.
+                    if (count > 100) {      //Was 250
+                        int discard = count - 60; // Keep a 60ms cushion
+                        int r = jRead.get();
+                        jRead.set((r + discard) % jitterBuffer.length);
+                        jCount.addAndGet(-discard);
+                        count = jCount.get();
+                        Log.w("BT_SYNC", "Hard Skip: Discarded " + discard + "ms to prevent accordion.");
+                    }
+
+                    // --- ULTRA-GENTLE DRIFT CORRECTION ---
+                    // We target a 60-sample cushion.
+                    // We adjust the next tick by only 500 nanoseconds per sample of error.
+                    // This is a 0.05% correction. It is visually impossible to see frequency shift.
+                    int error = count - 60;
+                    long adjustment = error * 500L;
+
+                    // Cap adjustment so we never vary more than 1% speed
+                    if (adjustment > 10000L) adjustment = 10000L;
+                    if (adjustment < -10000L) adjustment = -10000L;
+
+                    // Release EXACTLY 1 sample
+                    int r = jRead.get();
+                    double sample = jitterBuffer[r];
+                    jRead.set((r + 1) % jitterBuffer.length);
                     jCount.decrementAndGet();
 
                     synchronized (A2DVal) {
                         System.arraycopy(A2DVal, 1, A2DVal, 0, signalBufferLen - 1);
                         A2DVal[signalBufferLen - 1] = sample;
                     }
-                    totalSamplesReleased++;
 
-                    // Redraw logic
+                    // Advance the clock by 1ms minus the tiny invisible correction
+                    nextTickNs += (BASE_INTERVAL_NS - adjustment);
+
+                    // UI Heartbeat (60Hz)
                     if (now - lastUiPingNs >= UI_INTERVAL_NS) {
                         if (GameScreen.view != null) {
                             GameScreen.view.postInvalidateOnAnimation();
                         }
                         lastUiPingNs = now;
                     }
-                }
-            }
 
-            // 3. MATH HAND-OFF
-            if (mathIsBusy.compareAndSet(false, true)) {
-                synchronized (A2DVal) {
-                    System.arraycopy(A2DVal, 0, a2dCopyForMath, 0, signalBufferLen);
-                }
-                mathExecutor.execute(() -> {
-                    try {
-                        PowerSpectralDensityCalculator psdCalc = new PowerSpectralDensityCalculator(a2dCopyForMath, 1000);
-                        double[] tempPsd = psdCalc.calculatePSD(a2dCopyForMath, 1000);
-                        if (tempPsd != null && psdResult != null) {
-                            int limit = Math.min(tempPsd.length, psdResult.length);
-                            for (int j = 0; j < limit; j++) {
-                                psdResult[j] = tempPsd[j] * -1 + 3600;
-                                if (psdResult[j] < 3165) psdResult[j] = 3165;
+                    // 3. MATH HANDOFF (PSD & RMS) - Kept exactly as provided
+                    if (mathIsBusy.compareAndSet(false, true)) {
+                        synchronized (A2DVal) {
+                            System.arraycopy(A2DVal, 0, a2dCopyForMath, 0, signalBufferLen);
+                        }
+                        mathExecutor.execute(() -> {
+                            try {
+                                PowerSpectralDensityCalculator psdCalc = new PowerSpectralDensityCalculator(a2dCopyForMath, 1000);
+                                double[] tempPsd = psdCalc.calculatePSD(a2dCopyForMath, 1000);
+                                if (tempPsd != null && psdResult != null) {
+                                    int psdLen = Math.min(tempPsd.length, psdResult.length);
+                                    for (int j = 0; j < psdLen; j++) {
+                                        psdResult[j] = tempPsd[j] * -1 + 3600;
+                                        if (psdResult[j] < 3165) psdResult[j] = 3165;
+                                    }
+                                }
+                                movingRMS = RMSCalculator.calculateMovingRMS(a2dCopyForMath, 10);
+                                if (movingRMS != null) {
+                                    smoothedRMS = MovingAverageCalculator.calculateMovingAverage(movingRMS, 20);
+                                }
+                            } catch (Exception e) {
+                                Log.e("MATH", "Error", e);
+                            } finally {
+                                mathIsBusy.set(false);
                             }
-                        }
-                        movingRMS = RMSCalculator.calculateMovingRMS(a2dCopyForMath, 10);
-                        if (movingRMS != null) {
-                            smoothedRMS = MovingAverageCalculator.calculateMovingAverage(movingRMS, 20);
-                        }
-                    } catch (Exception e) {
-                        Log.e("MATH_ERROR", "Error in PSD/RMS: " + e.getMessage());
-                    } finally {
-                        mathIsBusy.set(false);
+                        });
                     }
-                });
+                }
+            } else {
+                // If we ran out of data, don't let the clock run away.
+                // Reset nextTick to "now" to restart the rhythm smoothly.
+                nextTickNs = System.nanoTime() + BASE_INTERVAL_NS;
             }
 
-            // Tight yield to check the clock again
-            LockSupport.parkNanos(100000L); // 0.1ms
+            // Yield briefly to check the clock again
+            LockSupport.parkNanos(50000L); // 0.05ms
         }
-
         rxThread.interrupt();
+        mathExecutor.shutdownNow();
     }
 }
