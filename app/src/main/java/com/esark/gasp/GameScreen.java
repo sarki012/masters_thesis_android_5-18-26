@@ -591,9 +591,27 @@ public class GameScreen extends Screen implements Input {
             // --- PSD Drawing Logic ---
             float currentXpsd = 170;
             float xStepPsd = 2.0f;
+
+            // 1. VERTICAL SCALING: Reduced from 0.75f to 0.35f to stop spikes from clamping
+            float psdLiveGain = 0.1f;
+            float yLiveOffset = 1750.0f;
+
             for (int i = 1; i < psdResult.length; i++) {
                 float nextXpsd = 170 + (i * xStepPsd);
-                g.drawRedLine((int) currentXpsd, (int) psdResult[i - 1] - 1695, (int) nextXpsd, (int) psdResult[i] - 1695, 0);
+
+                float y1 = (float) (psdResult[i - 1] - yLiveOffset);
+                float y2 = (float) (psdResult[i] - yLiveOffset);
+
+                // 3. CLAMPING: Ceiling set to 1445 pixels as requested
+                if (y1 < 1445) y1 = 1445;
+                if (y1 > 1895) y1 = 1895;
+
+                if (y2 < 1445) y2 = 1445;
+                if (y2 > 1895) y2 = 1895;
+
+                g.drawRedLine((int) currentXpsd, (int) y1, (int) nextXpsd, (int) y2, 0);
+
+             // g.drawRedLine((int) currentXpsd, (int) psdResult[i - 1] - 1695, (int) nextXpsd, (int) psdResult[i] - 1695, 0);
                 currentXpsd = nextXpsd;
                 if (currentXpsd >= 1600) break;
             }

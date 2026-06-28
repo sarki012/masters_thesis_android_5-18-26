@@ -153,8 +153,7 @@ public class ConnectedThread extends Thread {
                                 if (tempPsd != null && psdResult != null) {
                                     int psdLen = Math.min(tempPsd.length, psdResult.length);
                                     for (int j = 0; j < psdLen; j++) {
-                                        psdResult[j] = tempPsd[j] * -1 + 3600;
-                                        if (psdResult[j] < 3165) psdResult[j] = 3165;
+                                        psdResult[j] = tempPsd[j] * -0.1 + 3650;
                                     }
                                 }
                                 movingRMS = RMSCalculator.calculateMovingRMS(a2dCopyForMath, 10);
