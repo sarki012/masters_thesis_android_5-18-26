@@ -481,7 +481,7 @@ public class GameScreen extends Screen implements Input {
 
         // 2. DRAW BLUETOOTH STATUS AT THE TOP
         // White text, centered at top (adjust 850/100 based on your font size)
-        g.drawText(btStatus, 600, 100);
+        g.drawMedText(btStatus, 100, 130);
 //        g.drawRect(1245, 2535, 470, 200, 0);       //Bluetooth Connect
         //     g.drawRect(45, 2000, 800, 100, 0);       //Start
         //   g.drawRect(910, 2000, 355, 100, 0);       //Stop
@@ -554,7 +554,7 @@ public class GameScreen extends Screen implements Input {
             int latestY = 0;
             if (smoothedRMS.length > 2) {
                 xStart = 1600;
-                int blueCenterY = 1400;
+                int blueCenterY = 1575;     //Was 1400
                 float rmsYScale = 0.5f;
 
                 for (int n = smoothedRMS.length - 1; n > 1; n--) {
@@ -607,7 +607,7 @@ public class GameScreen extends Screen implements Input {
         // 2. Constants
         final int xRight = 1600;
         final int xLeft = 165;
-        final float centerY = 440.0f;
+        final float centerY = 565.0f;
         final float gMult = 0.15f;
         final float base = 410.0f;
         int bufferIdx = 0;

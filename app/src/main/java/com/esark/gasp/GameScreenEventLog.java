@@ -20,8 +20,8 @@ public class GameScreenEventLog extends Screen implements Input {
     private static final int ROWS = 16;
     private static final int MAX_CAPACITY = 64;
 
-    private static final int START_X = 65;
-    private static final int START_Y = 120;
+    private static final int START_X = 90;
+    private static final int START_Y = 145;
     private static final int BTN_W = 350;
     private static final int BTN_H = 100;
     private static final int SPACING_X = 50;
@@ -114,7 +114,6 @@ public class GameScreenEventLog extends Screen implements Input {
         }
 
         // THREAD-SAFE DRAWING
-        // Capture a local copy of strings to prevent crash if background thread writes index 20
         String[] localLabels = new String[MAX_CAPACITY];
         int displayCount = 0;
 
@@ -144,8 +143,17 @@ public class GameScreenEventLog extends Screen implements Input {
 
                 g.drawEventLogButtonPixmap(Assets.eventLogButtonJpeg, x, y);
 
-                if (localLabels[i] != null) {
-                    g.drawText(localLabels[i], x + 70, y + 68);
+                String label = localLabels[i];
+                if (label != null && label.length() > 0) {
+                    // 1. TRUNCATE: Remove the right-most digit (the 3rd millisecond digit)
+                    // e.g., "00:00:000" becomes "00:00:00"
+                    String truncatedLabel = label.substring(0, label.length() - 1);
+
+                    // 2. CENTER: Adjust the offsets.
+                    // Button width is 350. Text length is roughly 200px.
+                    // (350 - 180) / 2 = ~85.
+                    // x + 85 centers it horizontally. y + 68 centers it vertically.
+                    g.drawText(truncatedLabel, x + 85, y + 68);
                 }
             }
         }
