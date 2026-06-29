@@ -18,6 +18,7 @@ public interface Graphics {
     public void drawBlackLine(int x, int y, int x2, int y2, int color);
 
     public void drawRedLine(int x, int y, int x2, int y2, int color);
+    public void drawGreenLine(int x, int y, int x2, int y2, int color);
     public void drawRect(int x, int y, int width, int height, int color);
 
   //  public void drawPixmap(Pixmap pixmap, int x, int y);

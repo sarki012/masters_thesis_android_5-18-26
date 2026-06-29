@@ -431,10 +431,30 @@ public class GameScreen extends Screen implements Input {
                     }
                 }
 
+                ////////////////// Home /////////////////////////////////////////////////////
+                else if (event.x > 25 && event.x < 675 && event.y > 2350 && event.y < 2530)
+                {
+                    // 1. Disable replay mode to return to live waveforms
+                    isReplaying = false;
+
+                    // 2. Reset replay-specific variables to free up memory
+                    replayPosition = 0;
+                    if (replayList != null) {
+                        replayList.clear();
+                    }
+
+                    // 3. Optional: Reset the timer to 0 so the user can start a new recording
+                    // Change startRecording to 0 to show "00:00:000"
+                    startRecording = 0;
+                    totalRecordingTime = 0;
+
+                    Log.d("HOME", "Returned to Live View");
+                }
+
                 if (rmsAmpThresh < 0) {
                     rmsAmpThresh = 0;
                 }
-
+                /////////////////////////////////////////////////////////////////////////
             } // This brace closes the if (TOUCH_DOWN || TOUCH_DRAGGED) block
 
             else if (event.type == TouchEvent.TOUCH_UP) {
@@ -502,6 +522,8 @@ public class GameScreen extends Screen implements Input {
         //  g.drawRect(1560, 2220, 155, 105, 0);       //Right Down Button
         //     g.drawRect(720, 2535, 470, 200, 0);       //Event Log
         //   g.drawRect(25, 2535, 650, 200, 0);       //Manual Patient Event
+        g.drawText("Home", 100, 2450);
+       // g.drawRect(25, 2350, 650, 180, 0);       //Home
 
         //   g.drawRect(725, 2400, 285, 150, 0);       //True Positive
         //  g.drawText("50", 880, 2480);    //True Positive Text
@@ -557,15 +579,15 @@ public class GameScreen extends Screen implements Input {
             int latestY = 0;
             if (smoothedRMS.length > 2) {
                 xStart = 1600;
-                int blueCenterY = 1575;     //Was 1400
-                float rmsYScale = 0.5f;
+                int blueCenterY = 1400;     //Was 1400
+                float rmsYScale = 1.5f;
 
                 for (int n = smoothedRMS.length - 1; n > 1; n--) {
                     int y1 = (int) (blueCenterY - smoothedRMS[n] * rmsYScale);
                     int y2 = (int) (blueCenterY - smoothedRMS[n - 1] * rmsYScale);
 
-                    thresholdY = (int) (1050 - (rmsAmpThresh * 2.0f));
-                    g.drawRedLine(155, thresholdY, 1590, thresholdY, 0);
+                    thresholdY = (int) (1200 - (rmsAmpThresh * 2.0f));
+                    g.drawGreenLine(155, thresholdY, 1590, thresholdY, 0);
 
                     if (y1 < 869) y1 = 869;
                     if (y1 > 1308) y1 = 1308;
@@ -662,8 +684,12 @@ public class GameScreen extends Screen implements Input {
                 int dataIdx = (signalBufferLen - 1) - n;
                 float yNext = centerY - ((float)drawingSnapshot[dataIdx] - base) * gMult;
 
-                if (yNext < 10) yNext = 10;
-                if (yNext > 880) yNext = 880;
+                // --- UPDATED CLAMPING ---
+                if (yNext < 222) yNext = 222; // Loosened ceiling
+                if (yNext > 680) yNext = 680; // Loosened floor
+
+              //  if (yNext < 10) yNext = 10;
+               // if (yNext > 880) yNext = 880;
 
                 lineBuffer[bufferIdx++] = (float)x1;
                 lineBuffer[bufferIdx++] = yLast;
@@ -691,8 +717,12 @@ public class GameScreen extends Screen implements Input {
                 int dataIdx = replayPosition - n;
                 if (dataIdx >= 0 && dataIdx < replayRawArray.length) {
                     float yNext = 500.0f - (float)((replayRawArray[dataIdx] - 410.0f) * 0.15f);
-                    if (yNext < 50) yNext = 50;
-                    if (yNext > 950) yNext = 950;
+                    // --- UPDATED CLAMPING ---
+                    if (yNext < 222) yNext = 222; // Loosened ceiling
+                    if (yNext > 680) yNext = 680; // Loosened floor
+
+                    //if (yNext < 50) yNext = 50;
+                   // if (yNext > 950) yNext = 950;
                     lineBuffer[bufferIdx++] = (float)x1;
                     lineBuffer[bufferIdx++] = yLast;
                     lineBuffer[bufferIdx++] = (float)x2;
@@ -705,10 +735,10 @@ public class GameScreen extends Screen implements Input {
 
             // --- 2. DRAW REPLAY RMS (BLUE LINE) ---
             if (replayRMSArray != null) {
-                final int blueCenterY = 1300;
-                final float rmsYScale = 0.3f;
-                int thresholdY = (int) (1050 - (rmsAmpThresh * 2.0f));
-                g.drawRedLine(165, thresholdY, 1600, thresholdY, 0);
+                final int blueCenterY = 1400;
+                final float rmsYScale = 1.5f;
+                int thresholdY = (int) (1200 - (rmsAmpThresh * 2.0f));
+                g.drawGreenLine(165, thresholdY, 1600, thresholdY, 0);
                 for (int n = 1; n < signalBufferLen; n++) {
                     int x1 = 1600 - (n - 1);
                     int x2 = 1600 - n;
@@ -849,16 +879,25 @@ public class GameScreen extends Screen implements Input {
             br.close();
 
             if (!replayList.isEmpty()) {
-                // FIX: Convert to primitive array ONCE here
+                // 1. Convert to primitive array
                 replayRawArray = new double[replayList.size()];
+                double sum = 0;
                 for (int i = 0; i < replayList.size(); i++) {
                     replayRawArray[i] = replayList.get(i);
+                    sum += replayRawArray[i];
                 }
 
-                // Pre-calculate RMS
-                replayRMSArray = RMSCalculator.calculateMovingRMS(replayRawArray, 10);
+                // 2. CALCULATE MEAN (Bipolar conversion)
+                double mean = sum / replayRawArray.length;
+                double[] bipolarReplay = new double[replayRawArray.length];
+                for (int i = 0; i < replayRawArray.length; i++) {
+                    bipolarReplay[i] = replayRawArray[i] - mean;
+                }
+
+                // 3. MATCH REAL-TIME WINDOWS: RMS=40, Average=80
+                replayRMSArray = RMSCalculator.calculateMovingRMS(bipolarReplay, 40);
                 if (replayRMSArray != null) {
-                    replayRMSArray = MovingAverageCalculator.calculateMovingAverage(replayRMSArray, 20);
+                    replayRMSArray = MovingAverageCalculator.calculateMovingAverage(replayRMSArray, 80);
                 }
 
                 isReplaying = true;

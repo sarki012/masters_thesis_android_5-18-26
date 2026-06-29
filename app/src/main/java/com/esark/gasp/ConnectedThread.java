@@ -27,6 +27,8 @@ public class ConnectedThread extends Thread {
     @Override
     public void run() {
         Process.setThreadPriority(Process.THREAD_PRIORITY_URGENT_AUDIO);
+        NotchFilter filter60Hz = new NotchFilter();
+        Process.setThreadPriority(Process.THREAD_PRIORITY_URGENT_AUDIO);
         GameScreen.btStatus = "BT: Connected (Liquid Discrete)";
 
         byte[] buffer = new byte[2048];
@@ -57,8 +59,12 @@ public class ConnectedThread extends Thread {
                             tempHighByte = b;
                             expectingLowByte = true;
                         } else {
-                            double val = ((tempHighByte << 8) | b) / 3.0;
+                            double rawVal = ((tempHighByte << 8) | b) / 3.0;
                             expectingLowByte = false;
+                            // --- APPLY NOTCH FILTER HERE ---
+                            double val = filter60Hz.filter(rawVal);
+                            // -------------------------------
+
                             int w = jWrite.get();
                             jitterBuffer[w] = val;
                             jWrite.set((w + 1) % jitterBuffer.length);
@@ -153,12 +159,28 @@ public class ConnectedThread extends Thread {
                                 if (tempPsd != null && psdResult != null) {
                                     int psdLen = Math.min(tempPsd.length, psdResult.length);
                                     for (int j = 0; j < psdLen; j++) {
-                                        psdResult[j] = tempPsd[j] * -0.1 + 3650;
+                                        psdResult[j] = tempPsd[j] * -0.6 + 3650;
                                     }
                                 }
-                                movingRMS = RMSCalculator.calculateMovingRMS(a2dCopyForMath, 10);
+                                // --- 1. CALCULATE MEAN (DC OFFSET) ---
+                                double sum = 0;
+                                for (int i = 0; i < a2dCopyForMath.length; i++) {
+                                    sum += a2dCopyForMath[i];
+                                }
+                                double mean = sum / a2dCopyForMath.length;
+
+                                // --- 2. CONVERT TO BIPOLAR (REMOVE MEAN) ---
+                                double[] bipolarData = new double[a2dCopyForMath.length];
+                                for (int i = 0; i < a2dCopyForMath.length; i++) {
+                                    bipolarData[i] = a2dCopyForMath[i] - mean;
+                                }
+
+                                // --- 3. CALCULATE RMS ON BIPOLAR SIGNAL ---
+                                // Using the zero-centered data ensures the RMS reflects
+                                // only the actual signal power/artifact.
+                                movingRMS = RMSCalculator.calculateMovingRMS(bipolarData, 40);
                                 if (movingRMS != null) {
-                                    smoothedRMS = MovingAverageCalculator.calculateMovingAverage(movingRMS, 20);
+                                    smoothedRMS = MovingAverageCalculator.calculateMovingAverage(movingRMS, 80);
                                 }
                             } catch (Exception e) {
                                 Log.e("MATH", "Error", e);
