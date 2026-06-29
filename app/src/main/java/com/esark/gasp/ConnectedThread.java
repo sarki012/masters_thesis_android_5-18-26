@@ -27,7 +27,7 @@ public class ConnectedThread extends Thread {
     @Override
     public void run() {
         Process.setThreadPriority(Process.THREAD_PRIORITY_URGENT_AUDIO);
-        GameScreen.btStatus = "BT: Connected (Zero-Loss Mode)";
+        GameScreen.btStatus = "BT: Connected (Fixed Period Mode)";
 
         byte[] buffer = new byte[2048];
         final double[] jitterBuffer = new double[65536];
@@ -35,15 +35,15 @@ public class ConnectedThread extends Thread {
         final AtomicInteger jRead = new AtomicInteger(0);
         final AtomicInteger jCount = new AtomicInteger(0);
 
-        // --- CONSTANT TIMEBASE VARIABLES ---
-        final long BASE_INTERVAL_NS = 1000000L; // 1.0ms Target
+        // --- RIGID TIMEBASE VARIABLES ---
+        final long NS_PER_SAMPLE = 1000000L; // Rigid 1.0ms
         long nextTickNs = 0;
 
         // UI Redraw pacing (60Hz)
         long lastUiPingNs = 0;
         final long UI_INTERVAL_NS = 16666666L;
 
-        // 1. DATA ACQUISITION SUB-THREAD (Drains BT Hardware)
+        // 1. DATA ACQUISITION SUB-THREAD
         Thread rxThread = new Thread(() -> {
             while (!Thread.currentThread().isInterrupted()) {
                 try {
@@ -81,7 +81,7 @@ public class ConnectedThread extends Thread {
         });
         rxThread.start();
 
-        // 2. MAIN PRECISION ENGINE (The "Drip" loop)
+        // 2. MAIN PRECISION ENGINE (Discrete Step Drip)
         while (!Thread.currentThread().isInterrupted()) {
             if (!rxThread.isAlive()) break;
 
@@ -89,47 +89,46 @@ public class ConnectedThread extends Thread {
             long now = System.nanoTime();
 
             if (count > 0) {
-                // Initialize master clock on first sample arrival
                 if (nextTickNs == 0) {
                     nextTickNs = now;
                     lastUiPingNs = now;
                 }
 
+                // If it's time to process the 1ms "Tick"
                 if (now >= nextTickNs) {
-                    // --- VARIABLE DRIP RATE (CATCH-UP WITHOUT DISCARD) ---
-                    // Instead of discarding, we shorten the wait time to "fast forward"
-                    // Target cushion = 60 samples
-                    int error = count - 60;
 
-                    // Adjustment gain: 2000ns per sample error.
-                    // If buffer has 160 samples (100 sample error), it speeds up by 200,000ns.
-                    // The drip becomes 0.8ms, clearing the backlog in ~0.5 seconds.
-                    // --- REFINED PI-CONTROL (Cruise Control) ---
-                    // Target: 60 samples.
-                    // Error Multiplier: 5000ns (5 microseconds) per sample of error.
-                    // If we are 40 samples over (100 total), we speed up by 200,000ns (0.2ms).
-                    long adjustment = error * 5000L;
+                    // --- THE ANTI-ACCORDION LOGIC ---
+                    // We keep the drip interval EXACTLY at 1.000ms.
+                    // We only change HOW MANY samples we release in that 1ms.
+                    int samplesToRelease = 1;
 
-                    // CAP: Max speedup/slowdown is 10% (100,000ns).
-                    // A 10% change in frequency is almost invisible to the human eye,
-                    // preventing the "stretching/compressing" rubber band look.
-                    if (adjustment > 100000L) adjustment = 100000L;
-                    if (adjustment < -100000L) adjustment = -100000L;
-
-
-                    // Release EXACTLY 1 sample
-                    int r = jRead.get();
-                    double sample = jitterBuffer[r];
-                    jRead.set((r + 1) % jitterBuffer.length);
-                    jCount.decrementAndGet();
-
-                    synchronized (A2DVal) {
-                        System.arraycopy(A2DVal, 1, A2DVal, 0, signalBufferLen - 1);
-                        A2DVal[signalBufferLen - 1] = sample;
+                    if (count > 100) {
+                        // Buffer is getting full (Android Bluetooth burst).
+                        // Release 2 samples instantly to catch up 1ms.
+                        samplesToRelease = 2;
+                    } else if (count < 30) {
+                        // Buffer is running low.
+                        // Release 0 samples this tick to let the buffer refill.
+                        samplesToRelease = 0;
                     }
 
-                    // Advance the clock by (1ms - adjustment)
-                    nextTickNs += (BASE_INTERVAL_NS - adjustment);
+                    for (int s = 0; s < samplesToRelease; s++) {
+                        if (jCount.get() > 0) {
+                            int r = jRead.get();
+                            double sample = jitterBuffer[r];
+                            jRead.set((r + 1) % jitterBuffer.length);
+                            jCount.decrementAndGet();
+
+                            synchronized (A2DVal) {
+                                System.arraycopy(A2DVal, 1, A2DVal, 0, signalBufferLen - 1);
+                                A2DVal[signalBufferLen - 1] = sample;
+                            }
+                        }
+                    }
+
+                    // Advance clock by exactly 1.0ms.
+                    // No "adjustment" math here ensures the period never stretches or compresses.
+                    nextTickNs += NS_PER_SAMPLE;
 
                     // UI Heartbeat (60Hz)
                     if (now - lastUiPingNs >= UI_INTERVAL_NS) {
@@ -139,7 +138,7 @@ public class ConnectedThread extends Thread {
                         lastUiPingNs = now;
                     }
 
-                    // 3. MATH HANDOFF (PSD & RMS) - Optimized Background Execution
+                    // 3. MATH HANDOFF (PSD & RMS) - Preserved
                     if (mathIsBusy.compareAndSet(false, true)) {
                         synchronized (A2DVal) {
                             System.arraycopy(A2DVal, 0, a2dCopyForMath, 0, signalBufferLen);
@@ -151,7 +150,6 @@ public class ConnectedThread extends Thread {
                                 if (tempPsd != null && psdResult != null) {
                                     int psdLen = Math.min(tempPsd.length, psdResult.length);
                                     for (int j = 0; j < psdLen; j++) {
-                                        // Keep your specific scaling
                                         psdResult[j] = tempPsd[j] * -0.1 + 3650;
                                     }
                                 }
@@ -168,11 +166,11 @@ public class ConnectedThread extends Thread {
                     }
                 }
             } else {
-                // If we ran out of data, reset nextTick to "now" to avoid sudden speed jumps later
-                nextTickNs = System.nanoTime() + BASE_INTERVAL_NS;
+                // Buffer empty? Reset clock to current time to prevent a "catch-up burst" later
+                nextTickNs = System.nanoTime() + NS_PER_SAMPLE;
             }
 
-            // Yield briefly to keep loop timing tight (50us)
+            // Yield briefly (50us) to keep loop responsive
             LockSupport.parkNanos(50000L);
         }
         rxThread.interrupt();
