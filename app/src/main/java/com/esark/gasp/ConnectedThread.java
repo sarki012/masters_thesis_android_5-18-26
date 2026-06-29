@@ -104,12 +104,18 @@ public class ConnectedThread extends Thread {
                     // Adjustment gain: 2000ns per sample error.
                     // If buffer has 160 samples (100 sample error), it speeds up by 200,000ns.
                     // The drip becomes 0.8ms, clearing the backlog in ~0.5 seconds.
-                    long adjustment = error * 2000L;
+                    // --- REFINED PI-CONTROL (Cruise Control) ---
+                    // Target: 60 samples.
+                    // Error Multiplier: 5000ns (5 microseconds) per sample of error.
+                    // If we are 40 samples over (100 total), we speed up by 200,000ns (0.2ms).
+                    long adjustment = error * 5000L;
 
-                    // CAP: Max speedup is 30% (700,000ns), Max slowdown is 10% (1,100,000ns)
-                    // Capping prevents the "accordion" from being too jarring
-                    if (adjustment > 300000L) adjustment = 300000L;
+                    // CAP: Max speedup/slowdown is 10% (100,000ns).
+                    // A 10% change in frequency is almost invisible to the human eye,
+                    // preventing the "stretching/compressing" rubber band look.
+                    if (adjustment > 100000L) adjustment = 100000L;
                     if (adjustment < -100000L) adjustment = -100000L;
+
 
                     // Release EXACTLY 1 sample
                     int r = jRead.get();
