@@ -27,7 +27,7 @@ public class ConnectedThread extends Thread {
     @Override
     public void run() {
         Process.setThreadPriority(Process.THREAD_PRIORITY_URGENT_AUDIO);
-        GameScreen.btStatus = "BT: Connected (Fixed Period Mode)";
+        GameScreen.btStatus = "BT: Connected (Liquid Discrete)";
 
         byte[] buffer = new byte[2048];
         final double[] jitterBuffer = new double[65536];
@@ -36,14 +36,15 @@ public class ConnectedThread extends Thread {
         final AtomicInteger jCount = new AtomicInteger(0);
 
         // --- RIGID TIMEBASE VARIABLES ---
-        final long NS_PER_SAMPLE = 1000000L; // Rigid 1.0ms
+        final long NS_PER_SAMPLE = 1000000L; // 1.0ms
         long nextTickNs = 0;
+        long tickCounter = 0; // NEW: Used for smoothing the steps
 
         // UI Redraw pacing (60Hz)
         long lastUiPingNs = 0;
         final long UI_INTERVAL_NS = 16666666L;
 
-        // 1. DATA ACQUISITION SUB-THREAD
+        // 1. DATA ACQUISITION SUB-THREAD (Unchanged)
         Thread rxThread = new Thread(() -> {
             while (!Thread.currentThread().isInterrupted()) {
                 try {
@@ -58,12 +59,10 @@ public class ConnectedThread extends Thread {
                         } else {
                             double val = ((tempHighByte << 8) | b) / 3.0;
                             expectingLowByte = false;
-
                             int w = jWrite.get();
                             jitterBuffer[w] = val;
                             jWrite.set((w + 1) % jitterBuffer.length);
                             jCount.incrementAndGet();
-
                             if (GameScreen.isRecording) {
                                 synchronized (GameScreen.ramRecordBuffer) {
                                     if (ramRecordBufferIdx < ramRecordBuffer.length) {
@@ -81,7 +80,7 @@ public class ConnectedThread extends Thread {
         });
         rxThread.start();
 
-        // 2. MAIN PRECISION ENGINE (Discrete Step Drip)
+        // 2. MAIN PRECISION ENGINE (Dampened Discrete Step)
         while (!Thread.currentThread().isInterrupted()) {
             if (!rxThread.isAlive()) break;
 
@@ -94,24 +93,29 @@ public class ConnectedThread extends Thread {
                     lastUiPingNs = now;
                 }
 
-                // If it's time to process the 1ms "Tick"
                 if (now >= nextTickNs) {
+                    tickCounter++;
 
-                    // --- THE ANTI-ACCORDION LOGIC ---
-                    // We keep the drip interval EXACTLY at 1.000ms.
-                    // We only change HOW MANY samples we release in that 1ms.
+                    // --- THE LIQUID DISCRETE LOGIC ---
+                    // We target a buffer of 80 samples.
+                    // Instead of a hard "jump" to 2 samples, we distribute the catch-up.
                     int samplesToRelease = 1;
 
-                    if (count > 100) {
-                        // Buffer is getting full (Android Bluetooth burst).
-                        // Release 2 samples instantly to catch up 1ms.
-                        samplesToRelease = 2;
-                    } else if (count < 30) {
-                        // Buffer is running low.
-                        // Release 0 samples this tick to let the buffer refill.
-                        samplesToRelease = 0;
+                    if (count > 120) {      //Was 120
+                        // Buffer is too full. Catch up by releasing an extra sample
+                        // ONLY once every 5 ticks. This spreads the "jerk" out.
+                        if (tickCounter % 5 == 0) {     //Was 5
+                            samplesToRelease = 4;       //Was 2
+                        }
+                    } else if (count < 20) {
+                        // Buffer is too low. Slow down by skipping a sample
+                        // ONLY once every 5 ticks.
+                        if (tickCounter % 5 == 0) {
+                            samplesToRelease = 0;
+                        }
                     }
 
+                    // Process the samples
                     for (int s = 0; s < samplesToRelease; s++) {
                         if (jCount.get() > 0) {
                             int r = jRead.get();
@@ -126,11 +130,10 @@ public class ConnectedThread extends Thread {
                         }
                     }
 
-                    // Advance clock by exactly 1.0ms.
-                    // No "adjustment" math here ensures the period never stretches or compresses.
+                    // Advance clock by exactly 1.0ms
                     nextTickNs += NS_PER_SAMPLE;
 
-                    // UI Heartbeat (60Hz)
+                    // UI Redraw at 60Hz
                     if (now - lastUiPingNs >= UI_INTERVAL_NS) {
                         if (GameScreen.view != null) {
                             GameScreen.view.postInvalidateOnAnimation();
@@ -166,12 +169,11 @@ public class ConnectedThread extends Thread {
                     }
                 }
             } else {
-                // Buffer empty? Reset clock to current time to prevent a "catch-up burst" later
                 nextTickNs = System.nanoTime() + NS_PER_SAMPLE;
             }
 
-            // Yield briefly (50us) to keep loop responsive
-            LockSupport.parkNanos(50000L);
+            // Yield briefly (20us) to keep loop ultra-tight for smoothness
+            LockSupport.parkNanos(20000L);
         }
         rxThread.interrupt();
         mathExecutor.shutdownNow();
