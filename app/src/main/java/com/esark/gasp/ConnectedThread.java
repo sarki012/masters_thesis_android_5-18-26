@@ -27,16 +27,16 @@ public class ConnectedThread extends Thread {
     @Override
     public void run() {
         Process.setThreadPriority(Process.THREAD_PRIORITY_URGENT_AUDIO);
-        GameScreen.btStatus = "BT: Connected (Liquid Flow)";
+        GameScreen.btStatus = "BT: Connected (Zero-Loss Mode)";
 
-        byte[] buffer = new byte[2048];     //Was 2048
+        byte[] buffer = new byte[2048];
         final double[] jitterBuffer = new double[65536];
         final AtomicInteger jWrite = new AtomicInteger(0);
         final AtomicInteger jRead = new AtomicInteger(0);
         final AtomicInteger jCount = new AtomicInteger(0);
 
         // --- CONSTANT TIMEBASE VARIABLES ---
-        final long BASE_INTERVAL_NS = 1000000L; // Rigid 1.0ms
+        final long BASE_INTERVAL_NS = 1000000L; // 1.0ms Target
         long nextTickNs = 0;
 
         // UI Redraw pacing (60Hz)
@@ -96,28 +96,20 @@ public class ConnectedThread extends Thread {
                 }
 
                 if (now >= nextTickNs) {
-                    // --- HARD SYNC / DISCARD LOGIC ---
-                    // If the buffer is backed up more than 250ms, the Bluetooth link is lagging.
-                    // Instead of speeding up (Accordion), we "Teleport" (Skip) to the newest data.
-                    if (count > 100) {      //Was 250
-                        int discard = count - 60; // Keep a 60ms cushion
-                        int r = jRead.get();
-                        jRead.set((r + discard) % jitterBuffer.length);
-                        jCount.addAndGet(-discard);
-                        count = jCount.get();
-                        Log.w("BT_SYNC", "Hard Skip: Discarded " + discard + "ms to prevent accordion.");
-                    }
-
-                    // --- ULTRA-GENTLE DRIFT CORRECTION ---
-                    // We target a 60-sample cushion.
-                    // We adjust the next tick by only 500 nanoseconds per sample of error.
-                    // This is a 0.05% correction. It is visually impossible to see frequency shift.
+                    // --- VARIABLE DRIP RATE (CATCH-UP WITHOUT DISCARD) ---
+                    // Instead of discarding, we shorten the wait time to "fast forward"
+                    // Target cushion = 60 samples
                     int error = count - 60;
-                    long adjustment = error * 500L;
 
-                    // Cap adjustment so we never vary more than 1% speed
-                    if (adjustment > 10000L) adjustment = 10000L;
-                    if (adjustment < -10000L) adjustment = -10000L;
+                    // Adjustment gain: 2000ns per sample error.
+                    // If buffer has 160 samples (100 sample error), it speeds up by 200,000ns.
+                    // The drip becomes 0.8ms, clearing the backlog in ~0.5 seconds.
+                    long adjustment = error * 2000L;
+
+                    // CAP: Max speedup is 30% (700,000ns), Max slowdown is 10% (1,100,000ns)
+                    // Capping prevents the "accordion" from being too jarring
+                    if (adjustment > 300000L) adjustment = 300000L;
+                    if (adjustment < -100000L) adjustment = -100000L;
 
                     // Release EXACTLY 1 sample
                     int r = jRead.get();
@@ -130,7 +122,7 @@ public class ConnectedThread extends Thread {
                         A2DVal[signalBufferLen - 1] = sample;
                     }
 
-                    // Advance the clock by 1ms minus the tiny invisible correction
+                    // Advance the clock by (1ms - adjustment)
                     nextTickNs += (BASE_INTERVAL_NS - adjustment);
 
                     // UI Heartbeat (60Hz)
@@ -141,7 +133,7 @@ public class ConnectedThread extends Thread {
                         lastUiPingNs = now;
                     }
 
-                    // 3. MATH HANDOFF (PSD & RMS) - Kept exactly as provided
+                    // 3. MATH HANDOFF (PSD & RMS) - Optimized Background Execution
                     if (mathIsBusy.compareAndSet(false, true)) {
                         synchronized (A2DVal) {
                             System.arraycopy(A2DVal, 0, a2dCopyForMath, 0, signalBufferLen);
@@ -153,6 +145,7 @@ public class ConnectedThread extends Thread {
                                 if (tempPsd != null && psdResult != null) {
                                     int psdLen = Math.min(tempPsd.length, psdResult.length);
                                     for (int j = 0; j < psdLen; j++) {
+                                        // Keep your specific scaling
                                         psdResult[j] = tempPsd[j] * -0.1 + 3650;
                                     }
                                 }
@@ -169,13 +162,12 @@ public class ConnectedThread extends Thread {
                     }
                 }
             } else {
-                // If we ran out of data, don't let the clock run away.
-                // Reset nextTick to "now" to restart the rhythm smoothly.
+                // If we ran out of data, reset nextTick to "now" to avoid sudden speed jumps later
                 nextTickNs = System.nanoTime() + BASE_INTERVAL_NS;
             }
 
-            // Yield briefly to check the clock again
-            LockSupport.parkNanos(50000L); // 0.05ms
+            // Yield briefly to keep loop timing tight (50us)
+            LockSupport.parkNanos(50000L);
         }
         rxThread.interrupt();
         mathExecutor.shutdownNow();
