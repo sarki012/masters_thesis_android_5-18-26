@@ -101,13 +101,13 @@ public class ConnectedThread extends Thread {
                     // Instead of a hard "jump" to 2 samples, we distribute the catch-up.
                     int samplesToRelease = 1;
 
-                    if (count > 80) {      //Was 120
+                    if (count > 120) {      //Was 120
                         // Buffer is too full. Catch up by releasing an extra sample
                         // ONLY once every 5 ticks. This spreads the "jerk" out.
                         if (tickCounter % 5 == 0) {     //Was 5
-                            samplesToRelease = 2;       //Was 2
+                            samplesToRelease = 4;       //Was 2
                         }
-                    } else if (count < 40) {
+                    } else if (count < 20) {
                         // Buffer is too low. Slow down by skipping a sample
                         // ONLY once every 5 ticks.
                         if (tickCounter % 5 == 0) {
