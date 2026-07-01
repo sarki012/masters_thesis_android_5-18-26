@@ -468,31 +468,6 @@ public class GameScreen extends Screen implements Input {
         } // This brace closes the for-loop
 
         //   if(landscape == 0) {
-
-
-
-
-
-
-
-        //////////////////// RMS Threshold to Trigger Event //////////////////////////////////
-        if (rmsThresholdTouch == 0) {
-            g.drawText("95", 395, 2235);    //Manual RMS Height Above Threshold Text
-        } else if (rmsThresholdTouch == 1) {
-            String rmsAmpThreshStr = String.valueOf(rmsAmpThresh);
-            g.drawText(rmsAmpThreshStr, 395, 2235);    //Manual RMS Height Above Threshold Text
-
-        }
-
-        //////////////////////////////////////////////////////////////////////////////////////
-
-        //////////////////// Manual RMS Width Above Threshold to Trigger Event //////////////////////
-        if (rmsWidthThresh == 0) {
-            g.drawText("0", 1330, 2235);    //Manual RMS Height Above Threshold Text
-        } else if (rmsWidthThresh == 1) {
-            String rmsWidthThreshStr = String.valueOf(rmsWidthThresh);
-            g.drawText(rmsWidthThreshStr, 1330, 2235);    //Manual RMS Height Above Threshold Text
-        }
     }
     ///////////////////////////////////////////////////////////////////////////////////
 
@@ -535,7 +510,24 @@ public class GameScreen extends Screen implements Input {
         //   g.drawRect(1600, 1330, 100, 270, 0);       //Start/Stop Save a Sample
         //  g.drawRect(1600, 1610, 100, 310, 0);       //Replay
 
+        //////////////////// RMS Threshold to Trigger Event //////////////////////////////////
+        if (rmsThresholdTouch == 0) {
+            g.drawText("95", 375, 2235);    //Manual RMS Height Above Threshold Text
+        } else if (rmsThresholdTouch == 1) {
+            String rmsAmpThreshStr = String.valueOf(rmsAmpThresh);
+            g.drawText(rmsAmpThreshStr, 375, 2235);    //Manual RMS Height Above Threshold Text
 
+        }
+
+        //////////////////////////////////////////////////////////////////////////////////////
+
+        //////////////////// Manual RMS Width Above Threshold to Trigger Event //////////////////////
+        if (rmsWidthThresh == 0) {
+            g.drawText("0", 1330, 2235);    //Manual RMS Width Above Threshold Text
+        } else if (rmsWidthThresh == 1) {
+            String rmsWidthThreshStr = String.valueOf(rmsWidthThresh);
+            g.drawText(rmsWidthThreshStr, 1330, 2235);    //Manual RMS Width Above Threshold Text
+        }
 
         String eventCountStr = String.valueOf(eventCount);
         g.drawText(eventCountStr, 570, 2660);
