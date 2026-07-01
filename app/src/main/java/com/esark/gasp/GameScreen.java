@@ -497,7 +497,7 @@ public class GameScreen extends Screen implements Input {
         //  g.drawRect(1560, 2220, 155, 105, 0);       //Right Down Button
         //     g.drawRect(720, 2535, 470, 200, 0);       //Event Log
         //   g.drawRect(25, 2535, 650, 200, 0);       //Manual Patient Event
-        g.drawText("Home", 100, 2450);
+      //  g.drawText("Home", 100, 2450);
        // g.drawRect(25, 2350, 650, 180, 0);       //Home
 
         //   g.drawRect(725, 2400, 285, 150, 0);       //True Positive
