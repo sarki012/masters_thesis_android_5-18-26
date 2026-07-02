@@ -159,7 +159,7 @@ public class ConnectedThread extends Thread {
                                 if (tempPsd != null && psdResult != null) {
                                     int psdLen = Math.min(tempPsd.length, psdResult.length);
                                     for (int j = 0; j < psdLen; j++) {
-                                        psdResult[j] = tempPsd[j] * -0.6 + 3650;
+                                        psdResult[j] = tempPsd[j] * -4 + 3650;
                                     }
                                 }
                                 // --- 1. CALCULATE MEAN (DC OFFSET) ---
@@ -180,6 +180,12 @@ public class ConnectedThread extends Thread {
                                 // only the actual signal power/artifact.
                                 movingRMS = RMSCalculator.calculateMovingRMS(bipolarData, 40);
                                 if (movingRMS != null) {
+                                    // --- NEW: INCREASE RMS SCALE ---
+                                    // Multiplying by 8.0 (or higher) boosts the small bipolar values
+                                    // so the drawing engine can see the "spikes" clearly.
+                                    for (int k = 0; k < movingRMS.length; k++) {
+                                        movingRMS[k] *= 1.75;
+                                    }
                                     smoothedRMS = MovingAverageCalculator.calculateMovingAverage(movingRMS, 80);
                                 }
                             } catch (Exception e) {
