@@ -143,6 +143,8 @@ public class GameScreen extends Screen implements Input {
     public static double[] replayRMSArray;
     public static double[] replayPSDArray;
     public static double[] replayRawArray; // Add this
+    private double lastCalculatedArea = 0; // Stores the area of the most recent burst
+    private double stableAreaValue = 0; // Persistent storage for the area
     // Constructor
     public GameScreen(Game game) {
         super(game);
@@ -214,6 +216,7 @@ public class GameScreen extends Screen implements Input {
                         isRecording = true;
                         isReplaying = false;
                         Log.d("RECORD", "Recording Started");
+                        stableAreaValue = 0;
                     }
                 }
                 //////////////////// Stop Recording Button (Red Button) ////////////////////////////////////////////////
@@ -585,34 +588,62 @@ public class GameScreen extends Screen implements Input {
                     if (xLine <= xLeftLimit) break;
                 }
 
-                // --- Calculate Area of Rightmost Yellow Region ---
-                double areaSum = 0;
-                boolean regionFound = false;
-                double a2dToMvFactor = 3.22; // Conversion: (3300mV / 1024 units)
+                // --- ROBUST AREA CALCULATION (Falling-Edge Trigger) ---
+                double a2dToMvFactor = 3.22;
+                int n = smoothedRMS.length - 1;
 
-                // Scan backwards from the most recent sample
-                for (int n = smoothedRMS.length - 1; n > 0; n--) {
-                    // Check if this sample is above the threshold
-                    // (Note: thresholdY in pixels is inverted, so smoothedRMS[n] > rmsAmpThresh)
-                    if (smoothedRMS[n] > rmsAmpThresh) {
-                        regionFound = true;
-                        // Sum the RMS value converted to mV
-                        areaSum += (smoothedRMS[n] * a2dToMvFactor);
-                    } else {
-                        // If we were in a region and just hit the end of it, stop calculating
-                        if (regionFound) {
-                            break;
+                // PHASE 1: Find the first "Gap" (Falling Edge)
+                // We move backward from the right edge to skip any burst currently sliding in.
+                while (n >= 0 && smoothedRMS[n] > rmsAmpThresh) {
+                    n--;
+                }
+
+                // FALLBACK: If n == -1, the entire screen is yellow (Threshold is too low).
+                // We calculate the visible area so the number isn't "stuck."
+                if (n == -1) {
+                    double totalVisibleSum = 0;
+                    for (double val : smoothedRMS) {
+                        totalVisibleSum += (val * a2dToMvFactor);
+                    }
+                    stableAreaValue = totalVisibleSum * 0.001;
+                } else {
+                    // PHASE 2: We found a gap. Now move backward to find the "Tail"
+                    // of the most recent island that has COMPLETELY finished entering.
+                    while (n >= 0 && smoothedRMS[n] <= rmsAmpThresh) {
+                        n--;
+                    }
+
+                    // PHASE 3: If n >= 0, we are at the end of a completed burst.
+                    if (n >= 0) {
+                        double islandSum = 0;
+                        int islandWidth = 0;
+                        // Sum only this specific contiguous island
+                        while (n >= 0 && smoothedRMS[n] > rmsAmpThresh) {
+                            islandSum += (smoothedRMS[n] * a2dToMvFactor);
+                            islandWidth++;
+                            n--;
+
+                            // Internal Hysteresis: allow tiny 3ms drops within a burst
+                            // (Prevents noise from splitting one spasm into two)
+                            if (n >= 3 && smoothedRMS[n] <= rmsAmpThresh) {
+                                if (smoothedRMS[n-1] > rmsAmpThresh || smoothedRMS[n-2] > rmsAmpThresh) {
+                                    continue;
+                                }
+                            }
+                        }
+
+                        // PHASE 4: Update display ONLY if the burst meets the width filter
+                        if (islandWidth >= rmsWidthThresh) {
+                            stableAreaValue = islandSum * 0.001;
                         }
                     }
                 }
 
-                // Convert sum of mV to mV*S (Sum * 0.001 seconds per sample)
-                double finalArea = areaSum * 0.001;
+                // Draw the result using the persistent variable
+                String areaText1 = "Area of Incoming Yellow";
+                String areaText2 = String.format("Shaded Region: %.1f", stableAreaValue);
+                String areaText3 = "mV*S";
 
-                // Draw the result
-                String areaText1 = String.format("Area of Incoming Yellow");
-                String areaText2 = String.format("Shaded Region: %.1f", finalArea);
-                String areaText3 = String.format("mV*S");
                 g.drawSmallText(areaText1, 1280, 760);
                 g.drawSmallText(areaText2, 1280, 805);
                 g.drawSmallText(areaText3, 1650, 805);
