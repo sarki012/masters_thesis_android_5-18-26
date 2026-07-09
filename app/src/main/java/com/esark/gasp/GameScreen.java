@@ -559,77 +559,77 @@ public class GameScreen extends Screen implements Input {
         // --- LIVE RMS & PSD (Only shows when NOT replaying) ---
         if (!isReplaying) {
             int latestY = 0;
-            if (smoothedRMS.length > 2) {
-                xStart = 1600;
-                int blueCenterY = 1400;     //Was 1400
-                float rmsYScale = 1.5f;
+            // --- LIVE RMS & PSD (Only shows when NOT replaying) ---        if (!isReplaying) {
+            int blueCenterY = 1400;
+            float rmsYScale = 1.5f;
+            int xRightLimit = 1582;
+            int xLeftLimit = 130;
 
+            if (smoothedRMS.length > 2) {
+                thresholdY = (int) (1200 - (rmsAmpThresh * 2.0f));
+                // Draw Threshold FIRST
+                g.drawGreenLine(xLeftLimit, thresholdY, xRightLimit, thresholdY, 0);
+
+                // PASS 1: Yellow Fill
+                int xFill = xRightLimit;
+                for (int n = smoothedRMS.length - 1; n > 1; n--) {
+                    int y1 = (int) (blueCenterY - smoothedRMS[n] * rmsYScale);
+                    if (y1 < thresholdY) {
+                        g.drawYellowLine(xFill, y1, xFill, thresholdY, 0);
+                    }
+                    xFill -= 1;
+                    if (xFill <= xLeftLimit) break;
+                }
+
+                // PASS 2: Blue Line (On Top)
+                int xLine = xRightLimit;
                 for (int n = smoothedRMS.length - 1; n > 1; n--) {
                     int y1 = (int) (blueCenterY - smoothedRMS[n] * rmsYScale);
                     int y2 = (int) (blueCenterY - smoothedRMS[n - 1] * rmsYScale);
+                    if (y1 < 869) y1 = 869; if (y1 > 1308) y1 = 1308;
+                    if (y2 < 869) y2 = 869; if (y2 > 1308) y2 = 1308;
 
-                    thresholdY = (int) (1200 - (rmsAmpThresh * 2.0f));
-                    g.drawGreenLine(155, thresholdY, 1590, thresholdY, 0);
-
-                    if (y1 < 869) y1 = 869;
-                    if (y1 > 1308) y1 = 1308;
-                    if (y2 < 869) y2 = 869;
-                    if (y2 > 1308) y2 = 1308;
-
-                    g.drawBlueLine(xStart, y1, xStart - 1, y2, 0);
-                    xStart -= 1;
-                    if (xStart <= 180) break;
-                }
-
-                latestY = (int) (blueCenterY - smoothedRMS[smoothedRMS.length - 1] * rmsYScale);
-                if (latestY < thresholdY) {
-                    if (!isAlertPlaying && alertSound != null) {
-                        alertSound.play(5.0f);
-                        isAlertPlaying = true;
-                    }
-                } else {
-                    isAlertPlaying = false;
+                    g.drawBlueLine(xLine, y1, xLine - 1, y2, 0);
+                    xLine -= 1;
+                    if (xLine <= xLeftLimit) break;
                 }
             }
 
-            // --- PSD Drawing Logic ---
-            float currentXpsd = 170;
-            float xStepPsd = 2.0f;
-
-            // 1. VERTICAL SCALING: Reduced from 0.75f to 0.35f to stop spikes from clamping
-            float psdLiveGain = 0.1f;
+            // --- PSD Drawing Logic (Live) ---
+            float psdLiveGain = 0.35f;
             float yLiveOffset = 1750.0f;
+            float xBoxStart = 130;
+            float xBoxEnd = 1582;
+            // Draw only first half to fix horizontal compression
+            int halfLen = psdResult.length / 2;
+            float xStepPsd = (xBoxEnd - xBoxStart) / (float)halfLen;
 
-            for (int i = 1; i < psdResult.length; i++) {
-                float nextXpsd = 170 + (i * xStepPsd);
+            float currentXpsd = xBoxStart;
+            for (int i = 1; i < halfLen; i++) {
+                float nextXpsd = xBoxStart + (i * xStepPsd);
+                float y1 = (float) (psdResult[i - 1] * -psdLiveGain + 3600) - yLiveOffset;
+                float y2 = (float) (psdResult[i] * -psdLiveGain + 3600) - yLiveOffset;
 
-                float y1 = (float) (psdResult[i - 1] - yLiveOffset);
-                float y2 = (float) (psdResult[i] - yLiveOffset);
-
-                // 3. CLAMPING: Ceiling set to 1445 pixels as requested
-                if (y1 < 1445) y1 = 1445;
-                if (y1 > 1895) y1 = 1895;
-
-                if (y2 < 1445) y2 = 1445;
-                if (y2 > 1895) y2 = 1895;
+                if (y1 < 1445) y1 = 1445; if (y1 > 1895) y1 = 1895;
+                if (y2 < 1445) y2 = 1445; if (y2 > 1895) y2 = 1895;
 
                 g.drawRedLine((int) currentXpsd, (int) y1, (int) nextXpsd, (int) y2, 0);
-
-                // g.drawRedLine((int) currentXpsd, (int) psdResult[i - 1] - 1695, (int) nextXpsd, (int) psdResult[i] - 1695, 0);
                 currentXpsd = nextXpsd;
-                if (currentXpsd >= 1600) break;
+                if (currentXpsd >= xBoxEnd) break;
+            }
+
+            latestY = (int) (blueCenterY - smoothedRMS[smoothedRMS.length - 1] * rmsYScale);
+            if (latestY < thresholdY) {
+                if (!isAlertPlaying && alertSound != null) {
+                    alertSound.play(5.0f);
+                    isAlertPlaying = true;
+                }
+            } else {
+                isAlertPlaying = false;
             }
         }
 
-        // --- 1. CONSTANTS FOR 2-SECOND WINDOW ---
-        final float xRightLimit = 1582.0f;
-        final float xLeftLimit = 130.0f;
-        final float totalWidth = xRightLimit - xLeftLimit; // 1435 pixels
-
-        // This maps 2000 samples to 1435 pixels (0.7175 pixels per sample)
-        final float timeScaledXStep = totalWidth / (signalBufferLen - 1);
-
-        // 2. Constants
+        // --- RAW SIGNAL CONSTANTS ---
         final int xRight = 1582;
         final int xLeft = 130;
         final float centerY = 565.0f;
@@ -637,82 +637,53 @@ public class GameScreen extends Screen implements Input {
         final float base = 410.0f;
         int bufferIdx = 0;
 
-        // --- 2. PAINT SETUP ---
-        signalPaint.setAntiAlias(false); // Sharp edges for square waves
-        signalPaint.setStrokeCap(Paint.Cap.BUTT);
-        signalPaint.setStrokeWidth(5.0f);
-
-
         if (!isReplaying) {
-            // --- LIVE BLACK LINE ---
+            // --- LIVE BLACK SIGNAL ---
             signalPaint.setColor(android.graphics.Color.BLACK);
-            signalPaint.setStrokeWidth(5.0f); // Thinner is better for square waves
-            signalPaint.setAntiAlias(false);
-            signalPaint.setStrokeCap(Paint.Cap.BUTT);
-
             synchronized (A2DVal) {
                 System.arraycopy(A2DVal, 0, drawingSnapshot, 0, signalBufferLen);
             }
-
             bufferIdx = 0;
-            // Start from most recent (right edge)
             float yLast = centerY - ((float)drawingSnapshot[signalBufferLen - 1] - base) * gMult;
-
             for (int n = 1; n < signalBufferLen; n++) {
-                // FIXED INTEGER STEP: This fixes the Duty Cycle variation
                 int x1 = xRight - (n - 1);
                 int x2 = xRight - n;
+                float yNext = centerY - ((float)drawingSnapshot[(signalBufferLen-1)-n] - base) * gMult;
 
-                int dataIdx = (signalBufferLen - 1) - n;
-                float yNext = centerY - ((float)drawingSnapshot[dataIdx] - base) * gMult;
-
-                // --- UPDATED CLAMPING ---
-                if (yNext < 222) yNext = 222; // Loosened ceiling
-                if (yNext > 680) yNext = 680; // Loosened floor
-
-              //  if (yNext < 10) yNext = 10;
-               // if (yNext > 880) yNext = 880;
+                if (yNext < 222) yNext = 222;
+                if (yNext > 680) yNext = 680;
 
                 lineBuffer[bufferIdx++] = (float)x1;
                 lineBuffer[bufferIdx++] = yLast;
                 lineBuffer[bufferIdx++] = (float)x2;
                 lineBuffer[bufferIdx++] = yNext;
                 yLast = yNext;
-
                 if (x2 <= xLeft || bufferIdx >= lineBuffer.length - 4) break;
             }
             if (bufferIdx > 0) canvas.drawLines(lineBuffer, 0, bufferIdx, signalPaint);
-
-
         }
-        if (isReplaying && !replayList.isEmpty() && replayRawArray != null) {
-            final int xRightRep = 1582;
-            final int xLeftRep = 130;
 
+        if (isReplaying && !replayList.isEmpty() && replayRawArray != null) {
             // --- 1. DRAW REPLAY RAW SIGNAL (RED) ---
             signalPaint.setColor(android.graphics.Color.RED);
-            signalPaint.setStrokeWidth(5.0f);
             bufferIdx = 0;
             int safePos = Math.min(replayPosition, replayRawArray.length - 1);
             float yLast = 500.0f - (float)((replayRawArray[safePos] - 410.0f) * 0.15f);
-
             for (int n = 1; n < signalBufferLen; n++) {
-                int x1 = xRightRep - (n - 1);
-                int x2 = xRightRep - n;
+                int x1 = xRight - (n - 1);
+                int x2 = xRight - n;
                 int dataIdx = replayPosition - n;
                 if (dataIdx >= 0 && dataIdx < replayRawArray.length) {
                     float yNext = 500.0f - (float)((replayRawArray[dataIdx] - 410.0f) * 0.15f);
                     if (yNext < 222) yNext = 222;
                     if (yNext > 680) yNext = 680;
-
                     lineBuffer[bufferIdx++] = (float)x1;
                     lineBuffer[bufferIdx++] = yLast;
                     lineBuffer[bufferIdx++] = (float)x2;
                     lineBuffer[bufferIdx++] = yNext;
                     yLast = yNext;
                 }
-                // UPDATED: Break at 130
-                if (x2 <= xLeftRep || bufferIdx >= lineBuffer.length - 4) break;
+                if (x2 <= xLeft || bufferIdx >= lineBuffer.length - 4) break;
             }
             if (bufferIdx > 0) canvas.drawLines(lineBuffer, 0, bufferIdx, signalPaint);
 
@@ -720,14 +691,23 @@ public class GameScreen extends Screen implements Input {
             if (replayRMSArray != null) {
                 final int blueCenterY = 1400;
                 final float rmsYScale = 1.5f;
-                // Threshold shifted to 130 - 1582
-                int thresholdY = (int) (1200 - (rmsAmpThresh * 2.0f));
-                g.drawGreenLine(xLeftRep, thresholdY, xRightRep, thresholdY, 0);
+                int thresholdYRep = (int) (1200 - (rmsAmpThresh * 2.0f));
+                g.drawGreenLine(xLeft, thresholdYRep, xRight, thresholdYRep, 0);
 
+                // Pass 1: Yellow Fill
                 for (int n = 1; n < signalBufferLen; n++) {
-                    // UPDATED: Start at 1582
-                    int x1 = xRightRep - (n - 1);
-                    int x2 = xRightRep - n;
+                    int x = xRight - (n - 1);
+                    int dataIdx = replayPosition - n;
+                    if (dataIdx >= 0 && dataIdx < replayRMSArray.length) {
+                        int ry = (int) (blueCenterY - replayRMSArray[dataIdx] * rmsYScale);
+                        if (ry < thresholdYRep) g.drawYellowLine(x, ry, x, thresholdYRep, 0);
+                    }
+                    if (x <= xLeft) break;
+                }
+                // Pass 2: Blue Line
+                for (int n = 1; n < signalBufferLen; n++) {
+                    int x1 = xRight - (n - 1);
+                    int x2 = xRight - n;
                     int dataIdx = replayPosition - n;
                     if (dataIdx >= 0 && dataIdx < replayRMSArray.length - 1) {
                         int ry1 = (int) (blueCenterY - replayRMSArray[dataIdx + 1] * rmsYScale);
@@ -736,8 +716,7 @@ public class GameScreen extends Screen implements Input {
                         if (ry2 < 869) ry2 = 869; if (ry2 > 1308) ry2 = 1308;
                         g.drawBlueLine(x1, ry1, x2, ry2, 0);
                     }
-                    // UPDATED: Break at 130
-                    if (x2 <= xLeftRep) break;
+                    if (x2 <= xLeft) break;
                 }
             }
 
@@ -745,91 +724,35 @@ public class GameScreen extends Screen implements Input {
             int psdWin = 1024;
             if (replayRawArray.length >= psdWin) {
                 double[] psdBuf = new double[psdWin];
-                float totalAnimationDuration = replayRawArray.length + signalBufferLen;
-                float progress = (float) replayPosition / totalAnimationDuration;
-                if (progress > 1.0f) progress = 1.0f;
-
-                int maxPossibleStart = replayRawArray.length - psdWin;
-                int windowStart = (int) (progress * maxPossibleStart);
+                float totalDur = replayRawArray.length + signalBufferLen;
+                float progress = (float) replayPosition / totalDur;
+                int windowStart = (int) (progress * (replayRawArray.length - psdWin));
                 if (windowStart < 0) windowStart = 0;
-                if (windowStart > maxPossibleStart) windowStart = maxPossibleStart;
-
                 System.arraycopy(replayRawArray, windowStart, psdBuf, 0, psdWin);
                 PowerSpectralDensityCalculator psdCalc = new PowerSpectralDensityCalculator(psdBuf, 1000);
                 double[] currentPsd = psdCalc.calculatePSD(psdBuf, 1000);
-
                 if (currentPsd != null) {
-                    // Shift PSD Start to 130
                     float curX = 130;
-                    // Adjust xStep to fit the 130 to 1582 window (Width = 1452)
-                    float xStep = 1452.0f / (currentPsd.length / 2.0f);
-                    for (int i = 1; i < currentPsd.length / 2; i++) {
+                    int hLen = currentPsd.length / 2;
+                    float xStep = (1582.0f - 130.0f) / (float)hLen;
+                    for (int i = 1; i < hLen; i++) {
                         float nextX = 130 + (i * xStep);
-                        float y1 = (float) (currentPsd[i - 1] * -4 + 3600) - 1715;
-                        float y2 = (float) (currentPsd[i] * -4 + 3600) - 1715;
-
-                        if (y1 < 1480) y1 = 1480;
-                        if (y1 > 1895) y1 = 1895;
-                        if (y2 < 1480) y2 = 1480;
-                        if (y2 > 1895) y2 = 1895;
-
+                        float y1 = (float) (currentPsd[i - 1] * -0.35f + 3600) - 1750;
+                        float y2 = (float) (currentPsd[i] * -0.35f + 3600) - 1750;
+                        if (y1 < 1445) y1 = 1445; if (y1 > 1895) y1 = 1895;
+                        if (y2 < 1445) y2 = 1445; if (y2 > 1895) y2 = 1895;
                         g.drawRedLine((int) curX, (int) y1, (int) nextX, (int) y2, 0);
                         curX = nextX;
                         if (curX >= 1582) break;
                     }
                 }
             }
-            // ... (Rest of speed & refresh code)
-
-            // --- 4. SPEED & REFRESH ---
-            // Move forward 17 samples (1000Hz cadence on 60fps screen)
             replayPosition += 17;
-
-            // Loop reset: wait until the 5s signal + 2s screen width have cleared
-            if (replayPosition >= (replayRawArray.length + signalBufferLen)) {
-                replayPosition = 0;
-            }
-
-            // Re-draw immediately for liquid smooth animation
-            if (view != null) {
-                view.postInvalidate();
-            }
+            if (replayPosition >= (replayRawArray.length + signalBufferLen)) replayPosition = 0;
+            view.postInvalidate();
         }
-
-
-        /*
-        else if (isReplaying && !replayList.isEmpty()) {
-            // --- REPLAY RED LINE ---
-            signalPaint.setColor(android.graphics.Color.RED);
-            bufferIdx = 0;
-
-            int safePos = Math.min(replayPosition, replayList.size() - 1);
-            float yLastRep = centerY - (float)((replayList.get(safePos) - base) * gMult);
-
-            for (int n = 1; n < signalBufferLen; n++) {
-                int x1 = xRight - (n - 1);
-                int x2 = xRight - n;
-                int posIdx = replayPosition - n;
-
-                if (posIdx >= 0 && posIdx < replayList.size()) {
-                    float yNextRep = centerY - (float)((replayList.get(posIdx) - base) * gMult);
-                    lineBuffer[bufferIdx++] = (float)x1;
-                    lineBuffer[bufferIdx++] = yLastRep;
-                    lineBuffer[bufferIdx++] = (float)x2;
-                    lineBuffer[bufferIdx++] = yNextRep;
-                    yLastRep = yNextRep;
-                }
-                if (x2 <= xLeft || bufferIdx >= lineBuffer.length - 4) break;
-            }
-            if (bufferIdx > 0) canvas.drawLines(lineBuffer, 0, bufferIdx, signalPaint);
-
-            replayPosition += 17;
-            if (replayPosition >= replayList.size() + signalBufferLen) replayPosition = 0;
-            if (GameScreen.view != null) GameScreen.view.postInvalidate();
-        }
-        *
-         */
     }
+
 
     /////////////////////////// Replay Helper Method ////////////////////////////////////
 
