@@ -306,49 +306,36 @@ public class GameScreen extends Screen implements Input {
                     isRecording = false;
                     game.setScreen(gameScreenEventLog);
                 }
-                //////////////////// Manual Patient Event /////////////////////
+                //////////////////// Manual Patient Event (2 Second Window) /////////////////////
                 else if (event.x > 10 && event.x < 675 && event.y > 2450 && event.y < 2800) {
-                    // Only trigger if we are recording, haven't hit the 100 limit,
-                    // and the button isn't already "held down" (manualPatientEventUpCount)
                     if (manualPatientEventUpCount == 0 && isRecording && eventCount < 100) {
 
-                        // 1. Snapshot the current state IMMEDIATELY on the UI thread
+                        // 1. Snapshot the current buffer position and ID
                         final int currentEndIdx = ramRecordBufferIdx;
                         final int currentID = eventCount;
-                        // Use the game instance cast to Context to avoid NullPointer
                         final Context threadContext = (Context) game;
 
-                        // 2. Save the Timestamp for the Log Screen array
+                        // 2. Save the Timestamp for the Log Screen
                         long delta = System.currentTimeMillis() - startTimeMillis;
-                        String formattedTime = String.format("%02d:%02d:%03d",
+                        timeStamp[eventCount] = String.format("%02d:%02d:%03d",
                                 (delta / 60000), (delta / 1000) % 60, (delta % 1000));
 
-                        if (timeStamp != null) {
-                            timeStamp[currentID] = formattedTime;
-                        }
-
-                        // 3. Increment counter immediately
-                        eventCount++;
-                        manualPatientEventUpCount = 1;
-
-                        // 4. Save to SD Card in background
+                        // 3. Queue the 2-second background save
                         saveExecutor.execute(() -> {
                             try {
                                 if (threadContext == null) return;
 
-                                // CALCULATE BOUNDS: 1000Hz * 5 seconds = 5000 samples
-                                int startIdx = currentEndIdx - 5000;
-                                if (startIdx < 0) startIdx = 0; // Prevent Negative Index Crash
+                                // CALCULATE BOUNDS: 1000Hz * 2 seconds = 2000 samples
+                                int startIdx = currentEndIdx - 2000;
+                                if (startIdx < 0) startIdx = 0;
 
                                 File path = threadContext.getExternalFilesDir(null);
                                 String eventFileName = "Event_" + currentID + ".csv";
                                 File file = new File(path, eventFileName);
 
-                                // Open file with large 64KB buffer for speed
                                 PrintWriter pw = new PrintWriter(new BufferedWriter(
                                         new OutputStreamWriter(new FileOutputStream(file, false)), 65536));
 
-                                // Synchronize so Bluetooth thread doesn't conflict
                                 synchronized (ramRecordBuffer) {
                                     for (int k = startIdx; k < currentEndIdx; k++) {
                                         if (k >= 0 && k < ramRecordBuffer.length) {
@@ -358,11 +345,14 @@ public class GameScreen extends Screen implements Input {
                                 }
                                 pw.flush();
                                 pw.close();
-                                Log.d("MANUAL_EVENT", "Saved Event_" + currentID);
+                                Log.d("MANUAL_EVENT", "Saved 2s window to " + eventFileName);
                             } catch (Exception e) {
-                                Log.e("CRASH_PREVENT", "Save failed: " + e.getMessage());
+                                Log.e("SAVE_ERROR", "Failed to save: " + e.getMessage());
                             }
                         });
+
+                        eventCount++;
+                        manualPatientEventUpCount = 1;
                     }
                 }
 
