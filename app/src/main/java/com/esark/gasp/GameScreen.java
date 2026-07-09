@@ -535,26 +535,6 @@ public class GameScreen extends Screen implements Input {
             String time = String.format("%02d:%02d:%03d", (totalRecordingTime/60000), (totalRecordingTime/1000)%60, (totalRecordingTime%1000));
             g.drawText(time, 245, 2070);
         }
-        /*
-        ////////////////// Start / Stop Recording //////////////////////////////////////////
-        if (startRecording == 0) {
-            recDeltaTimeMillis = 0;
-            minutes = 0;
-            seconds = 0;
-            remainingMilliseconds = 0;
-            String formattedTime = String.format("%02d:%02d:%03d", minutes, seconds, remainingMilliseconds);
-            g.drawText(formattedTime, 245, 2070);
-        } else if (startRecording == 1) {
-            currentTimeMillis = System.currentTimeMillis();
-            recDeltaTimeMillis = (int) (currentTimeMillis - startTimeMillis);
-            minutes = (int) recDeltaTimeMillis / 60000;
-            seconds = (int) recDeltaTimeMillis / 1000;
-            remainingMilliseconds = (int) recDeltaTimeMillis % 1000;
-            String formattedTime = String.format("%02d:%02d:%03d", minutes, seconds, remainingMilliseconds);
-            g.drawText(formattedTime, 245, 2070);
-        }
-        */
-
 
         // --- LIVE RMS & PSD (Only shows when NOT replaying) ---
         if (!isReplaying) {
@@ -567,32 +547,76 @@ public class GameScreen extends Screen implements Input {
 
             if (smoothedRMS.length > 2) {
                 thresholdY = (int) (1200 - (rmsAmpThresh * 2.0f));
-                // Draw Threshold FIRST
                 g.drawGreenLine(xLeftLimit, thresholdY, xRightLimit, thresholdY, 0);
+
+                final int CEILING = 869;
+                final int FLOOR = 1308;
+                final int STROKE_OFFSET = 4; // Gap to keep blue line clear
 
                 // PASS 1: Yellow Fill
                 int xFill = xRightLimit;
                 for (int n = smoothedRMS.length - 1; n > 1; n--) {
-                    int y1 = (int) (blueCenterY - smoothedRMS[n] * rmsYScale);
-                    if (y1 < thresholdY) {
-                        g.drawYellowLine(xFill, y1, xFill, thresholdY, 0);
+                    int yVal = (int) (blueCenterY - smoothedRMS[n] * rmsYScale);
+
+                    // CLAMP the data first so the fill respects the 869 ceiling
+                    if (yVal < CEILING) yVal = CEILING;
+                    if (yVal > FLOOR) yVal = FLOOR;
+
+                    if (yVal < thresholdY) {
+                        // Draw yellow starting BELOW the clamped yVal
+                        g.drawYellowLine(xFill, yVal + STROKE_OFFSET, xFill, thresholdY, 0);
                     }
                     xFill -= 1;
                     if (xFill <= xLeftLimit) break;
                 }
 
-                // PASS 2: Blue Line (On Top)
+                // PASS 2: Blue Line
                 int xLine = xRightLimit;
                 for (int n = smoothedRMS.length - 1; n > 1; n--) {
                     int y1 = (int) (blueCenterY - smoothedRMS[n] * rmsYScale);
                     int y2 = (int) (blueCenterY - smoothedRMS[n - 1] * rmsYScale);
-                    if (y1 < 869) y1 = 869; if (y1 > 1308) y1 = 1308;
-                    if (y2 < 869) y2 = 869; if (y2 > 1308) y2 = 1308;
+
+                    // Same clamping for the line
+                    if (y1 < CEILING) y1 = CEILING; if (y1 > FLOOR) y1 = FLOOR;
+                    if (y2 < CEILING) y2 = CEILING; if (y2 > FLOOR) y2 = FLOOR;
 
                     g.drawBlueLine(xLine, y1, xLine - 1, y2, 0);
                     xLine -= 1;
                     if (xLine <= xLeftLimit) break;
                 }
+
+                // --- Calculate Area of Rightmost Yellow Region ---
+                double areaSum = 0;
+                boolean regionFound = false;
+                double a2dToMvFactor = 3.22; // Conversion: (3300mV / 1024 units)
+
+                // Scan backwards from the most recent sample
+                for (int n = smoothedRMS.length - 1; n > 0; n--) {
+                    // Check if this sample is above the threshold
+                    // (Note: thresholdY in pixels is inverted, so smoothedRMS[n] > rmsAmpThresh)
+                    if (smoothedRMS[n] > rmsAmpThresh) {
+                        regionFound = true;
+                        // Sum the RMS value converted to mV
+                        areaSum += (smoothedRMS[n] * a2dToMvFactor);
+                    } else {
+                        // If we were in a region and just hit the end of it, stop calculating
+                        if (regionFound) {
+                            break;
+                        }
+                    }
+                }
+
+                // Convert sum of mV to mV*S (Sum * 0.001 seconds per sample)
+                double finalArea = areaSum * 0.001;
+
+                // Draw the result
+                String areaText1 = String.format("Area of Incoming Yellow");
+                String areaText2 = String.format("Shaded Region: %.1f", finalArea);
+                String areaText3 = String.format("mV*S");
+                g.drawSmallText(areaText1, 1280, 760);
+                g.drawSmallText(areaText2, 1280, 805);
+                g.drawSmallText(areaText3, 1650, 805);
+
             }
 
             // --- PSD Drawing Logic (Live) ---
@@ -691,6 +715,10 @@ public class GameScreen extends Screen implements Input {
             if (replayRMSArray != null) {
                 final int blueCenterY = 1400;
                 final float rmsYScale = 1.5f;
+                final int CEILING = 869;
+                final int FLOOR = 1308;
+                final int STROKE_OFFSET = 4;
+
                 int thresholdYRep = (int) (1200 - (rmsAmpThresh * 2.0f));
                 g.drawGreenLine(xLeft, thresholdYRep, xRight, thresholdYRep, 0);
 
@@ -700,7 +728,15 @@ public class GameScreen extends Screen implements Input {
                     int dataIdx = replayPosition - n;
                     if (dataIdx >= 0 && dataIdx < replayRMSArray.length) {
                         int ry = (int) (blueCenterY - replayRMSArray[dataIdx] * rmsYScale);
-                        if (ry < thresholdYRep) g.drawYellowLine(x, ry, x, thresholdYRep, 0);
+
+                        // CLAMP the data before shading
+                        if (ry < CEILING) ry = CEILING;
+                        if (ry > FLOOR) ry = FLOOR;
+
+                        if (ry < thresholdYRep) {
+                            // Start fill below the clamped RMS line
+                            g.drawYellowLine(x, ry + STROKE_OFFSET, x, thresholdYRep, 0);
+                        }
                     }
                     if (x <= xLeft) break;
                 }
