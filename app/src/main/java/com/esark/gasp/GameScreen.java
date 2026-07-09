@@ -588,70 +588,54 @@ public class GameScreen extends Screen implements Input {
                     if (xLine <= xLeftLimit) break;
                 }
 
-                // --- SEARCH-BACK AREA LATCH (Finds first completed island from the right) ---
+                // --- FIXED-PERIOD AREA LATCH (Triggered on "Tail" crossing) ---
                 double a2dToMvFactor = 3.22;
-                int searchStart = smoothedRMS.length - 20; // Anchor: ignore the 20ms closest to the right edge
-                int burstTail = -1;
-                boolean gapFound = false;
 
-                // 1. STEP A: Find the first GAP (silence) to the left of our anchor.
-                // This ensures we are looking at an event that has finished entering.
-                int i = searchStart;
-                while (i > 0) {
-                    if (smoothedRMS[i] <= rmsAmpThresh) {
-                        gapFound = true;
-                        // 2. STEP B: Now find the first YELLOW point to the left of that gap.
-                        // This is the "Tail" of the last completed burst.
-                        int j = i;
-                        while (j > 0) {
-                            if (smoothedRMS[j] > rmsAmpThresh) {
-                                burstTail = j;
-                                break;
-                            }
-                            j--;
-                        }
-                        break;
-                    }
-                    i--;
-                }
+                // 1. Define a "Finish Line" index (60ms from the right edge)
+                // This gives the Bluetooth "jitter" time to settle before we calculate.
+                int finishLine = smoothedRMS.length - 60;
 
-                // 3. STEP C: If we found a completed burst, calculate its area.
-                if (burstTail != -1) {
+                // 2. TRIGGER: Detect the exact moment the "Tail" of a burst crosses the finish line.
+                // This happens when the finish line pixel turns BLACK, but the pixel to its left is YELLOW.
+                if (finishLine > 0 && smoothedRMS[finishLine] <= rmsAmpThresh && smoothedRMS[finishLine - 1] > rmsAmpThresh) {
+
+                    int n = finishLine - 1; // Start at the tail we just detected
                     double islandSum = 0;
                     int islandWidth = 0;
-                    int k = burstTail;
-                    while (k >= 0) {
-                        if (smoothedRMS[k] > rmsAmpThresh) {
-                            islandSum += (smoothedRMS[k] * a2dToMvFactor);
+
+                    // 3. Scan backward and sum ONLY this specific contiguous island
+                    while (n >= 0) {
+                        if (smoothedRMS[n] > rmsAmpThresh) {
+                            islandSum += (smoothedRMS[n] * a2dToMvFactor);
                             islandWidth++;
                         } else {
-                            // Hysteresis: Allow a 5ms "flicker" gap within the same burst
-                            boolean flicker = false;
+                            // Hysteresis: treat 5ms gaps as noise (don't split the burst)
+                            boolean noiseGap = false;
                             for (int h = 1; h <= 5; h++) {
-                                if (k - h >= 0 && smoothedRMS[k - h] > rmsAmpThresh) {
-                                    flicker = true;
-                                    k -= (h - 1); // Skip to that yellow point
+                                if (n - h >= 0 && smoothedRMS[n - h] > rmsAmpThresh) {
+                                    noiseGap = true;
+                                    n -= (h - 1);
                                     break;
                                 }
                             }
-                            if (!flicker) break; // True start of the island found
+                            if (!noiseGap) break; // Real end of burst found
                         }
-                        k--;
+                        n--;
                     }
 
-                    // 4. Update the display value if it meets the Width requirement.
-                    // This stays still because the "First completed island from the right"
-                    // stays the same until a NEW island finishes entering the screen.
+                    // 4. LATCH: Update the persistent value only if it meets width requirements.
+                    // stableAreaValue is a class member; it will now stay 100% STATIC
+                    // until the next 'Falling Edge' trigger fires.
                     if (islandWidth >= rmsWidthThresh && islandWidth > 0) {
                         stableAreaValue = islandSum * 0.001;
                     }
                 }
-                // FALLBACK: If the threshold is so low that there is NO gap (entire screen is yellow)
-                else if (!gapFound && searchStart > 0) {
+
+                // 5. LOW-THRESHOLD FALLBACK: If the threshold is so low that the signal is
+                // ALWAYS yellow, update every 500ms so the number isn't "stuck" at 0.
+                else if (smoothedRMS[finishLine] > rmsAmpThresh && (System.currentTimeMillis() % 500 < 20)) {
                     double totalSum = 0;
-                    for (double val : smoothedRMS) {
-                        totalSum += (val * a2dToMvFactor);
-                    }
+                    for (double val : smoothedRMS) { totalSum += (val * a2dToMvFactor); }
                     stableAreaValue = totalSum * 0.001;
                 }
 
