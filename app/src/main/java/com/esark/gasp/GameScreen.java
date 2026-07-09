@@ -588,55 +588,71 @@ public class GameScreen extends Screen implements Input {
                     if (xLine <= xLeftLimit) break;
                 }
 
-                // --- ROBUST AREA CALCULATION (Falling-Edge Trigger) ---
+                // --- SEARCH-BACK AREA LATCH (Finds first completed island from the right) ---
                 double a2dToMvFactor = 3.22;
-                int n = smoothedRMS.length - 1;
+                int searchStart = smoothedRMS.length - 20; // Anchor: ignore the 20ms closest to the right edge
+                int burstTail = -1;
+                boolean gapFound = false;
 
-                // PHASE 1: Find the first "Gap" (Falling Edge)
-                // We move backward from the right edge to skip any burst currently sliding in.
-                while (n >= 0 && smoothedRMS[n] > rmsAmpThresh) {
-                    n--;
+                // 1. STEP A: Find the first GAP (silence) to the left of our anchor.
+                // This ensures we are looking at an event that has finished entering.
+                int i = searchStart;
+                while (i > 0) {
+                    if (smoothedRMS[i] <= rmsAmpThresh) {
+                        gapFound = true;
+                        // 2. STEP B: Now find the first YELLOW point to the left of that gap.
+                        // This is the "Tail" of the last completed burst.
+                        int j = i;
+                        while (j > 0) {
+                            if (smoothedRMS[j] > rmsAmpThresh) {
+                                burstTail = j;
+                                break;
+                            }
+                            j--;
+                        }
+                        break;
+                    }
+                    i--;
                 }
 
-                // FALLBACK: If n == -1, the entire screen is yellow (Threshold is too low).
-                // We calculate the visible area so the number isn't "stuck."
-                if (n == -1) {
-                    double totalVisibleSum = 0;
-                    for (double val : smoothedRMS) {
-                        totalVisibleSum += (val * a2dToMvFactor);
-                    }
-                    stableAreaValue = totalVisibleSum * 0.001;
-                } else {
-                    // PHASE 2: We found a gap. Now move backward to find the "Tail"
-                    // of the most recent island that has COMPLETELY finished entering.
-                    while (n >= 0 && smoothedRMS[n] <= rmsAmpThresh) {
-                        n--;
-                    }
-
-                    // PHASE 3: If n >= 0, we are at the end of a completed burst.
-                    if (n >= 0) {
-                        double islandSum = 0;
-                        int islandWidth = 0;
-                        // Sum only this specific contiguous island
-                        while (n >= 0 && smoothedRMS[n] > rmsAmpThresh) {
-                            islandSum += (smoothedRMS[n] * a2dToMvFactor);
+                // 3. STEP C: If we found a completed burst, calculate its area.
+                if (burstTail != -1) {
+                    double islandSum = 0;
+                    int islandWidth = 0;
+                    int k = burstTail;
+                    while (k >= 0) {
+                        if (smoothedRMS[k] > rmsAmpThresh) {
+                            islandSum += (smoothedRMS[k] * a2dToMvFactor);
                             islandWidth++;
-                            n--;
-
-                            // Internal Hysteresis: allow tiny 3ms drops within a burst
-                            // (Prevents noise from splitting one spasm into two)
-                            if (n >= 3 && smoothedRMS[n] <= rmsAmpThresh) {
-                                if (smoothedRMS[n-1] > rmsAmpThresh || smoothedRMS[n-2] > rmsAmpThresh) {
-                                    continue;
+                        } else {
+                            // Hysteresis: Allow a 5ms "flicker" gap within the same burst
+                            boolean flicker = false;
+                            for (int h = 1; h <= 5; h++) {
+                                if (k - h >= 0 && smoothedRMS[k - h] > rmsAmpThresh) {
+                                    flicker = true;
+                                    k -= (h - 1); // Skip to that yellow point
+                                    break;
                                 }
                             }
+                            if (!flicker) break; // True start of the island found
                         }
-
-                        // PHASE 4: Update display ONLY if the burst meets the width filter
-                        if (islandWidth >= rmsWidthThresh) {
-                            stableAreaValue = islandSum * 0.001;
-                        }
+                        k--;
                     }
+
+                    // 4. Update the display value if it meets the Width requirement.
+                    // This stays still because the "First completed island from the right"
+                    // stays the same until a NEW island finishes entering the screen.
+                    if (islandWidth >= rmsWidthThresh && islandWidth > 0) {
+                        stableAreaValue = islandSum * 0.001;
+                    }
+                }
+                // FALLBACK: If the threshold is so low that there is NO gap (entire screen is yellow)
+                else if (!gapFound && searchStart > 0) {
+                    double totalSum = 0;
+                    for (double val : smoothedRMS) {
+                        totalSum += (val * a2dToMvFactor);
+                    }
+                    stableAreaValue = totalSum * 0.001;
                 }
 
                 // Draw the result using the persistent variable
