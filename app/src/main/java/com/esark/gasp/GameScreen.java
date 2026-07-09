@@ -588,28 +588,27 @@ public class GameScreen extends Screen implements Input {
                     if (xLine <= xLeftLimit) break;
                 }
 
-                // --- FIXED-PERIOD AREA LATCH (Triggered on "Tail" crossing) ---
+                // --- HIGH-RESPONSIVENESS AREA LATCH ---
                 double a2dToMvFactor = 3.22;
 
-                // 1. Define a "Finish Line" index (60ms from the right edge)
-                // This gives the Bluetooth "jitter" time to settle before we calculate.
-                int finishLine = smoothedRMS.length - 60;
+                // 1. Move Finish Line closer to the right (10ms instead of 60ms)
+                // This makes the area update almost immediately after the burst enters.
+                int finishLine = smoothedRMS.length - 10;
 
-                // 2. TRIGGER: Detect the exact moment the "Tail" of a burst crosses the finish line.
-                // This happens when the finish line pixel turns BLACK, but the pixel to its left is YELLOW.
+                // 2. TRIGGER: Detect the "Tail" crossing the 10ms mark
                 if (finishLine > 0 && smoothedRMS[finishLine] <= rmsAmpThresh && smoothedRMS[finishLine - 1] > rmsAmpThresh) {
 
-                    int n = finishLine - 1; // Start at the tail we just detected
+                    int n = finishLine - 1;
                     double islandSum = 0;
                     int islandWidth = 0;
 
-                    // 3. Scan backward and sum ONLY this specific contiguous island
+                    // 3. Scan backward to sum the burst
                     while (n >= 0) {
                         if (smoothedRMS[n] > rmsAmpThresh) {
                             islandSum += (smoothedRMS[n] * a2dToMvFactor);
                             islandWidth++;
                         } else {
-                            // Hysteresis: treat 5ms gaps as noise (don't split the burst)
+                            // Hysteresis: treat 5ms gaps as noise
                             boolean noiseGap = false;
                             for (int h = 1; h <= 5; h++) {
                                 if (n - h >= 0 && smoothedRMS[n - h] > rmsAmpThresh) {
@@ -618,22 +617,20 @@ public class GameScreen extends Screen implements Input {
                                     break;
                                 }
                             }
-                            if (!noiseGap) break; // Real end of burst found
+                            if (!noiseGap) break;
                         }
                         n--;
                     }
 
-                    // 4. LATCH: Update the persistent value only if it meets width requirements.
-                    // stableAreaValue is a class member; it will now stay 100% STATIC
-                    // until the next 'Falling Edge' trigger fires.
+                    // 4. Update the persistent value
                     if (islandWidth >= rmsWidthThresh && islandWidth > 0) {
                         stableAreaValue = islandSum * 0.001;
                     }
                 }
 
-                // 5. LOW-THRESHOLD FALLBACK: If the threshold is so low that the signal is
-                // ALWAYS yellow, update every 500ms so the number isn't "stuck" at 0.
-                else if (smoothedRMS[finishLine] > rmsAmpThresh && (System.currentTimeMillis() % 500 < 20)) {
+                // 5. IMPROVED FALLBACK: Update every 100ms (instead of 500ms)
+                // if the signal is continuous. This prevents "sluggish" numbers.
+                else if (smoothedRMS[finishLine] > rmsAmpThresh && (System.currentTimeMillis() % 100 < 20)) {
                     double totalSum = 0;
                     for (double val : smoothedRMS) { totalSum += (val * a2dToMvFactor); }
                     stableAreaValue = totalSum * 0.001;
