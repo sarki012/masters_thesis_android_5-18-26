@@ -154,20 +154,28 @@ public class ConnectedThread extends Thread {
                         }
                         mathExecutor.execute(() -> {
                             try {
+                                // Inside ConnectedThread mathExecutor block
                                 PowerSpectralDensityCalculator psdCalc = new PowerSpectralDensityCalculator(a2dCopyForMath, 1000);
-                                double[] tempPsd = psdCalc.calculatePSD(a2dCopyForMath, 1000);
+
+                                // NEW: Pre-processing for PSD
+                                double psdSum = 0;
+                                for (double v : a2dCopyForMath) psdSum += v;
+                                double psdMean = psdSum / a2dCopyForMath.length;
+
+                                double[] windowedData = new double[a2dCopyForMath.length];
+                                for (int i = 0; i < a2dCopyForMath.length; i++) {
+                                    // Subtract mean and apply Hanning window
+                                    double window = 0.5 * (1.0 - Math.cos(2.0 * Math.PI * i / (a2dCopyForMath.length - 1)));
+                                    windowedData[i] = (a2dCopyForMath[i] - psdMean) * window;
+                                }
+
+                                double[] tempPsd = psdCalc.calculatePSD(windowedData, 1000);
 
                                 if (tempPsd != null && psdResult != null) {
                                     int psdLen = Math.min(tempPsd.length, psdResult.length);
                                     for (int j = 0; j < psdLen; j++) {
-                                        // 1. Convert to dB/Hz: 10 * log10(Power)
-                                        // Math.max is used to prevent Log(0) which results in Infinity
-                                        double psdDbHz = 10 * Math.log10(Math.max(tempPsd[j], 1e-12));
-
-                                        // 2. Visualization Scaling
-                                        // Maps the dB range (e.g., -20 to -100) to the Y-coordinates of your UI box.
-                                        // A peak (higher dB) results in a smaller Y (drawing higher on screen).
-                                        psdResult[j] = psdDbHz * -20 + 500;
+                                        // Store as raw power; conversion to dB happens in GameScreen drawing logic
+                                        psdResult[j] = tempPsd[j];
                                     }
                                 }
                                 // --- 1. CALCULATE MEAN (DC OFFSET) ---

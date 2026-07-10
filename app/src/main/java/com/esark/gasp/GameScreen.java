@@ -813,6 +813,7 @@ public class GameScreen extends Screen implements Input {
             }
 
             // --- 3. ANIMATED REPLAY PSD ---
+            // --- 3. ANIMATED REPLAY PSD (FIXED SPECTRAL LEAKAGE) ---
             int psdWin = 1024;
             if (replayRawArray.length >= psdWin) {
                 double[] psdBuf = new double[psdWin];
@@ -820,19 +821,47 @@ public class GameScreen extends Screen implements Input {
                 float progress = (float) replayPosition / totalDur;
                 int windowStart = (int) (progress * (replayRawArray.length - psdWin));
                 if (windowStart < 0) windowStart = 0;
+
                 System.arraycopy(replayRawArray, windowStart, psdBuf, 0, psdWin);
+
+                // --- NEW: CLEAN SIGNAL FOR PSD ---
+                double sum = 0;
+                for (double v : psdBuf) sum += v;
+                double mean = sum / psdWin;
+
+                for (int i = 0; i < psdWin; i++) {
+                    // A. Remove Mean (Removes 0Hz spike)
+                    double val = psdBuf[i] - mean;
+                    // B. Apply Hanning Window (Removes spectrum-wide noise leakage)
+                    double window = 0.5 * (1.0 - Math.cos(2.0 * Math.PI * i / (psdWin - 1)));
+                    psdBuf[i] = val * window;
+                }
+
                 PowerSpectralDensityCalculator psdCalc = new PowerSpectralDensityCalculator(psdBuf, 1000);
                 double[] currentPsd = psdCalc.calculatePSD(psdBuf, 1000);
+
                 if (currentPsd != null) {
                     float curX = 130;
                     int hLen = currentPsd.length / 2;
-                    float xStep = (1582.0f - 130.0f) / (float)hLen;
+                    float xStep = (1582.0f - 130.0f) / (float) hLen;
+
+                    // Same scaling as Live Mode
+                    float psdGain = -2.5f; // Gain for dB scale
+                    float yOffset = 1750.0f;
+
                     for (int i = 1; i < hLen; i++) {
                         float nextX = 130 + (i * xStep);
-                        float y1 = (float) (currentPsd[i - 1] * -0.35f + 3600) - 1750;
-                        float y2 = (float) (currentPsd[i] * -0.35f + 3600) - 1750;
+
+                        // Convert to dB/Hz
+                        double db1 = 10 * Math.log10(Math.max(currentPsd[i - 1], 1e-12));
+                        double db2 = 10 * Math.log10(Math.max(currentPsd[i], 1e-12));
+
+                        float y1 = (float) (db1 * psdGain + 3600) - yOffset;
+                        float y2 = (float) (db2 * psdGain + 3600) - yOffset;
+
                         if (y1 < 1445) y1 = 1445; if (y1 > 1895) y1 = 1895;
                         if (y2 < 1445) y2 = 1445; if (y2 > 1895) y2 = 1895;
+
                         g.drawRedLine((int) curX, (int) y1, (int) nextX, (int) y2, 0);
                         curX = nextX;
                         if (curX >= 1582) break;
