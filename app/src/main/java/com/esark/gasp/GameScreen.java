@@ -652,11 +652,38 @@ public class GameScreen extends Screen implements Input {
             float yLiveOffset = 1750.0f;
             float xBoxStart = 130;
             float xBoxEnd = 1582;
+
             // Draw only first half to fix horizontal compression
             int halfLen = psdResult.length / 2;
             float xStepPsd = (xBoxEnd - xBoxStart) / (float)halfLen;
 
             float currentXpsd = xBoxStart;
+
+
+            // --- FIXED PSD DB Grid Lines ---// These must use the SAME math as the red PSD lines to appear in the same box
+            final int psdBase = 500;       // Must match ConnectedThread <caret>
+            final int psdMult = -20;       // Must match ConnectedThread <caret>
+            final float drawGain = 0.35f;  // Must match psdLiveGain
+            final float drawBase = 3600f;  // The vertical baseline
+            final float drawOff = 1750f;   // yLiveOffset
+
+            int[] dbLevels = {10, 0, -10};
+            String[] dbLabels = {"10dB", "0dB", "-10dB"};
+
+            for (int i = 0; i < dbLevels.length; i++) {
+                // 1. Calculate the Y value exactly like the psdResult lines
+                float rawY = (dbLevels[i] * psdMult) + psdBase;
+                float finalY = (rawY * -drawGain + drawBase) - drawOff;
+
+                // 2. Clamp to stay within the PSD box boundaries
+                if (finalY < 1445) finalY = 1445;
+                if (finalY > 1895) finalY = 1895;
+
+                // 3. Draw the line and the label
+                g.drawGreenLine(130, (int)finalY, 1582, (int)finalY, 0);
+                g.drawSmallText(dbLabels[i], 70, (int)finalY + 10);
+            }
+
             for (int i = 1; i < halfLen; i++) {
                 float nextXpsd = xBoxStart + (i * xStepPsd);
                 float y1 = (float) (psdResult[i - 1] * -psdLiveGain + 3600) - yLiveOffset;
@@ -669,6 +696,7 @@ public class GameScreen extends Screen implements Input {
                 currentXpsd = nextXpsd;
                 if (currentXpsd >= xBoxEnd) break;
             }
+
 
             latestY = (int) (blueCenterY - smoothedRMS[smoothedRMS.length - 1] * rmsYScale);
             if (latestY < thresholdY) {
