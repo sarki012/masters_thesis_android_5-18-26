@@ -145,6 +145,8 @@ public class GameScreen extends Screen implements Input {
     public static double[] replayRawArray; // Add this
     private double lastCalculatedArea = 0; // Stores the area of the most recent burst
     private double stableAreaValue = 0; // Persistent storage for the area
+    public static double batVoltage = 0;
+    public static double batSOC = 0;
     // Constructor
     public GameScreen(Game game) {
         super(game);
@@ -502,6 +504,16 @@ public class GameScreen extends Screen implements Input {
 
         //   g.drawRect(1600, 1330, 100, 270, 0);       //Start/Stop Save a Sample
         //  g.drawRect(1600, 1610, 100, 310, 0);       //Replay
+
+        //////////////////// Battery Voltage and SOC //////////////////////////////////
+        // Inside GameScreen.java -> present()// Draw Battery Voltage
+        String vText = String.format("%.2f V", batVoltage);
+        g.drawSmallText(vText, 1538, 111);
+
+        // Draw Battery SOC (State of Charge)
+        String sText = String.format("%.2f %%", batSOC);
+        g.drawSmallText(sText, 1538, 165); // Placed 50 pixels below Voltage
+        //////////////////////////////////////////////////////////////////////////////
 
         //////////////////// RMS Threshold to Trigger Event //////////////////////////////////
         if (rmsThresholdTouch == 0) {
