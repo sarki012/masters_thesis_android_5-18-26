@@ -46,33 +46,71 @@ public class ConnectedThread extends Thread {
         long lastUiPingNs = 0;
         final long UI_INTERVAL_NS = 16666666L;
 
-        // 1. DATA ACQUISITION SUB-THREAD (Unchanged)
+        //1. DATA ACQUISITION SUB-THREAD (10-Second Packet Parser)
         Thread rxThread = new Thread(() -> {
+            int currentHeader = 0;
+            int metaByteCount = 0;
+            int firstByte = -1;
+            boolean inMetaBlock = false;
+
+            // Temporary storage for metadata bytes
+            int[] metaBytes = new int[4];
+
             while (!Thread.currentThread().isInterrupted()) {
                 try {
                     int bytesRead = mmInStream.read(buffer);
                     if (bytesRead == -1) break;
+
                     for (int i = 0; i < bytesRead; i++) {
                         int b = buffer[i] & 0xFF;
-                        if (b == 120) { expectingLowByte = false; continue; }
-                        if (!expectingLowByte) {
-                            tempHighByte = b;
-                            expectingLowByte = true;
-                        } else {
-                            double rawVal = ((tempHighByte << 8) | b) / 3.0;
-                            expectingLowByte = false;
-                            // --- APPLY NOTCH FILTER HERE ---
-                            double val = filter60Hz.filter(rawVal);
-                            // -------------------------------
 
-                            int w = jWrite.get();
-                            jitterBuffer[w] = val;
-                            jWrite.set((w + 1) % jitterBuffer.length);
-                            jCount.incrementAndGet();
-                            if (GameScreen.isRecording) {
-                                synchronized (GameScreen.ramRecordBuffer) {
-                                    if (ramRecordBufferIdx < ramRecordBuffer.length) {
-                                        ramRecordBuffer[ramRecordBufferIdx++] = val;
+                        // 1. Check for the Master Sync Header
+                        if (b == 120) { // char 'x'
+                            currentHeader = b;
+                            inMetaBlock = true;
+                            metaByteCount = 0;
+                            firstByte = -1;
+                            continue;
+                        }
+
+                        if (inMetaBlock) {
+                            // 2. Collect 4 bytes of Metadata (Voltage L/H, SOC L/H)
+                            metaBytes[metaByteCount++] = b;
+
+                            if (metaByteCount == 4) {
+                                // Reconstruct Voltage (Little-Endian)
+                                int vRaw = (metaBytes[1] << 8) | metaBytes[0];
+                                GameScreen.batVoltage = vRaw / 100.0;
+
+                                // Reconstruct SOC (Little-Endian)
+                                int sRaw = (metaBytes[3] << 8) | metaBytes[2];
+                                GameScreen.batSOC = sRaw / 100.0;
+
+                                inMetaBlock = false; // Switch to Signal Streaming Mode
+                            }
+                        } else {
+                            // 3. Collect Signal Data (A2DVal) in continuous 2-byte pairs
+                            if (firstByte == -1) {
+                                firstByte = b; // Store Low Byte
+                            } else {
+                                // Reconstruct Signal (Little-Endian)
+                                int val = (b << 8) | firstByte;
+                                firstByte = -1; // Reset for next signal pair
+
+                                // Apply Filter and Buffer logic
+                                double rawVal = val / 3.0;
+                                double filteredVal = filter60Hz.filter(rawVal);
+
+                                int w = jWrite.get();
+                                jitterBuffer[w] = filteredVal;
+                                jWrite.set((w + 1) % jitterBuffer.length);
+                                jCount.incrementAndGet();
+
+                                if (GameScreen.isRecording) {
+                                    synchronized (GameScreen.ramRecordBuffer) {
+                                        if (ramRecordBufferIdx < ramRecordBuffer.length) {
+                                            ramRecordBuffer[ramRecordBufferIdx++] = filteredVal;
+                                        }
                                     }
                                 }
                             }
