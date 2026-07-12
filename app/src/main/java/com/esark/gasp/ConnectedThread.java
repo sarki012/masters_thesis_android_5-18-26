@@ -78,26 +78,34 @@ public class ConnectedThread extends Thread {
                             metaBytes[metaByteCount++] = b;
 
                             if (metaByteCount == 4) {
-                                // Reconstruct Voltage (Little-Endian)
-                                int vRaw = (metaBytes[1] << 8) | metaBytes[0];
+                                // --- BIG-ENDIAN RECONSTRUCTION --- // metaBytes[0] is High, [1] is Low
+                                int vRaw = ((metaBytes[0] & 0xFF) << 8) | (metaBytes[1] & 0xFF);
+
+                                // FIX: Firmware sends (Voltage * 100), so we divide by 100.0
+                                // (387 / 100.0 = 3.87)
                                 GameScreen.batVoltage = vRaw / 100.0;
 
-                                // Reconstruct SOC (Little-Endian)
-                                int sRaw = (metaBytes[3] << 8) | metaBytes[2];
+                                // metaBytes[2] is High, [3] is Low
+                                int sRaw = ((metaBytes[2] & 0xFF) << 8) | (metaBytes[3] & 0xFF);
+
+                                // FIX: Firmware sends (SOC * 100), so we divide by 100.0
+                                // (6100 / 100.0 = 61.00)
                                 GameScreen.batSOC = sRaw / 100.0;
 
-                                inMetaBlock = false; // Switch to Signal Streaming Mode
+                                inMetaBlock = false; // Switch back to Signal Streaming Mode
                             }
+
                         } else {
                             // 3. Collect Signal Data (A2DVal) in continuous 2-byte pairs
                             if (firstByte == -1) {
-                                firstByte = b; // Store Low Byte
+                                firstByte = b; // Store High Byte (Big Endian)
                             } else {
-                                // Reconstruct Signal (Little-Endian)
-                                int val = (b << 8) | firstByte;
-                                firstByte = -1; // Reset for next signal pair
+                                // --- BIG-ENDIAN RECONSTRUCTION ---
+                                // firstByte is High Byte, b is Low Byte
+                                int val = (firstByte << 8) | (b & 0xFF);
+                                firstByte = -1;
 
-                                // Apply Filter and Buffer logic
+                                // Rest of your signal logic...
                                 double rawVal = val / 3.0;
                                 double filteredVal = filter60Hz.filter(rawVal);
 
