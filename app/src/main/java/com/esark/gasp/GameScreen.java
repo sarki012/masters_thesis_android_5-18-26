@@ -80,7 +80,8 @@ public class GameScreen extends Screen implements Input {
     long seconds = 0;
     long remainingMilliseconds = 0;
     int rmsThresholdTouch = 0;
-    int rmsAmpThresh = 100, rmsWidthThresh = 0;
+    int rmsAreaThreshTouch = 0;
+    int rmsAmpThresh = 300, rmsAreaThresh = 500;
     int leftUpCount = 0, leftDownCount = 0, rightUpCount = 0, rightDownCount = 0;
     private static final double PI = 3.1415927;
 
@@ -99,7 +100,6 @@ public class GameScreen extends Screen implements Input {
     public static double[][] eventArray = new double [100][signalBufferLen];
     public static double[] lastEventArray = new double[signalBufferLen];
     public static int manualPatientEventUpCount = 0;
-    public int rmsWidthThreshTouch = 0;
     public static android.view.View view;
 
     // Recording and Replay Variables
@@ -287,18 +287,18 @@ public class GameScreen extends Screen implements Input {
                 //////////////////// Right Up Button ////////////////////////////////////////////////
                 else if (event.x > 1560 && event.x < 1715 && event.y > 2110 && event.y < 2215) {
                     //RMS threshold amplitude to trigger event. Left Up Button.
-                    rmsWidthThreshTouch = 1;
+                    rmsAreaThreshTouch = 1;
                     if (rightUpCount == 0) {       //Flag so we only increment the delay by 5 once per touch
-                        rmsWidthThresh += 5;
+                        rmsAreaThresh += 5;
                         rightUpCount = 1;
                     }
                 }
                 //////////////////// Right Down Button ////////////////////////////////////////////////
                 else if (event.x > 1560 && event.x < 1715 && event.y > 2220 && event.y < 2325) {
                     //RMS threshold amplitude to trigger event. Left Down Button.
-                    rmsWidthThreshTouch = 1;
+                    rmsAreaThreshTouch = 1;
                     if (rightDownCount == 0) {       //Flag so we only increment the delay by 5 once per touch
-                        rmsWidthThresh -= 5;
+                        rmsAreaThresh -= 5;
                         rightDownCount = 1;
                     }
                 } else if (event.x > 720 && event.x < 1190 && event.y > 2535 && event.y < 2735) {
@@ -517,21 +517,20 @@ public class GameScreen extends Screen implements Input {
 
         //////////////////// RMS Threshold to Trigger Event //////////////////////////////////
         if (rmsThresholdTouch == 0) {
-            g.drawText("95", 375, 2235);    //Manual RMS Height Above Threshold Text
+            g.drawText("200", 400, 2235);    //Manual RMS Height Above Threshold Text
         } else if (rmsThresholdTouch == 1) {
             String rmsAmpThreshStr = String.valueOf(rmsAmpThresh);
-            g.drawText(rmsAmpThreshStr, 375, 2235);    //Manual RMS Height Above Threshold Text
-
+            g.drawText(rmsAmpThreshStr, 400, 2235);    //Manual RMS Height Above Threshold Text
         }
 
         //////////////////////////////////////////////////////////////////////////////////////
 
         //////////////////// Manual RMS Width Above Threshold to Trigger Event //////////////////////
-        if (rmsWidthThresh == 0) {
-            g.drawText("0", 1330, 2235);    //Manual RMS Width Above Threshold Text
-        } else if (rmsWidthThresh == 1) {
-            String rmsWidthThreshStr = String.valueOf(rmsWidthThresh);
-            g.drawText(rmsWidthThreshStr, 1330, 2235);    //Manual RMS Width Above Threshold Text
+        if (rmsAreaThreshTouch == 0) {
+            g.drawText("500", 1230, 2235);    //Manual RMS Width Above Threshold Text
+        } else if (rmsAreaThreshTouch == 1) {
+            String rmsAreaThreshStr = String.valueOf(rmsAreaThresh);
+            g.drawText(rmsAreaThreshStr, 1230, 2235);    //Manual RMS Width Above Threshold Text
         }
 
         String eventCountStr = String.valueOf(eventCount);
@@ -555,7 +554,7 @@ public class GameScreen extends Screen implements Input {
         if (!isReplaying) {
             int latestY = 0;
             int blueCenterY = 1400;
-            float rmsYScale = 1.5f;
+            float rmsYScale = 1.5f;     // Was 1.5f
 
             // UPDATED BOUNDARIES
             final int xRightLimit = 1574;
@@ -653,7 +652,7 @@ public class GameScreen extends Screen implements Input {
                     }
 
                     // 4. Update the persistent value
-                    if (islandWidth >= rmsWidthThresh && islandWidth > 0) {
+                    if (islandWidth >= rmsAreaThresh && islandWidth > 0) {
                         stableAreaValue = islandSum * 0.001;
                     }
                 }
