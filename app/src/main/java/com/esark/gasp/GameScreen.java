@@ -51,7 +51,7 @@ public class GameScreen extends Screen implements Input {
     int xStart = 0, xStop = 0;
     double xStartPSD = 0, xStopPSD = 0;
     //public static double[] A2DVal = new double[3500];
-    public static int signalBufferLen = 1436;
+    public static int signalBufferLen = 1449;   //was 1436
     public static volatile double[] A2DVal = new double[signalBufferLen];   //was 1435
     //  public double[] A2DValMean = new double[signalBufferLen];
     public double A2DValMean = 0;
@@ -551,54 +551,72 @@ public class GameScreen extends Screen implements Input {
             g.drawText(time, 245, 2070);
         }
 
-        // --- LIVE RMS & PSD (Only shows when NOT replaying) ---
+// --- LIVE RMS & PSD (Only shows when NOT replaying) ---
         if (!isReplaying) {
             int latestY = 0;
-            // --- LIVE RMS & PSD (Only shows when NOT replaying) ---        if (!isReplaying) {
             int blueCenterY = 1400;
             float rmsYScale = 1.5f;
-            int xRightLimit = 1582;
-            int xLeftLimit = 130;
+
+            // UPDATED BOUNDARIES
+            final int xRightLimit = 1574;
+            final int xLeftLimit = 140; // Disappear point
+            final float totalPixelWidth = (float)(xRightLimit - xLeftLimit); // 1452 pixels
 
             if (smoothedRMS.length > 2) {
-                thresholdY = (int) (1200 - (rmsAmpThresh * 2.0f));
+                // Synchronize Threshold drawing
+                thresholdY = (int) (blueCenterY - (rmsAmpThresh * rmsYScale));
                 g.drawGreenLine(xLeftLimit, thresholdY, xRightLimit, thresholdY, 0);
 
                 final int CEILING = 869;
                 final int FLOOR = 1308;
-                final int STROKE_OFFSET = 4; // Gap to keep blue line clear
+                final int STROKE_OFFSET = 4;
 
-                // PASS 1: Yellow Fill
-                int xFill = xRightLimit;
-                for (int n = smoothedRMS.length - 1; n > 1; n--) {
-                    int yVal = (int) (blueCenterY - smoothedRMS[n] * rmsYScale);
+                // --- STRETCH RATIO ---
+                // We map the available data length to the physical pixel width
+                float stretchFactor = totalPixelWidth / (float)(smoothedRMS.length - 1);
 
-                    // CLAMP the data first so the fill respects the 869 ceiling
+                // --- PASS 1: Yellow Fill (Stretched to 122) ---
+                for (int n = 0; n < smoothedRMS.length; n++) {
+                    // Map data index 'n' to stretched X coordinate
+                    int xCurrent = (int)(xRightLimit - (n * stretchFactor));
+
+                    if (xCurrent < xLeftLimit) break; // Safety stop
+
+                    int dataIdx = (smoothedRMS.length - 1) - n;
+                    if (dataIdx < 0) break;
+
+                    int yVal = (int) (blueCenterY - smoothedRMS[dataIdx] * rmsYScale);
                     if (yVal < CEILING) yVal = CEILING;
                     if (yVal > FLOOR) yVal = FLOOR;
 
                     if (yVal < thresholdY) {
-                        // Draw yellow starting BELOW the clamped yVal
-                        g.drawYellowLine(xFill, yVal + STROKE_OFFSET, xFill, thresholdY, 0);
+                        g.drawYellowLine(xCurrent, yVal + STROKE_OFFSET, xCurrent, thresholdY, 0);
                     }
-                    xFill -= 1;
-                    if (xFill <= xLeftLimit) break;
                 }
 
-                // PASS 2: Blue Line
-                int xLine = xRightLimit;
-                for (int n = smoothedRMS.length - 1; n > 1; n--) {
-                    int y1 = (int) (blueCenterY - smoothedRMS[n] * rmsYScale);
-                    int y2 = (int) (blueCenterY - smoothedRMS[n - 1] * rmsYScale);
+                // --- PASS 2: Blue Line (Stretched to 122) ---
+                for (int n = 0; n < smoothedRMS.length - 1; n++) {
+                    // Calculate stretched segment coordinates
+                    int x1 = (int)(xRightLimit - (n * stretchFactor));
+                    int x2 = (int)(xRightLimit - ((n + 1) * stretchFactor));
 
-                    // Same clamping for the line
+                    int dataIdx1 = (smoothedRMS.length - 1) - n;
+                    int dataIdx2 = (smoothedRMS.length - 1) - (n + 1);
+
+                    int y1 = (int) (blueCenterY - smoothedRMS[dataIdx1] * rmsYScale);
+                    int y2 = (int) (blueCenterY - smoothedRMS[dataIdx2] * rmsYScale);
+
                     if (y1 < CEILING) y1 = CEILING; if (y1 > FLOOR) y1 = FLOOR;
                     if (y2 < CEILING) y2 = CEILING; if (y2 > FLOOR) y2 = FLOOR;
 
-                    g.drawBlueLine(xLine, y1, xLine - 1, y2, 0);
-                    xLine -= 1;
-                    if (xLine <= xLeftLimit) break;
+                    g.drawBlueLine(x1, y1, x2, y2, 0);
+
+                    // Stop exactly when the segment touches the left limit
+                    if (x2 <= xLeftLimit) break;
                 }
+
+
+                // --- (Rest of Area Latch and PSD logic remains the same) ---
 
                 // --- HIGH-RESPONSIVENESS AREA LATCH ---
                 double a2dToMvFactor = 3.22;
@@ -661,8 +679,8 @@ public class GameScreen extends Screen implements Input {
 
             // --- PSD Drawing Logic (Live) ---
             float psdLiveGain = 0.35f;
-            float yLiveOffset = 1750.0f;
-            float xBoxStart = 130;
+            float yLiveOffset = 1640.0f;
+            float xBoxStart = 140;
             float xBoxEnd = 1582;
 
             // Draw only first half to fix horizontal compression
@@ -679,30 +697,13 @@ public class GameScreen extends Screen implements Input {
             final float drawBase = 3600f;  // The vertical baseline
             final float drawOff = 1750f;   // yLiveOffset
 
-            int[] dbLevels = {10, 0, -10};
-            String[] dbLabels = {"10dB", "0dB", "-10dB"};
-
-            for (int i = 0; i < dbLevels.length; i++) {
-                // 1. Calculate the Y value exactly like the psdResult lines
-                float rawY = (dbLevels[i] * psdMult) + psdBase;
-                float finalY = (rawY * -drawGain + drawBase) - drawOff;
-
-                // 2. Clamp to stay within the PSD box boundaries
-                if (finalY < 1445) finalY = 1445;
-                if (finalY > 1895) finalY = 1895;
-
-                // 3. Draw the line and the label
-                g.drawGreenLine(130, (int)finalY, 1582, (int)finalY, 0);
-                g.drawSmallText(dbLabels[i], 70, (int)finalY + 10);
-            }
-
             for (int i = 1; i < halfLen; i++) {
                 float nextXpsd = xBoxStart + (i * xStepPsd);
                 float y1 = (float) (psdResult[i - 1] * -psdLiveGain + 3600) - yLiveOffset;
                 float y2 = (float) (psdResult[i] * -psdLiveGain + 3600) - yLiveOffset;
 
-                if (y1 < 1445) y1 = 1445; if (y1 > 1895) y1 = 1895;
-                if (y2 < 1445) y2 = 1445; if (y2 > 1895) y2 = 1895;
+                if (y1 < 1445) y1 = 1445; if (y1 > 1905) y1 = 1905;
+                if (y2 < 1445) y2 = 1445; if (y2 > 1905) y2 = 1905;
 
                 g.drawRedLine((int) currentXpsd, (int) y1, (int) nextXpsd, (int) y2, 0);
                 currentXpsd = nextXpsd;
@@ -722,35 +723,41 @@ public class GameScreen extends Screen implements Input {
         }
 
         // --- RAW SIGNAL CONSTANTS ---
-        final int xRight = 1582;
-        final int xLeft = 130;
+        final int xRight = 1574;
+        final int xLeft = 140;
         final float centerY = 565.0f;
         final float gMult = 0.15f;
         final float base = 410.0f;
         int bufferIdx = 0;
 
         if (!isReplaying) {
-            // --- LIVE BLACK SIGNAL ---
+            // --- LIVE BLACK SIGNAL (Stretched) ---
             signalPaint.setColor(android.graphics.Color.BLACK);
+            signalPaint.setStrokeWidth(2.5f);
             synchronized (A2DVal) {
                 System.arraycopy(A2DVal, 0, drawingSnapshot, 0, signalBufferLen);
             }
-            bufferIdx = 0;
+
+            float stretchFactorBlack = 1452.0f / (float)(signalBufferLen - 1);
             float yLast = centerY - ((float)drawingSnapshot[signalBufferLen - 1] - base) * gMult;
+
+            bufferIdx = 0;
             for (int n = 1; n < signalBufferLen; n++) {
-                int x1 = xRight - (n - 1);
-                int x2 = xRight - n;
+                float x1 = 1574 - ((n - 1) * stretchFactorBlack);
+                float x2 = 1574 - (n * stretchFactorBlack);
+
                 float yNext = centerY - ((float)drawingSnapshot[(signalBufferLen-1)-n] - base) * gMult;
 
                 if (yNext < 222) yNext = 222;
                 if (yNext > 680) yNext = 680;
 
-                lineBuffer[bufferIdx++] = (float)x1;
+                lineBuffer[bufferIdx++] = x1;
                 lineBuffer[bufferIdx++] = yLast;
-                lineBuffer[bufferIdx++] = (float)x2;
+                lineBuffer[bufferIdx++] = x2;
                 lineBuffer[bufferIdx++] = yNext;
                 yLast = yNext;
-                if (x2 <= xLeft || bufferIdx >= lineBuffer.length - 4) break;
+
+                if (x2 <= 122 || bufferIdx >= lineBuffer.length - 4) break;
             }
             if (bufferIdx > 0) canvas.drawLines(lineBuffer, 0, bufferIdx, signalPaint);
         }
@@ -853,16 +860,16 @@ public class GameScreen extends Screen implements Input {
                 double[] currentPsd = psdCalc.calculatePSD(psdBuf, 1000);
 
                 if (currentPsd != null) {
-                    float curX = 130;
+                    float curX = 140;
                     int hLen = currentPsd.length / 2;
-                    float xStep = (1582.0f - 130.0f) / (float) hLen;
+                    float xStep = (1582.0f - 140.0f) / (float) hLen;
 
                     // Same scaling as Live Mode
                     float psdGain = -2.5f; // Gain for dB scale
                     float yOffset = 1750.0f;
 
                     for (int i = 1; i < hLen; i++) {
-                        float nextX = 130 + (i * xStep);
+                        float nextX = 140 + (i * xStep);
 
                         // Convert to dB/Hz
                         double db1 = 10 * Math.log10(Math.max(currentPsd[i - 1], 1e-12));
