@@ -46,14 +46,12 @@ public class ConnectedThread extends Thread {
         long lastUiPingNs = 0;
         final long UI_INTERVAL_NS = 16666666L;
 
-        //1. DATA ACQUISITION SUB-THREAD (10-Second Packet Parser)
+        // 1. DATA ACQUISITION SUB-THREAD (Context-Aware Self-Healing Parser)
         Thread rxThread = new Thread(() -> {
             int currentHeader = 0;
             int metaByteCount = 0;
             int firstByte = -1;
             boolean inMetaBlock = false;
-
-            // Temporary storage for metadata bytes
             int[] metaBytes = new int[4];
 
             while (!Thread.currentThread().isInterrupted()) {
@@ -64,9 +62,12 @@ public class ConnectedThread extends Thread {
                     for (int i = 0; i < bytesRead; i++) {
                         int b = buffer[i] & 0xFF;
 
-                        // 1. Check for the Master Sync Header
-                        if (b == 120) { // char 'x'
-                            currentHeader = b;
+                        // --- SMART SYNC TRIGGER ---
+                        // Only treat '120' as a header if:
+                        // 1. We aren't in the metadata block AND
+                        // 2. We are either between samples (firstByte == -1) OR
+                        // 3. The current alignment is clearly wrong (firstByte > 15 is impossible for 12-bit)
+                        if (!inMetaBlock && (b == 120) && (firstByte == -1 || firstByte > 15)) {
                             inMetaBlock = true;
                             metaByteCount = 0;
                             firstByte = -1;
@@ -74,50 +75,44 @@ public class ConnectedThread extends Thread {
                         }
 
                         if (inMetaBlock) {
-                            // 2. Collect 4 bytes of Metadata (Voltage L/H, SOC L/H)
+                            // 2. Collect 4 bytes of Metadata (Big Endian)
                             metaBytes[metaByteCount++] = b;
-
                             if (metaByteCount == 4) {
-                                // --- BIG-ENDIAN RECONSTRUCTION --- // metaBytes[0] is High, [1] is Low
                                 int vRaw = ((metaBytes[0] & 0xFF) << 8) | (metaBytes[1] & 0xFF);
-
-                                // FIX: Firmware sends (Voltage * 100), so we divide by 100.0
-                                // (387 / 100.0 = 3.87)
                                 GameScreen.batVoltage = vRaw / 100.0;
-
-                                // metaBytes[2] is High, [3] is Low
                                 int sRaw = ((metaBytes[2] & 0xFF) << 8) | (metaBytes[3] & 0xFF);
-
-                                // FIX: Firmware sends (SOC * 100), so we divide by 100.0
-                                // (6100 / 100.0 = 61.00)
                                 GameScreen.batSOC = sRaw / 100.0;
-
-                                inMetaBlock = false; // Switch back to Signal Streaming Mode
+                                inMetaBlock = false;
                             }
-
                         } else {
-                            // 3. Collect Signal Data (A2DVal) in continuous 2-byte pairs
+                            // 3. Collect Signal Data (Big Endian)
                             if (firstByte == -1) {
-                                firstByte = b; // Store High Byte (Big Endian)
+                                firstByte = b;
                             } else {
-                                // --- BIG-ENDIAN RECONSTRUCTION ---
-                                // firstByte is High Byte, b is Low Byte
-                                int val = (firstByte << 8) | (b & 0xFF);
-                                firstByte = -1;
+                                // Reconstruct 16-bit value
+                                int val = ((firstByte & 0xFF) << 8) | (b & 0xFF);
 
-                                // Rest of your signal logic...
-                                double rawVal = val / 3.0;
-                                double filteredVal = filter60Hz.filter(rawVal);
+                                // SANITY CHECK: 12-bit ADC max is 4095.
+                                // If we get something impossible, our alignment is flipped.
+                                if (val > 4095) {
+                                    // Reset alignment: Treat THIS byte as the new High Byte
+                                    // and wait for the next Low Byte.
+                                    firstByte = b;
+                                } else {
+                                    firstByte = -1; // Reset for next pair
 
-                                int w = jWrite.get();
-                                jitterBuffer[w] = filteredVal;
-                                jWrite.set((w + 1) % jitterBuffer.length);
-                                jCount.incrementAndGet();
+                                    // Normal Signal Processing
+                                    double filteredVal = filter60Hz.filter(val / 3.0);
+                                    int w = jWrite.get();
+                                    jitterBuffer[w] = filteredVal;
+                                    jWrite.set((w + 1) % jitterBuffer.length);
+                                    jCount.incrementAndGet();
 
-                                if (GameScreen.isRecording) {
-                                    synchronized (GameScreen.ramRecordBuffer) {
-                                        if (ramRecordBufferIdx < ramRecordBuffer.length) {
-                                            ramRecordBuffer[ramRecordBufferIdx++] = filteredVal;
+                                    if (GameScreen.isRecording) {
+                                        synchronized (GameScreen.ramRecordBuffer) {
+                                            if (ramRecordBufferIdx < ramRecordBuffer.length) {
+                                                ramRecordBuffer[ramRecordBufferIdx++] = filteredVal;
+                                            }
                                         }
                                     }
                                 }
