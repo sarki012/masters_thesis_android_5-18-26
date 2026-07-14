@@ -81,7 +81,7 @@ public class GameScreen extends Screen implements Input {
     long remainingMilliseconds = 0;
     int rmsThresholdTouch = 0;
     int rmsAreaThreshTouch = 0;
-    int rmsAmpThresh = 300, rmsAreaThresh = 500;
+    double rmsAmpThresh = 300, rmsAreaThresh = 50;
     int leftUpCount = 0, leftDownCount = 0, rightUpCount = 0, rightDownCount = 0;
     private static final double PI = 3.1415927;
 
@@ -527,7 +527,7 @@ public class GameScreen extends Screen implements Input {
 
         //////////////////// Manual RMS Width Above Threshold to Trigger Event //////////////////////
         if (rmsAreaThreshTouch == 0) {
-            g.drawText("500", 1230, 2235);    //Manual RMS Width Above Threshold Text
+            g.drawText("50", 1230, 2235);    //Manual RMS Width Above Threshold Text
         } else if (rmsAreaThreshTouch == 1) {
             String rmsAreaThreshStr = String.valueOf(rmsAreaThresh);
             g.drawText(rmsAreaThreshStr, 1230, 2235);    //Manual RMS Width Above Threshold Text
@@ -616,59 +616,54 @@ public class GameScreen extends Screen implements Input {
 
 
                 // --- (Rest of Area Latch and PSD logic remains the same) ---
-
-                // --- HIGH-RESPONSIVENESS AREA LATCH ---
+                // --- STABLE RIGHTMOST ISLAND CALCULATION ---
                 double a2dToMvFactor = 3.22;
+                int n = smoothedRMS.length - 1;
 
-                // 1. Move Finish Line closer to the right (10ms instead of 60ms)
-                // This makes the area update almost immediately after the burst enters.
-                int finishLine = smoothedRMS.length - 10;
+                // 1. Skip the burst currently entering from the right
+                // We move backward until we find the first "Gap" (silence)
+                while (n >= 0 && smoothedRMS[n] > rmsAmpThresh) {
+                    n--;
+                }
 
-                // 2. TRIGGER: Detect the "Tail" crossing the 10ms mark
-                if (finishLine > 0 && smoothedRMS[finishLine] <= rmsAmpThresh && smoothedRMS[finishLine - 1] > rmsAmpThresh) {
+                // 2. We are now in a gap. Move backward to find the "Tail"
+                // of the first burst that is COMPLETELY on the screen.
+                while (n >= 0 && smoothedRMS[n] <= rmsAmpThresh) {
+                    n--;
+                }
 
-                    int n = finishLine - 1;
+                // 3. If n >= 0, we found the right-edge of a finished burst.
+                if (n >= 0) {
                     double islandSum = 0;
                     int islandWidth = 0;
 
-                    // 3. Scan backward to sum the burst
-                    while (n >= 0) {
-                        if (smoothedRMS[n] > rmsAmpThresh) {
-                            islandSum += (smoothedRMS[n] * a2dToMvFactor);
-                            islandWidth++;
-                        } else {
-                            // Hysteresis: treat 5ms gaps as noise
-                            boolean noiseGap = false;
-                            for (int h = 1; h <= 5; h++) {
-                                if (n - h >= 0 && smoothedRMS[n - h] > rmsAmpThresh) {
-                                    noiseGap = true;
-                                    n -= (h - 1);
-                                    break;
-                                }
-                            }
-                            if (!noiseGap) break;
-                        }
+                    // Sum ONLY this specific contiguous island
+                    while (n >= 0 && smoothedRMS[n] > rmsAmpThresh) {
+                        islandSum += (smoothedRMS[n] * a2dToMvFactor);
+                        islandWidth++;
                         n--;
-                    }
 
-                    // 4. Update the persistent value
-                    if (islandWidth >= rmsAreaThresh && islandWidth > 0) {
-                        stableAreaValue = islandSum * 0.001;
+                        // Internal Hysteresis: prevent noise from splitting the island
+                        if (n >= 2 && smoothedRMS[n] <= rmsAmpThresh) {
+                            if (smoothedRMS[n-1] > rmsAmpThresh) {
+                                continue;
+                            }
+                        }
                     }
-                }
-
-                // 5. IMPROVED FALLBACK: Update every 100ms (instead of 500ms)
-                // if the signal is continuous. This prevents "sluggish" numbers.
-                else if (smoothedRMS[finishLine] > rmsAmpThresh && (System.currentTimeMillis() % 100 < 20)) {
-                    double totalSum = 0;
-                    for (double val : smoothedRMS) { totalSum += (val * a2dToMvFactor); }
-                    stableAreaValue = totalSum * 0.001;
+                    // 4. Update the display value ONLY if it passes the AREA threshold
+                    // This "latches" the value—it won't change until the NEXT tail
+                    // appears in the detection zone.
+                    double currentIslandArea = islandSum * 0.001;
+                    if (islandWidth > 0) {
+                        // We update the display value for EVERY island found
+                        stableAreaValue = currentIslandArea;
+                    }
                 }
 
                 // Draw the result using the persistent variable
                 String areaText1 = "Area of Incoming Yellow";
                 String areaText2 = String.format("Shaded Region: %.1f", stableAreaValue);
-                String areaText3 = "mV*S";
+                String areaText3 = "uV*S";
 
                 g.drawSmallText(areaText1, 1280, 760);
                 g.drawSmallText(areaText2, 1280, 805);
@@ -708,8 +703,25 @@ public class GameScreen extends Screen implements Input {
                 currentXpsd = nextXpsd;
                 if (currentXpsd >= xBoxEnd) break;
             }
+            // --- AREA-BASED ALERT LOGIC ---
+            // Convert stableAreaValue to uV*S for the comparison (multiply by 1000)
+            // if your rmsAreaThresh is set in uV*S units.
+           // double areaInUvS = stableAreaValue * 1000.0;
+            double areaInUvS = stableAreaValue;
 
-
+            // Trigger alert if the most recent completed burst exceeds the Area Threshold
+            if (areaInUvS >= rmsAreaThresh && areaInUvS > 0) {
+                if (!isAlertPlaying && alertSound != null) {
+                    // This beeps once the "Tail" of a significant event is detected
+                    alertSound.play(5.0f);
+                    isAlertPlaying = true;
+                }
+            } else {
+                // Reset alert if the last detected burst was below threshold
+                // or if we are in a period of silence.
+                isAlertPlaying = false;
+            }
+/*
             latestY = (int) (blueCenterY - smoothedRMS[smoothedRMS.length - 1] * rmsYScale);
             if (latestY < thresholdY) {
                 if (!isAlertPlaying && alertSound != null) {
@@ -719,6 +731,8 @@ public class GameScreen extends Screen implements Input {
             } else {
                 isAlertPlaying = false;
             }
+            */
+
         }
 
         // --- RAW SIGNAL CONSTANTS ---
