@@ -518,7 +518,7 @@ public class GameScreen extends Screen implements Input {
 
         //////////////////// RMS Threshold to Trigger Event //////////////////////////////////
         if (rmsThresholdTouch == 0) {
-            g.drawText("200", 400, 2235);    //Manual RMS Height Above Threshold Text
+            g.drawText("200.0", 400, 2235);    //Manual RMS Height Above Threshold Text
         } else if (rmsThresholdTouch == 1) {
             String rmsAmpThreshStr = String.valueOf(rmsAmpThresh);
             g.drawText(rmsAmpThreshStr, 400, 2235);    //Manual RMS Height Above Threshold Text
@@ -528,10 +528,10 @@ public class GameScreen extends Screen implements Input {
 
         //////////////////// Manual RMS Width Above Threshold to Trigger Event //////////////////////
         if (rmsAreaThreshTouch == 0) {
-            g.drawText("50", 1230, 2235);    //Manual RMS Width Above Threshold Text
+            g.drawText("50.0", 1215, 2235);    //Manual RMS Width Above Threshold Text
         } else if (rmsAreaThreshTouch == 1) {
             String rmsAreaThreshStr = String.valueOf(rmsAreaThresh);
-            g.drawText(rmsAreaThreshStr, 1230, 2235);    //Manual RMS Width Above Threshold Text
+            g.drawText(rmsAreaThreshStr, 1215, 2235);    //Manual RMS Width Above Threshold Text
         }
 
         String eventCountStr = String.valueOf(eventCount);
@@ -617,55 +617,70 @@ public class GameScreen extends Screen implements Input {
 
 
                 // --- (Rest of Area Latch and PSD logic remains the same) ---
-                double a2dToMvFactor = 3.22; // mV per ADC count
-                double liveAreaSum = 0;
+                // --- 1. LIVE ALERT CHECK (Synchronized uV*mS) ---
+                // --- 1. LIVE ALERT CHECK (Units: mV*s) ---
+// Math: ADC_Count * 3.22 (mV/count) * 0.001 (seconds per sample) = 0.00322
+                double areaFactor = 0.00322;
+                double liveAreaMvS = 0;
                 alertTriggeredThisFrame = false;
 
-// 1. LIVE ALERT CHECK
                 int liveIdx = smoothedRMS.length - 1;
                 int liveWidth = 0;
-                while (liveIdx >= 0 && smoothedRMS[liveIdx] > rmsAmpThresh) {
-                    // Accumulate raw mV height
-                    liveAreaSum += (smoothedRMS[liveIdx] * a2dToMvFactor);
-                    liveWidth++;
-                    liveIdx--;
-                    // Hysteresis: 5ms noise gap tolerance
-                    if (liveIdx >= 5 && smoothedRMS[liveIdx] <= rmsAmpThresh) {
-                        if (smoothedRMS[liveIdx-1] > rmsAmpThresh || smoothedRMS[liveIdx-2] > rmsAmpThresh) {
-                            continue;
+
+                while (liveIdx >= 0) {
+                    if (smoothedRMS[liveIdx] > rmsAmpThresh) {
+                        // Accumulate area directly in mV*s
+                        liveAreaMvS += (smoothedRMS[liveIdx] * areaFactor);
+                        liveWidth++;
+                        liveIdx--;
+                    } else {
+                        // HYSTERESIS: Look back 5ms to bridge noise gaps
+                        boolean noiseFlicker = false;
+                        for (int h = 1; h <= 5; h++) {
+                            if (liveIdx - h >= 0 && smoothedRMS[liveIdx - h] > rmsAmpThresh) {
+                                noiseFlicker = true;
+                                liveIdx -= h;
+                                break;
+                            }
                         }
+                        if (!noiseFlicker) break;
                     }
                 }
 
-// Calculate Live Area in mV*S (Sum * 0.001s)
-                double liveAreaMvS = liveAreaSum * 0.001;
-
-// TRIGGER ALERT: If liveAreaMvS crosses the threshold
-// Note: If you set your UI threshold to "50", it now means 50 mV*S
+// TRIGGER ALERT: Use the same mV*s units
+// Note: You may need to adjust your UI slider to smaller numbers (e.g., 0.50 to 5.00)
                 if (liveAreaMvS >= rmsAreaThresh && liveWidth > 0) {
                     alertTriggeredThisFrame = true;
                 }
 
-                // 2. STABLE DISPLAY LOGIC
+// --- 2. STABLE DISPLAY LOGIC (Units: mV*s) ---
                 int n = smoothedRMS.length - 1;
-                // Skip the burst currently entering to find the last COMPLETED one
                 while (n >= 0 && smoothedRMS[n] > rmsAmpThresh) { n--; }
                 while (n >= 0 && smoothedRMS[n] <= rmsAmpThresh) { n--; }
 
                 if (n >= 0) {
-                    double islandSum = 0;
+                    double islandSumMvS = 0;
                     int islandWidth = 0;
-                    while (n >= 0 && smoothedRMS[n] > rmsAmpThresh) {
-                        islandSum += (smoothedRMS[n] * a2dToMvFactor);
-                        islandWidth++;
-                        n--;
-                        if (n >= 5 && smoothedRMS[n] <= rmsAmpThresh) {
-                            if (smoothedRMS[n-1] > rmsAmpThresh) continue;
+                    while (n >= 0) {
+                        if (smoothedRMS[n] > rmsAmpThresh) {
+                            islandSumMvS += (smoothedRMS[n] * areaFactor);
+                            islandWidth++;
+                            n--;
+                        } else {
+                            // Hysteresis for the stable island
+                            boolean flicker = false;
+                            for (int h = 1; h <= 5; h++) {
+                                if (n - h >= 0 && smoothedRMS[n - h] > rmsAmpThresh) {
+                                    flicker = true;
+                                    n -= h;
+                                    break;
+                                }
+                            }
+                            if (!flicker) break;
                         }
                     }
                     if (islandWidth > 0) {
-                        // STORE AS mV*S (Sum * 0.001)
-                        stableAreaValue = islandSum * 0.001;
+                        stableAreaValue = islandSumMvS;
                     }
                 }
 
