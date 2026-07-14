@@ -617,33 +617,36 @@ public class GameScreen extends Screen implements Input {
 
 
                 // --- (Rest of Area Latch and PSD logic remains the same) ---
-                // --- STABLE RIGHTMOST ISLAND CALCULATION ---
-                // --- ROBUST AREA & REAL-TIME ALERT LOGIC ---
-                double a2dToMvFactor = 3.22;
+                double a2dToMvFactor = 3.22; // mV per ADC count
                 double liveAreaSum = 0;
                 alertTriggeredThisFrame = false;
 
-                // 1. LIVE ALERT CHECK (Ensures we don't miss ongoing peaks)
-                // We scan the most recent data entering from the right
+// 1. LIVE ALERT CHECK
                 int liveIdx = smoothedRMS.length - 1;
                 int liveWidth = 0;
                 while (liveIdx >= 0 && smoothedRMS[liveIdx] > rmsAmpThresh) {
+                    // Accumulate raw mV height
                     liveAreaSum += (smoothedRMS[liveIdx] * a2dToMvFactor);
                     liveWidth++;
                     liveIdx--;
-                    // Internal Hysteresis: 5ms tolerance to prevent noise-splitting
+                    // Hysteresis: 5ms noise gap tolerance
                     if (liveIdx >= 5 && smoothedRMS[liveIdx] <= rmsAmpThresh) {
                         if (smoothedRMS[liveIdx-1] > rmsAmpThresh || smoothedRMS[liveIdx-2] > rmsAmpThresh) {
                             continue;
                         }
                     }
                 }
-                double liveAreaUvS = (liveAreaSum * 0.001) * 1000.0; // Convert to uV*S
-                if (liveAreaUvS >= rmsAreaThresh && liveWidth > 0) {
+
+// Calculate Live Area in mV*S (Sum * 0.001s)
+                double liveAreaMvS = liveAreaSum * 0.001;
+
+// TRIGGER ALERT: If liveAreaMvS crosses the threshold
+// Note: If you set your UI threshold to "50", it now means 50 mV*S
+                if (liveAreaMvS >= rmsAreaThresh && liveWidth > 0) {
                     alertTriggeredThisFrame = true;
                 }
 
-                // 2. STABLE DISPLAY LOGIC (The "Search-Back" for the text display)
+                // 2. STABLE DISPLAY LOGIC
                 int n = smoothedRMS.length - 1;
                 // Skip the burst currently entering to find the last COMPLETED one
                 while (n >= 0 && smoothedRMS[n] > rmsAmpThresh) { n--; }
@@ -661,6 +664,7 @@ public class GameScreen extends Screen implements Input {
                         }
                     }
                     if (islandWidth > 0) {
+                        // STORE AS mV*S (Sum * 0.001)
                         stableAreaValue = islandSum * 0.001;
                     }
                 }
@@ -668,11 +672,11 @@ public class GameScreen extends Screen implements Input {
                 // Draw the result using the persistent variable
                 String areaText1 = "Area of Incoming Yellow";
                 String areaText2 = String.format("Shaded Region: %.1f", stableAreaValue);
-                String areaText3 = "uV*S";
+                String areaText3 = "uV*mS";
 
                 g.drawSmallText(areaText1, 1280, 760);
                 g.drawSmallText(areaText2, 1280, 805);
-                g.drawSmallText(areaText3, 1650, 805);
+                g.drawSmallText(areaText3, 1630, 805);
 
             }
 
