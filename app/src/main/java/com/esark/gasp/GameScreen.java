@@ -147,6 +147,7 @@ public class GameScreen extends Screen implements Input {
     private double stableAreaValue = 0; // Persistent storage for the area
     public static double batVoltage = 0;
     public static double batSOC = 0;
+    boolean alertTriggeredThisFrame = false;
     // Constructor
     public GameScreen(Game game) {
         super(game);
@@ -617,46 +618,50 @@ public class GameScreen extends Screen implements Input {
 
                 // --- (Rest of Area Latch and PSD logic remains the same) ---
                 // --- STABLE RIGHTMOST ISLAND CALCULATION ---
+                // --- ROBUST AREA & REAL-TIME ALERT LOGIC ---
                 double a2dToMvFactor = 3.22;
+                double liveAreaSum = 0;
+                alertTriggeredThisFrame = false;
+
+                // 1. LIVE ALERT CHECK (Ensures we don't miss ongoing peaks)
+                // We scan the most recent data entering from the right
+                int liveIdx = smoothedRMS.length - 1;
+                int liveWidth = 0;
+                while (liveIdx >= 0 && smoothedRMS[liveIdx] > rmsAmpThresh) {
+                    liveAreaSum += (smoothedRMS[liveIdx] * a2dToMvFactor);
+                    liveWidth++;
+                    liveIdx--;
+                    // Internal Hysteresis: 5ms tolerance to prevent noise-splitting
+                    if (liveIdx >= 5 && smoothedRMS[liveIdx] <= rmsAmpThresh) {
+                        if (smoothedRMS[liveIdx-1] > rmsAmpThresh || smoothedRMS[liveIdx-2] > rmsAmpThresh) {
+                            continue;
+                        }
+                    }
+                }
+                double liveAreaUvS = (liveAreaSum * 0.001) * 1000.0; // Convert to uV*S
+                if (liveAreaUvS >= rmsAreaThresh && liveWidth > 0) {
+                    alertTriggeredThisFrame = true;
+                }
+
+                // 2. STABLE DISPLAY LOGIC (The "Search-Back" for the text display)
                 int n = smoothedRMS.length - 1;
+                // Skip the burst currently entering to find the last COMPLETED one
+                while (n >= 0 && smoothedRMS[n] > rmsAmpThresh) { n--; }
+                while (n >= 0 && smoothedRMS[n] <= rmsAmpThresh) { n--; }
 
-                // 1. Skip the burst currently entering from the right
-                // We move backward until we find the first "Gap" (silence)
-                while (n >= 0 && smoothedRMS[n] > rmsAmpThresh) {
-                    n--;
-                }
-
-                // 2. We are now in a gap. Move backward to find the "Tail"
-                // of the first burst that is COMPLETELY on the screen.
-                while (n >= 0 && smoothedRMS[n] <= rmsAmpThresh) {
-                    n--;
-                }
-
-                // 3. If n >= 0, we found the right-edge of a finished burst.
                 if (n >= 0) {
                     double islandSum = 0;
                     int islandWidth = 0;
-
-                    // Sum ONLY this specific contiguous island
                     while (n >= 0 && smoothedRMS[n] > rmsAmpThresh) {
                         islandSum += (smoothedRMS[n] * a2dToMvFactor);
                         islandWidth++;
                         n--;
-
-                        // Internal Hysteresis: prevent noise from splitting the island
-                        if (n >= 2 && smoothedRMS[n] <= rmsAmpThresh) {
-                            if (smoothedRMS[n-1] > rmsAmpThresh) {
-                                continue;
-                            }
+                        if (n >= 5 && smoothedRMS[n] <= rmsAmpThresh) {
+                            if (smoothedRMS[n-1] > rmsAmpThresh) continue;
                         }
                     }
-                    // 4. Update the display value ONLY if it passes the AREA threshold
-                    // This "latches" the value—it won't change until the NEXT tail
-                    // appears in the detection zone.
-                    double currentIslandArea = islandSum * 0.001;
                     if (islandWidth > 0) {
-                        // We update the display value for EVERY island found
-                        stableAreaValue = currentIslandArea;
+                        stableAreaValue = islandSum * 0.001;
                     }
                 }
 
@@ -710,15 +715,14 @@ public class GameScreen extends Screen implements Input {
             double areaInUvS = stableAreaValue;
 
             // Trigger alert if the most recent completed burst exceeds the Area Threshold
-            if (areaInUvS >= rmsAreaThresh && areaInUvS > 0) {
+            // --- REWRITTEN ALERT LOGIC ---
+            if (alertTriggeredThisFrame) {
                 if (!isAlertPlaying && alertSound != null) {
-                    // This beeps once the "Tail" of a significant event is detected
+                    // Trigger INSTANTLY when threshold is crossed, even if burst isn't finished
                     alertSound.play(5.0f);
                     isAlertPlaying = true;
                 }
             } else {
-                // Reset alert if the last detected burst was below threshold
-                // or if we are in a period of silence.
                 isAlertPlaying = false;
             }
 /*
