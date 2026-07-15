@@ -974,28 +974,34 @@ public class GameScreen extends Screen implements Input {
                 }
             }
 
-
-            // --- 3. ANIMATED REPLAY PSD ---
-            // --- 3. ANIMATED REPLAY PSD (FIXED SPECTRAL LEAKAGE) ---
+            // --- 3. ANIMATED REPLAY PSD (Synced with Real-Time) ---
+            // --- 3. ANIMATED REPLAY PSD (dB Units, Gridlines Removed) ---
+            // --- 3. ANIMATED REPLAY PSD (Fixed Sync & Movement) ---
             int psdWin = 1024;
-            if (replayRawArray.length >= psdWin) {
+            // Ensure we have enough data to calculate a PSD
+            if (replayRawArray != null && replayRawArray.length >= psdWin) {
                 double[] psdBuf = new double[psdWin];
-                float totalDur = replayRawArray.length + signalBufferLen;
-                float progress = (float) replayPosition / totalDur;
-                int windowStart = (int) (progress * (replayRawArray.length - psdWin));
+
+                // CENTER the PSD window on the current replay position
+                // This ensures the PSD reflects the "active" part of the signal seen on screen
+                int windowStart = replayPosition - (psdWin / 2);
+
+                // Bounds checking for the sliding window
                 if (windowStart < 0) windowStart = 0;
+                if (windowStart > replayRawArray.length - psdWin) {
+                    windowStart = replayRawArray.length - psdWin;
+                }
 
                 System.arraycopy(replayRawArray, windowStart, psdBuf, 0, psdWin);
 
-                // --- NEW: CLEAN SIGNAL FOR PSD ---
-                double sum = 0;
-                for (double v : psdBuf) sum += v;
-                double mean = sum / psdWin;
+                // --- PRE-PROCESSING (Identical to ConnectedThread) ---
+                double psdSum = 0;
+                for (double v : psdBuf) psdSum += v;
+                double psdMean = psdSum / psdWin;
 
                 for (int i = 0; i < psdWin; i++) {
-                    // A. Remove Mean (Removes 0Hz spike)
-                    double val = psdBuf[i] - mean;
-                    // B. Apply Hanning Window (Removes spectrum-wide noise leakage)
+                    double val = psdBuf[i] - psdMean;
+                    // Hanning Window to sharpen peaks
                     double window = 0.5 * (1.0 - Math.cos(2.0 * Math.PI * i / (psdWin - 1)));
                     psdBuf[i] = val * window;
                 }
@@ -1004,36 +1010,48 @@ public class GameScreen extends Screen implements Input {
                 double[] currentPsd = psdCalc.calculatePSD(psdBuf, 1000);
 
                 if (currentPsd != null) {
-                    float curX = 140;
+                    float xStart = 130;
+                    float xEnd = 1582;
                     int hLen = currentPsd.length / 2;
-                    float xStep = (1582.0f - 140.0f) / (float) hLen;
+                    float xStep = (xEnd - xStart) / (float) hLen;
 
-                    // Same scaling as Live Mode
-                    float psdGain = -2.5f; // Gain for dB scale
-                    float yOffset = 1750.0f;
+                    float drawBase = 3600f;
+                    float yOffset = 1740.0f; // Bottom at 1905
+                    float curX = xStart;
 
                     for (int i = 1; i < hLen; i++) {
-                        float nextX = 140 + (i * xStep);
-
-                        // Convert to dB/Hz
+                        float nextX = xStart + (i * xStep);
                         double db1 = 10 * Math.log10(Math.max(currentPsd[i - 1], 1e-12));
                         double db2 = 10 * Math.log10(Math.max(currentPsd[i], 1e-12));
 
-                        float y1 = (float) (db1 * psdGain + 3600) - yOffset;
-                        float y2 = (float) (db2 * psdGain + 3600) - yOffset;
+                        float y1 = (float) (( (db1 * -20.0 + 500.0) * -0.35) + drawBase) - yOffset;
+                        float y2 = (float) (( (db2 * -20.0 + 500.0) * -0.35) + drawBase) - yOffset;
 
-                        if (y1 < 1445) y1 = 1445; if (y1 > 1895) y1 = 1895;
-                        if (y2 < 1445) y2 = 1445; if (y2 > 1895) y2 = 1895;
+                        if (y1 < 1455) y1 = 1455; if (y1 > 1905) y1 = 1905;
+                        if (y2 < 1455) y2 = 1455; if (y2 > 1905) y2 = 1905;
 
                         g.drawRedLine((int) curX, (int) y1, (int) nextX, (int) y2, 0);
                         curX = nextX;
-                        if (curX >= 1582) break;
+                        if (curX >= xEnd) break;
                     }
                 }
             }
-            replayPosition += 17;
-            if (replayPosition >= (replayRawArray.length + signalBufferLen)) replayPosition = 0;
-            view.postInvalidate();
+
+            // --- IMPROVED REPLAY VELOCITY & LOOPING ---
+            // 17 samples per frame approx 60Hz.
+            // We allow replayPosition to exceed length so signal can "slide off" to the left
+            replayPosition += 20;
+
+            // Limit: Buffer length + the width of the screen (windowSize)
+            int totalReplayPath = replayRawArray.length + (1574 - 130);
+
+            if (replayPosition >= totalReplayPath) {
+                replayPosition = 0; // Restart from the right edge
+            }
+
+            if (view != null) {
+                view.postInvalidate();
+            }
         }
     }
 
