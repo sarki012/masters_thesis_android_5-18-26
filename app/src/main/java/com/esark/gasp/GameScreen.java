@@ -871,50 +871,109 @@ public class GameScreen extends Screen implements Input {
             }
             if (bufferIdx > 0) canvas.drawLines(lineBuffer, 0, bufferIdx, signalPaint);
 
-            // --- 2. DRAW REPLAY RMS (BLUE LINE) ---
+            // --- 2. DRAW REPLAY RMS (Mirroring Live Logic) ---
             if (replayRMSArray != null) {
                 final int blueCenterY = 1400;
                 final float rmsYScale = 1.5f;
+                final int xRightLimit = 1574;
+                final int xLeftLimit = 130;
+
+                // 1. PRE-PASS: IDENTIFY ALL SPASM "ISLANDS" IN THE REPLAY BUFFER
+                // We scan the whole recorded array once so the color persists as we scroll
+                double areaFactor = 0.00322;
+                boolean[] replaySpasmMap = new boolean[replayRMSArray.length];
+
+                int iScan = replayRMSArray.length - 1;
+                while (iScan >= 0) {
+                    if (replayRMSArray[iScan] > rmsAmpThresh) {
+                        int islandEnd = iScan;
+                        double islandSum = 0;
+                        int islandWidth = 0;
+
+                        while (iScan >= 0) {
+                            if (replayRMSArray[iScan] > rmsAmpThresh) {
+                                islandSum += (replayRMSArray[iScan] * areaFactor);
+                                islandWidth++;
+                                iScan--;
+                            } else {
+                                // 5ms Hysteresis
+                                boolean flicker = false;
+                                for (int h = 1; h <= 5; h++) {
+                                    if (iScan - h >= 0 && replayRMSArray[iScan - h] > rmsAmpThresh) {
+                                        flicker = true;
+                                        iScan -= h;
+                                        break;
+                                    }
+                                }
+                                if (!flicker) break;
+                            }
+                        }
+                        int islandStart = iScan + 1;
+                        // Determine if this island was a spasm
+                        if (islandSum >= rmsAreaThresh && islandWidth > 0) {
+                            for (int k = Math.max(0, islandStart); k <= islandEnd; k++) {
+                                replaySpasmMap[k] = true;
+                            }
+                        }
+                    } else {
+                        iScan--;
+                    }
+                }
+
+                // 2. DRAW THRESHOLD LINE
+                int thresholdYRep = (int) (blueCenterY - (rmsAmpThresh * rmsYScale));
+                g.drawGreenLine(xLeftLimit, thresholdYRep, xRightLimit, thresholdYRep, 0);
+
                 final int CEILING = 869;
                 final int FLOOR = 1308;
                 final int STROKE_OFFSET = 4;
 
-                int thresholdYRep = (int) (1200 - (rmsAmpThresh * 2.0f));
-                g.drawRedLine(xLeft, thresholdYRep, xRight, thresholdYRep, 0);
+                // Mapping constants for Replay window
+                // This assumes we show the same window width as live mode
+                int windowSize = xRightLimit - xLeftLimit;
 
-                // Pass 1: Yellow Fill
-                for (int n = 1; n < signalBufferLen; n++) {
-                    int x = xRight - (n - 1);
+                // --- PASS 1: SHADED FILL (Yellow or Green) ---
+                for (int n = 0; n < windowSize; n++) {
+                    int xCurrent = xRightLimit - n;
+                    // In Replay, we look back from the current playback position
                     int dataIdx = replayPosition - n;
+
                     if (dataIdx >= 0 && dataIdx < replayRMSArray.length) {
-                        int ry = (int) (blueCenterY - replayRMSArray[dataIdx] * rmsYScale);
+                        int yVal = (int) (blueCenterY - replayRMSArray[dataIdx] * rmsYScale);
+                        if (yVal < CEILING) yVal = CEILING;
+                        if (yVal > FLOOR) yVal = FLOOR;
 
-                        // CLAMP the data before shading
-                        if (ry < CEILING) ry = CEILING;
-                        if (ry > FLOOR) ry = FLOOR;
-
-                        if (ry < thresholdYRep) {
-                            // Start fill below the clamped RMS line
-                            g.drawYellowLine(x, ry + STROKE_OFFSET, x, thresholdYRep, 0);
+                        if (yVal < thresholdYRep) {
+                            if (replaySpasmMap[dataIdx]) {
+                                g.drawGreenLine(xCurrent, yVal + STROKE_OFFSET, xCurrent, thresholdYRep, 0);
+                            } else {
+                                g.drawYellowLine(xCurrent, yVal + STROKE_OFFSET, xCurrent, thresholdYRep, 0);
+                            }
                         }
                     }
-                    if (x <= xLeft) break;
+                    if (xCurrent <= xLeftLimit) break;
                 }
-                // Pass 2: Blue Line
-                for (int n = 1; n < signalBufferLen; n++) {
-                    int x1 = xRight - (n - 1);
-                    int x2 = xRight - n;
-                    int dataIdx = replayPosition - n;
-                    if (dataIdx >= 0 && dataIdx < replayRMSArray.length - 1) {
-                        int ry1 = (int) (blueCenterY - replayRMSArray[dataIdx + 1] * rmsYScale);
-                        int ry2 = (int) (blueCenterY - replayRMSArray[dataIdx] * rmsYScale);
-                        if (ry1 < 869) ry1 = 869; if (ry1 > 1308) ry1 = 1308;
-                        if (ry2 < 869) ry2 = 869; if (ry2 > 1308) ry2 = 1308;
+
+                // --- PASS 2: BLUE RMS LINE ---
+                for (int n = 0; n < windowSize - 1; n++) {
+                    int x1 = xRightLimit - n;
+                    int x2 = xRightLimit - (n + 1);
+                    int dataIdx1 = replayPosition - n;
+                    int dataIdx2 = replayPosition - (n + 1);
+
+                    if (dataIdx2 >= 0 && dataIdx1 < replayRMSArray.length) {
+                        int ry1 = (int) (blueCenterY - replayRMSArray[dataIdx1] * rmsYScale);
+                        int ry2 = (int) (blueCenterY - replayRMSArray[dataIdx2] * rmsYScale);
+
+                        if (ry1 < CEILING) ry1 = CEILING; if (ry1 > FLOOR) ry1 = FLOOR;
+                        if (ry2 < CEILING) ry2 = CEILING; if (ry2 > FLOOR) ry2 = FLOOR;
+
                         g.drawBlueLine(x1, ry1, x2, ry2, 0);
                     }
-                    if (x2 <= xLeft) break;
+                    if (x2 <= xLeftLimit) break;
                 }
             }
+
 
             // --- 3. ANIMATED REPLAY PSD ---
             // --- 3. ANIMATED REPLAY PSD (FIXED SPECTRAL LEAKAGE) ---
