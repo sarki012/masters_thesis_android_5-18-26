@@ -858,13 +858,13 @@ public class GameScreen extends Screen implements Input {
             signalPaint.setColor(android.graphics.Color.RED);
             bufferIdx = 0;
             int safePos = Math.min(replayPosition, replayRawArray.length - 1);
-            float yLast = 500.0f - (float) ((replayRawArray[safePos] - 410.0f) * 0.15f);
+            float yLast = 565.0f - (float) ((replayRawArray[safePos] - 410.0f) * 0.15f);
             for (int n = 1; n < signalBufferLen; n++) {
                 int x1 = xRight - (n - 1);
                 int x2 = xRight - n;
                 int dataIdx = replayPosition - n;
                 if (dataIdx >= 0 && dataIdx < replayRawArray.length) {
-                    float yNext = 500.0f - (float) ((replayRawArray[dataIdx] - 410.0f) * 0.15f);
+                    float yNext = 565.0f - (float) ((replayRawArray[dataIdx] - 410.0f) * 0.15f);
                     if (yNext < 222) yNext = 222;
                     if (yNext > 680) yNext = 680;
                     lineBuffer[bufferIdx++] = (float) x1;
