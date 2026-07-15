@@ -496,8 +496,8 @@ public class GameScreen extends Screen implements Input {
         //  g.drawRect(1560, 2220, 155, 105, 0);       //Right Down Button
         //     g.drawRect(720, 2535, 470, 200, 0);       //Event Log
         //   g.drawRect(25, 2535, 650, 200, 0);       //Manual Patient Event
-      //  g.drawText("Home", 100, 2450);
-       // g.drawRect(25, 2350, 650, 180, 0);       //Home
+        //  g.drawText("Home", 100, 2450);
+        // g.drawRect(25, 2350, 650, 180, 0);       //Home
 
         //   g.drawRect(725, 2400, 285, 150, 0);       //True Positive
         //  g.drawText("50", 880, 2480);    //True Positive Text
@@ -546,11 +546,11 @@ public class GameScreen extends Screen implements Input {
         } else if (startRecording == 1) {
             // Mode 1: Timer is actively counting
             long delta = System.currentTimeMillis() - startTimeMillis;
-            String time = String.format("%02d:%02d:%03d", (delta/60000), (delta/1000)%60, (delta%1000));
+            String time = String.format("%02d:%02d:%03d", (delta / 60000), (delta / 1000) % 60, (delta % 1000));
             g.drawText(time, 245, 2070);
         } else if (startRecording == 2) {
             // Mode 2: Timer is stopped/frozen at totalRecordingTime
-            String time = String.format("%02d:%02d:%03d", (totalRecordingTime/60000), (totalRecordingTime/1000)%60, (totalRecordingTime%1000));
+            String time = String.format("%02d:%02d:%03d", (totalRecordingTime / 60000), (totalRecordingTime / 1000) % 60, (totalRecordingTime % 1000));
             g.drawText(time, 245, 2070);
         }
 
@@ -704,8 +704,12 @@ public class GameScreen extends Screen implements Input {
 
 // --- 2. STABLE DISPLAY LOGIC (Units: mV*s) ---
                 int n = smoothedRMS.length - 1;
-                while (n >= 0 && smoothedRMS[n] > rmsAmpThresh) { n--; }
-                while (n >= 0 && smoothedRMS[n] <= rmsAmpThresh) { n--; }
+                while (n >= 0 && smoothedRMS[n] > rmsAmpThresh) {
+                    n--;
+                }
+                while (n >= 0 && smoothedRMS[n] <= rmsAmpThresh) {
+                    n--;
+                }
 
                 if (n >= 0) {
                     double islandSumMvS = 0;
@@ -752,7 +756,7 @@ public class GameScreen extends Screen implements Input {
 
             // Draw only first half to fix horizontal compression
             int halfLen = psdResult.length / 2;
-            float xStepPsd = (xBoxEnd - xBoxStart) / (float)halfLen;
+            float xStepPsd = (xBoxEnd - xBoxStart) / (float) halfLen;
 
             float currentXpsd = xBoxStart;
 
@@ -769,8 +773,10 @@ public class GameScreen extends Screen implements Input {
                 float y1 = (float) (psdResult[i - 1] * -psdLiveGain + 3600) - yLiveOffset;
                 float y2 = (float) (psdResult[i] * -psdLiveGain + 3600) - yLiveOffset;
 
-                if (y1 < 1445) y1 = 1445; if (y1 > 1905) y1 = 1905;
-                if (y2 < 1445) y2 = 1445; if (y2 > 1905) y2 = 1905;
+                if (y1 < 1445) y1 = 1445;
+                if (y1 > 1905) y1 = 1905;
+                if (y2 < 1445) y2 = 1445;
+                if (y2 > 1905) y2 = 1905;
 
                 g.drawRedLine((int) currentXpsd, (int) y1, (int) nextXpsd, (int) y2, 0);
                 currentXpsd = nextXpsd;
@@ -779,7 +785,7 @@ public class GameScreen extends Screen implements Input {
             // --- AREA-BASED ALERT LOGIC ---
             // Convert stableAreaValue to uV*S for the comparison (multiply by 1000)
             // if your rmsAreaThresh is set in uV*S units.
-           // double areaInUvS = stableAreaValue * 1000.0;
+            // double areaInUvS = stableAreaValue * 1000.0;
             double areaInUvS = stableAreaValue;
 
             // Trigger alert if the most recent completed burst exceeds the Area Threshold
@@ -823,15 +829,15 @@ public class GameScreen extends Screen implements Input {
                 System.arraycopy(A2DVal, 0, drawingSnapshot, 0, signalBufferLen);
             }
 
-            float stretchFactorBlack = 1452.0f / (float)(signalBufferLen - 1);
-            float yLast = centerY - ((float)drawingSnapshot[signalBufferLen - 1] - base) * gMult;
+            float stretchFactorBlack = 1452.0f / (float) (signalBufferLen - 1);
+            float yLast = centerY - ((float) drawingSnapshot[signalBufferLen - 1] - base) * gMult;
 
             bufferIdx = 0;
             for (int n = 1; n < signalBufferLen; n++) {
                 float x1 = 1574 - ((n - 1) * stretchFactorBlack);
                 float x2 = 1574 - (n * stretchFactorBlack);
 
-                float yNext = centerY - ((float)drawingSnapshot[(signalBufferLen-1)-n] - base) * gMult;
+                float yNext = centerY - ((float) drawingSnapshot[(signalBufferLen - 1) - n] - base) * gMult;
 
                 if (yNext < 222) yNext = 222;
                 if (yNext > 680) yNext = 680;
@@ -852,18 +858,18 @@ public class GameScreen extends Screen implements Input {
             signalPaint.setColor(android.graphics.Color.RED);
             bufferIdx = 0;
             int safePos = Math.min(replayPosition, replayRawArray.length - 1);
-            float yLast = 500.0f - (float)((replayRawArray[safePos] - 410.0f) * 0.15f);
+            float yLast = 500.0f - (float) ((replayRawArray[safePos] - 410.0f) * 0.15f);
             for (int n = 1; n < signalBufferLen; n++) {
                 int x1 = xRight - (n - 1);
                 int x2 = xRight - n;
                 int dataIdx = replayPosition - n;
                 if (dataIdx >= 0 && dataIdx < replayRawArray.length) {
-                    float yNext = 500.0f - (float)((replayRawArray[dataIdx] - 410.0f) * 0.15f);
+                    float yNext = 500.0f - (float) ((replayRawArray[dataIdx] - 410.0f) * 0.15f);
                     if (yNext < 222) yNext = 222;
                     if (yNext > 680) yNext = 680;
-                    lineBuffer[bufferIdx++] = (float)x1;
+                    lineBuffer[bufferIdx++] = (float) x1;
                     lineBuffer[bufferIdx++] = yLast;
-                    lineBuffer[bufferIdx++] = (float)x2;
+                    lineBuffer[bufferIdx++] = (float) x2;
                     lineBuffer[bufferIdx++] = yNext;
                     yLast = yNext;
                 }
@@ -965,8 +971,10 @@ public class GameScreen extends Screen implements Input {
                         int ry1 = (int) (blueCenterY - replayRMSArray[dataIdx1] * rmsYScale);
                         int ry2 = (int) (blueCenterY - replayRMSArray[dataIdx2] * rmsYScale);
 
-                        if (ry1 < CEILING) ry1 = CEILING; if (ry1 > FLOOR) ry1 = FLOOR;
-                        if (ry2 < CEILING) ry2 = CEILING; if (ry2 > FLOOR) ry2 = FLOOR;
+                        if (ry1 < CEILING) ry1 = CEILING;
+                        if (ry1 > FLOOR) ry1 = FLOOR;
+                        if (ry2 < CEILING) ry2 = CEILING;
+                        if (ry2 > FLOOR) ry2 = FLOOR;
 
                         g.drawBlueLine(x1, ry1, x2, ry2, 0);
                     }
@@ -977,31 +985,31 @@ public class GameScreen extends Screen implements Input {
             // --- 3. ANIMATED REPLAY PSD (Synced with Real-Time) ---
             // --- 3. ANIMATED REPLAY PSD (dB Units, Gridlines Removed) ---
             // --- 3. ANIMATED REPLAY PSD (Fixed Sync & Movement) ---
+            // --- 3. ANIMATED REPLAY PSD (Cleaned & Synchronized) ---
+            // --- 3. ANIMATED REPLAY PSD (Linear Mode to match Real-Time) ---
             int psdWin = 1024;
-            // Ensure we have enough data to calculate a PSD
             if (replayRawArray != null && replayRawArray.length >= psdWin) {
                 double[] psdBuf = new double[psdWin];
 
-                // CENTER the PSD window on the current replay position
-                // This ensures the PSD reflects the "active" part of the signal seen on screen
                 int windowStart = replayPosition - (psdWin / 2);
-
-                // Bounds checking for the sliding window
                 if (windowStart < 0) windowStart = 0;
                 if (windowStart > replayRawArray.length - psdWin) {
                     windowStart = replayRawArray.length - psdWin;
                 }
 
-                System.arraycopy(replayRawArray, windowStart, psdBuf, 0, psdWin);
+                // Copy and scale by 3.0 (Matches ConnectedThread)
+                for (int i = 0; i < psdWin; i++) {
+                    psdBuf[i] = replayRawArray[windowStart + i] / 3.0;
+                }
 
-                // --- PRE-PROCESSING (Identical to ConnectedThread) ---
-                double psdSum = 0;
-                for (double v : psdBuf) psdSum += v;
-                double psdMean = psdSum / psdWin;
+                // Local Mean Subtraction (Identical to Live)
+                double localSum = 0;
+                for (double v : psdBuf) localSum += v;
+                double localMean = localSum / psdWin;
 
                 for (int i = 0; i < psdWin; i++) {
-                    double val = psdBuf[i] - psdMean;
-                    // Hanning Window to sharpen peaks
+                    double val = psdBuf[i] - localMean;
+                    // Hanning Window
                     double window = 0.5 * (1.0 - Math.cos(2.0 * Math.PI * i / (psdWin - 1)));
                     psdBuf[i] = val * window;
                 }
@@ -1015,45 +1023,55 @@ public class GameScreen extends Screen implements Input {
                     int hLen = currentPsd.length / 2;
                     float xStep = (xEnd - xStart) / (float) hLen;
 
-                    float drawBase = 3600f;
-                    float yOffset = 1740.0f; // Bottom at 1905
-                    float curX = xStart;
+                    // --- LINEAR TRANSFORMATION (Matches Live View) ---
+                    // --- MATCHED LINEAR TRANSFORMATION ---
+                    // Using 0.35f matches the real-time sensitivity perfectly
+                    // --- SHARP NEEDLE TRANSFORMATION ---
+                    float psdLiveGain = 3.0f; // As requested
+                    // 3600 - 1700 = 1900. This puts the floor exactly at 1900
+                    float yLiveOffset = 1700.0f;
+                    float baselineY = 1900.0f;
 
-                    for (int i = 1; i < hLen; i++) {
-                        float nextX = xStart + (i * xStep);
-                        double db1 = 10 * Math.log10(Math.max(currentPsd[i - 1], 1e-12));
-                        double db2 = 10 * Math.log10(Math.max(currentPsd[i], 1e-12));
+                    for (int i = 0; i < hLen; i++) {
+                        // Calculate the X coordinates for this specific bin
+                        float xLeftPSD = xStart + (i * xStep);
+                        float xMid = xLeftPSD + (xStep / 2.0f);
+                        float xRightPSD = xLeftPSD + xStep;
 
-                        float y1 = (float) (( (db1 * -20.0 + 500.0) * -0.35) + drawBase) - yOffset;
-                        float y2 = (float) (( (db2 * -20.0 + 500.0) * -0.35) + drawBase) - yOffset;
+                        // Calculate the peak height for this bin
+                        float yPeak = (float) (currentPsd[i] * -psdLiveGain + 3600) - yLiveOffset;
 
-                        if (y1 < 1455) y1 = 1455; if (y1 > 1905) y1 = 1905;
-                        if (y2 < 1455) y2 = 1455; if (y2 > 1905) y2 = 1905;
+                        // Clamping to stay inside the PSD box
+                        if (yPeak < 1455) yPeak = 1455;
+                        if (yPeak > 1900) yPeak = 1900;
 
-                        g.drawRedLine((int) curX, (int) y1, (int) nextX, (int) y2, 0);
-                        curX = nextX;
-                        if (curX >= xEnd) break;
+                        // Only draw if there is a spike to show
+                        if (yPeak < 1899) {
+                            // FIX: Use xLeftPSD, xMid, and xRightPSD (the bin coordinates)
+                            // instead of xLeft and xRight (the box boundaries)
+                            g.drawRedLine((int) xLeftPSD, (int) baselineY, (int) xMid, (int) yPeak, 0);
+                            g.drawRedLine((int) xMid, (int) yPeak, (int) xRightPSD, (int) baselineY, 0);
+                        } else {
+                            // Just draw the flat baseline for the width of this specific bin
+                            g.drawRedLine((int) xLeftPSD, (int) baselineY, (int) xRightPSD, (int) baselineY, 0);
+                        }
                     }
                 }
             }
 
             // --- IMPROVED REPLAY VELOCITY & LOOPING ---
-            // 17 samples per frame approx 60Hz.
-            // We allow replayPosition to exceed length so signal can "slide off" to the left
             replayPosition += 20;
-
-            // Limit: Buffer length + the width of the screen (windowSize)
-            int totalReplayPath = replayRawArray.length + (1574 - 130);
+            int totalReplayPath = (replayRawArray != null) ? replayRawArray.length + (1574 - 130) : 0;
 
             if (replayPosition >= totalReplayPath) {
-                replayPosition = 0; // Restart from the right edge
+                replayPosition = 0;
             }
 
             if (view != null) {
                 view.postInvalidate();
             }
-        }
-    }
+        } // This closes "else if (isReplaying)"
+    } // This closes the "public void present(float deltaTime)" method
 
 
     /////////////////////////// Replay Helper Method ////////////////////////////////////
@@ -1063,6 +1081,9 @@ public class GameScreen extends Screen implements Input {
     public void loadSpecificEvent(int id, Context context) {
         replayList.clear();
         replayPosition = 0;
+        // Create a temporary filter to match real-time behavior
+        NotchFilter replayNotch = new NotchFilter();
+
         try {
             File path = context.getExternalFilesDir(null);
             File file = new File(path, "Event_" + id + ".csv");
@@ -1077,12 +1098,21 @@ public class GameScreen extends Screen implements Input {
             }
             br.close();
 
+            // Inside loadSpecificEvent
             if (!replayList.isEmpty()) {
-                // 1. Convert to primitive array
                 replayRawArray = new double[replayList.size()];
+
+                // WARM UP the filter so it doesn't create a noise spike at sample 0
+                double firstVal = replayList.get(0);
+                for(int i = 0; i < 200; i++) {
+                    replayNotch.filter(firstVal);
+                }
+
                 double sum = 0;
                 for (int i = 0; i < replayList.size(); i++) {
-                    replayRawArray[i] = replayList.get(i);
+                    double rawVal = replayList.get(i);
+                    // Apply filter to stabilized state
+                    replayRawArray[i] = replayNotch.filter(rawVal);
                     sum += replayRawArray[i];
                 }
 
