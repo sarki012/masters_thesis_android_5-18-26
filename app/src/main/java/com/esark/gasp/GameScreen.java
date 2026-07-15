@@ -564,56 +564,55 @@ public class GameScreen extends Screen implements Input {
             float stretchFactor = totalPixelWidth / (float) (smoothedRMS.length - 1);
 
             // --- 1. CALCULATE LIVE AREA FIRST (To determine color) ---
-            // ---1. CALCULATE AREAS FOR THE TWO MOST RECENT BURSTS ---
-            double a2dToMvFactor = 3.22;
+            // --- 1. PRE-PASS: IDENTIFY ALL SPASM "ISLANDS" IN THE BUFFER ---
             double areaFactor = 0.00322;
+            boolean[] spasmMap = new boolean[smoothedRMS.length];
+            alertTriggeredThisFrame = false;
 
-            // Region A: The Incoming Burst (Right Edge)
-            double incomingAreaMvS = 0;
-            int incomingWidth = 0;
-            int nScan = smoothedRMS.length - 1;
+            int iScan = smoothedRMS.length - 1;
+            while (iScan >= 0) {
+                // Look for the start of an island (working right to left)
+                if (smoothedRMS[iScan] > rmsAmpThresh) {
+                    int islandEnd = iScan;
+                    double islandSum = 0;
+                    int islandWidth = 0;
 
-            // Find boundaries of the burst touching the right edge
-            while (nScan >= 0 && smoothedRMS[nScan] > rmsAmpThresh) {
-                incomingAreaMvS += (smoothedRMS[nScan] * areaFactor);
-                incomingWidth++;
-                nScan--;
-                // 5ms Hysteresis to bridge tiny noise-dips
-                if (nScan >= 5 && smoothedRMS[nScan] <= rmsAmpThresh) {
-                    if (smoothedRMS[nScan-1] > rmsAmpThresh || smoothedRMS[nScan-2] > rmsAmpThresh) continue;
-                }
-            }
-            int incomingBurstBoundary = nScan; // Where the rightmost burst ends
-            boolean incomingIsSpasm = (incomingAreaMvS >= rmsAreaThresh && incomingWidth > 0);
-
-            // Region B: The Last Complete Burst (To the left of the incoming one)
-            // We only look for this if we hit a gap after the incoming burst
-            lastCompleteAreaMvS = 0;
-            int lastCompleteStart = -1;
-            int lastCompleteEnd = -1;
-
-            // Skip the gap to find the "Tail" of the previous burst
-            while (nScan >= 0 && smoothedRMS[nScan] <= rmsAmpThresh) { nScan--; }
-
-            if (nScan >= 0) {
-                lastCompleteEnd = nScan;
-                double tempArea = 0;
-                int tempWidth = 0;
-                while (nScan >= 0 && smoothedRMS[nScan] > rmsAmpThresh) {
-                    tempArea += (smoothedRMS[nScan] * areaFactor);
-                    tempWidth++;
-                    nScan--;
-                    if (nScan >= 5 && smoothedRMS[nScan] <= rmsAmpThresh) {
-                        if (smoothedRMS[nScan-1] > rmsAmpThresh) continue;
+                    // Measure this specific island
+                    while (iScan >= 0) {
+                        if (smoothedRMS[iScan] > rmsAmpThresh) {
+                            islandSum += (smoothedRMS[iScan] * areaFactor);
+                            islandWidth++;
+                            iScan--;
+                        } else {
+                            // 5ms Hysteresis to bridge tiny noise-dips
+                            boolean flicker = false;
+                            for (int h = 1; h <= 5; h++) {
+                                if (iScan - h >= 0 && smoothedRMS[iScan - h] > rmsAmpThresh) {
+                                    flicker = true;
+                                    iScan -= h;
+                                    break;
+                                }
+                            }
+                            if (!flicker) break; // Real end of island found
+                        }
                     }
-                }
-                lastCompleteStart = nScan;
-                lastCompleteAreaMvS = tempArea;
-            }
-            boolean lastCompleteIsSpasm = (lastCompleteAreaMvS >= rmsAreaThresh);
+                    int islandStart = iScan + 1;
+                    double islandArea = islandSum;
 
-            // Update Global Alert
-            alertTriggeredThisFrame = incomingIsSpasm;
+                    // If this island qualifies as a spasm, mark it in the map
+                    if (islandArea >= rmsAreaThresh && islandWidth > 0) {
+                        for (int k = Math.max(0, islandStart); k <= islandEnd; k++) {
+                            spasmMap[k] = true;
+                        }
+                        // Trigger alert only if this island is currently touching the right edge
+                        if (islandEnd >= smoothedRMS.length - 10) {
+                            alertTriggeredThisFrame = true;
+                        }
+                    }
+                } else {
+                    iScan--;
+                }
+            }
 
             if (smoothedRMS.length > 2) {
                 thresholdY = (int) (blueCenterY - (rmsAmpThresh * rmsYScale));
@@ -623,7 +622,7 @@ public class GameScreen extends Screen implements Input {
                 final int FLOOR = 1308;
                 final int STROKE_OFFSET = 4;
 
-                // --- 2. PASS 1: SHADED FILL (With Persistent Green) ---
+                // --- 2. PASS 1: SHADED FILL (Using the Spasm Map for Persistence) ---
                 for (int n = 0; n < smoothedRMS.length; n++) {
                     int xCurrent = (int) (xRightLimit - (n * stretchFactor));
                     if (xCurrent < xLeftLimit) break;
@@ -636,19 +635,11 @@ public class GameScreen extends Screen implements Input {
                     if (yVal > FLOOR) yVal = FLOOR;
 
                     if (yVal < thresholdY) {
-                        // PERSISTENCE LOGIC:
-                        // 1. If we are in the incoming burst and it's a spasm -> Green
-                        // 2. If we are in the last complete burst and it was a spasm -> Green
-                        if (dataIdx > incomingBurstBoundary) {
-                            if (incomingIsSpasm) g.drawGreenLine(xCurrent, yVal + STROKE_OFFSET, xCurrent, thresholdY, 0);
-                            else g.drawYellowLine(xCurrent, yVal + STROKE_OFFSET, xCurrent, thresholdY, 0);
-                        }
-                        else if (dataIdx > lastCompleteStart && dataIdx <= lastCompleteEnd) {
-                            if (lastCompleteIsSpasm) g.drawGreenLine(xCurrent, yVal + STROKE_OFFSET, xCurrent, thresholdY, 0);
-                            else g.drawYellowLine(xCurrent, yVal + STROKE_OFFSET, xCurrent, thresholdY, 0);
-                        }
-                        else {
-                            // Any bursts further to the left default to yellow
+                        // If this index was marked as part of a spasm island, draw GREEN
+                        if (spasmMap[dataIdx]) {
+                            g.drawGreenLine(xCurrent, yVal + STROKE_OFFSET, xCurrent, thresholdY, 0);
+                        } else {
+                            // Otherwise draw YELLOW
                             g.drawYellowLine(xCurrent, yVal + STROKE_OFFSET, xCurrent, thresholdY, 0);
                         }
                     }
