@@ -148,6 +148,9 @@ public class GameScreen extends Screen implements Input {
     public static double batVoltage = 0;
     public static double batSOC = 0;
     boolean alertTriggeredThisFrame = false;
+    private double lastCompleteAreaMvS = 0;
+    private int lastCompleteBurstStart = -1;
+    private int lastCompleteBurstEnd = -1;
     // Constructor
     public GameScreen(Game game) {
         super(game);
@@ -553,17 +556,66 @@ public class GameScreen extends Screen implements Input {
 
 // --- LIVE RMS & PSD (Only shows when NOT replaying) ---
         if (!isReplaying) {
-            int latestY = 0;
             int blueCenterY = 1400;
-            float rmsYScale = 1.5f;     // Was 1.5f
+            float rmsYScale = 1.5f;
+            int xRightLimit = 1574;
+            int xLeftLimit = 130;
+            float totalPixelWidth = (float) (xRightLimit - xLeftLimit);
+            float stretchFactor = totalPixelWidth / (float) (smoothedRMS.length - 1);
 
-            // UPDATED BOUNDARIES
-            final int xRightLimit = 1574;
-            final int xLeftLimit = 140; // Disappear point
-            final float totalPixelWidth = (float)(xRightLimit - xLeftLimit); // 1452 pixels
+            // --- 1. CALCULATE LIVE AREA FIRST (To determine color) ---
+            // ---1. CALCULATE AREAS FOR THE TWO MOST RECENT BURSTS ---
+            double a2dToMvFactor = 3.22;
+            double areaFactor = 0.00322;
+
+            // Region A: The Incoming Burst (Right Edge)
+            double incomingAreaMvS = 0;
+            int incomingWidth = 0;
+            int nScan = smoothedRMS.length - 1;
+
+            // Find boundaries of the burst touching the right edge
+            while (nScan >= 0 && smoothedRMS[nScan] > rmsAmpThresh) {
+                incomingAreaMvS += (smoothedRMS[nScan] * areaFactor);
+                incomingWidth++;
+                nScan--;
+                // 5ms Hysteresis to bridge tiny noise-dips
+                if (nScan >= 5 && smoothedRMS[nScan] <= rmsAmpThresh) {
+                    if (smoothedRMS[nScan-1] > rmsAmpThresh || smoothedRMS[nScan-2] > rmsAmpThresh) continue;
+                }
+            }
+            int incomingBurstBoundary = nScan; // Where the rightmost burst ends
+            boolean incomingIsSpasm = (incomingAreaMvS >= rmsAreaThresh && incomingWidth > 0);
+
+            // Region B: The Last Complete Burst (To the left of the incoming one)
+            // We only look for this if we hit a gap after the incoming burst
+            lastCompleteAreaMvS = 0;
+            int lastCompleteStart = -1;
+            int lastCompleteEnd = -1;
+
+            // Skip the gap to find the "Tail" of the previous burst
+            while (nScan >= 0 && smoothedRMS[nScan] <= rmsAmpThresh) { nScan--; }
+
+            if (nScan >= 0) {
+                lastCompleteEnd = nScan;
+                double tempArea = 0;
+                int tempWidth = 0;
+                while (nScan >= 0 && smoothedRMS[nScan] > rmsAmpThresh) {
+                    tempArea += (smoothedRMS[nScan] * areaFactor);
+                    tempWidth++;
+                    nScan--;
+                    if (nScan >= 5 && smoothedRMS[nScan] <= rmsAmpThresh) {
+                        if (smoothedRMS[nScan-1] > rmsAmpThresh) continue;
+                    }
+                }
+                lastCompleteStart = nScan;
+                lastCompleteAreaMvS = tempArea;
+            }
+            boolean lastCompleteIsSpasm = (lastCompleteAreaMvS >= rmsAreaThresh);
+
+            // Update Global Alert
+            alertTriggeredThisFrame = incomingIsSpasm;
 
             if (smoothedRMS.length > 2) {
-                // Synchronize Threshold drawing
                 thresholdY = (int) (blueCenterY - (rmsAmpThresh * rmsYScale));
                 g.drawGreenLine(xLeftLimit, thresholdY, xRightLimit, thresholdY, 0);
 
@@ -571,16 +623,10 @@ public class GameScreen extends Screen implements Input {
                 final int FLOOR = 1308;
                 final int STROKE_OFFSET = 4;
 
-                // --- STRETCH RATIO ---
-                // We map the available data length to the physical pixel width
-                float stretchFactor = totalPixelWidth / (float)(smoothedRMS.length - 1);
-
-                // --- PASS 1: Yellow Fill (Stretched to 122) ---
+                // --- 2. PASS 1: SHADED FILL (With Persistent Green) ---
                 for (int n = 0; n < smoothedRMS.length; n++) {
-                    // Map data index 'n' to stretched X coordinate
-                    int xCurrent = (int)(xRightLimit - (n * stretchFactor));
-
-                    if (xCurrent < xLeftLimit) break; // Safety stop
+                    int xCurrent = (int) (xRightLimit - (n * stretchFactor));
+                    if (xCurrent < xLeftLimit) break;
 
                     int dataIdx = (smoothedRMS.length - 1) - n;
                     if (dataIdx < 0) break;
@@ -590,28 +636,42 @@ public class GameScreen extends Screen implements Input {
                     if (yVal > FLOOR) yVal = FLOOR;
 
                     if (yVal < thresholdY) {
-                        g.drawYellowLine(xCurrent, yVal + STROKE_OFFSET, xCurrent, thresholdY, 0);
+                        // PERSISTENCE LOGIC:
+                        // 1. If we are in the incoming burst and it's a spasm -> Green
+                        // 2. If we are in the last complete burst and it was a spasm -> Green
+                        if (dataIdx > incomingBurstBoundary) {
+                            if (incomingIsSpasm) g.drawGreenLine(xCurrent, yVal + STROKE_OFFSET, xCurrent, thresholdY, 0);
+                            else g.drawYellowLine(xCurrent, yVal + STROKE_OFFSET, xCurrent, thresholdY, 0);
+                        }
+                        else if (dataIdx > lastCompleteStart && dataIdx <= lastCompleteEnd) {
+                            if (lastCompleteIsSpasm) g.drawGreenLine(xCurrent, yVal + STROKE_OFFSET, xCurrent, thresholdY, 0);
+                            else g.drawYellowLine(xCurrent, yVal + STROKE_OFFSET, xCurrent, thresholdY, 0);
+                        }
+                        else {
+                            // Any bursts further to the left default to yellow
+                            g.drawYellowLine(xCurrent, yVal + STROKE_OFFSET, xCurrent, thresholdY, 0);
+                        }
                     }
                 }
 
-                // --- PASS 2: Blue Line (Stretched to 122) ---
+                // --- 3. PASS 2: BLUE RMS LINE ---
                 for (int n = 0; n < smoothedRMS.length - 1; n++) {
-                    // Calculate stretched segment coordinates
-                    int x1 = (int)(xRightLimit - (n * stretchFactor));
-                    int x2 = (int)(xRightLimit - ((n + 1) * stretchFactor));
+                    int x1 = (int) (xRightLimit - (n * stretchFactor));
+                    int x2 = (int) (xRightLimit - ((n + 1) * stretchFactor));
+                    if (x2 < xLeftLimit) x2 = xLeftLimit;
 
                     int dataIdx1 = (smoothedRMS.length - 1) - n;
                     int dataIdx2 = (smoothedRMS.length - 1) - (n + 1);
 
-                    int y1 = (int) (blueCenterY - smoothedRMS[dataIdx1] * rmsYScale);
-                    int y2 = (int) (blueCenterY - smoothedRMS[dataIdx2] * rmsYScale);
+                    int ry1 = (int) (blueCenterY - smoothedRMS[dataIdx1] * rmsYScale);
+                    int ry2 = (int) (blueCenterY - smoothedRMS[dataIdx2] * rmsYScale);
 
-                    if (y1 < CEILING) y1 = CEILING; if (y1 > FLOOR) y1 = FLOOR;
-                    if (y2 < CEILING) y2 = CEILING; if (y2 > FLOOR) y2 = FLOOR;
+                    if (ry1 < CEILING) ry1 = CEILING;
+                    if (ry1 > FLOOR) ry1 = FLOOR;
+                    if (ry2 < CEILING) ry2 = CEILING;
+                    if (ry2 > FLOOR) ry2 = FLOOR;
 
-                    g.drawBlueLine(x1, y1, x2, y2, 0);
-
-                    // Stop exactly when the segment touches the left limit
+                    g.drawBlueLine(x1, ry1, x2, ry2, 0);
                     if (x2 <= xLeftLimit) break;
                 }
 
@@ -620,12 +680,10 @@ public class GameScreen extends Screen implements Input {
                 // --- 1. LIVE ALERT CHECK (Synchronized uV*mS) ---
                 // --- 1. LIVE ALERT CHECK (Units: mV*s) ---
 // Math: ADC_Count * 3.22 (mV/count) * 0.001 (seconds per sample) = 0.00322
-                double areaFactor = 0.00322;
-                double liveAreaMvS = 0;
                 alertTriggeredThisFrame = false;
-
-                int liveIdx = smoothedRMS.length - 1;
+                double liveAreaMvS = 0;
                 int liveWidth = 0;
+                int liveIdx = smoothedRMS.length - 1;
 
                 while (liveIdx >= 0) {
                     if (smoothedRMS[liveIdx] > rmsAmpThresh) {
@@ -831,7 +889,7 @@ public class GameScreen extends Screen implements Input {
                 final int STROKE_OFFSET = 4;
 
                 int thresholdYRep = (int) (1200 - (rmsAmpThresh * 2.0f));
-                g.drawGreenLine(xLeft, thresholdYRep, xRight, thresholdYRep, 0);
+                g.drawRedLine(xLeft, thresholdYRep, xRight, thresholdYRep, 0);
 
                 // Pass 1: Yellow Fill
                 for (int n = 1; n < signalBufferLen; n++) {
