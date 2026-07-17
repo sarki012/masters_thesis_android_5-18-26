@@ -153,6 +153,9 @@ public class GameScreen extends Screen implements Input {
     // Set these at the class level or in the constructor
     public static float rmsAmpThresh = 400.0f;
     public static float rmsAreaThresh = 100.0f;
+    // Add these to your class member variables at the top
+    private List<Float> thresholdRollingHistory = new ArrayList<>();
+    private List<double[]> burstShapeHistory = new ArrayList<>();
     // Constructor
     public GameScreen(Game game) {
         super(game);
@@ -225,6 +228,8 @@ public class GameScreen extends Screen implements Input {
                         isReplaying = false;
                         Log.d("RECORD", "Recording Started");
                         stableAreaValue = 0;
+                        thresholdRollingHistory.clear(); // Clear the history for a new session
+                        rmsAmpThresh = 400.0f;           // Reset to default
                     }
                 }
                 //////////////////// Stop Recording Button (Red Button) ////////////////////////////////////////////////
@@ -326,79 +331,87 @@ public class GameScreen extends Screen implements Input {
                             // 1. Force the UI to show the "Touched" state
                             rmsThresholdTouch = 1;
 
-                            // 2. Identify the most recent completed burst to check its area
-                            double areaFactor = 0.00322;
+                            rmsThresholdTouch = 1; // Show values on UI
+
+                            // 1. Identify and extract the shape of the most recent burst
                             int n = smoothedRMS.length - 1;
+                            // Move back to find the tail of the hill (using a low floor of 10 to capture the whole shape)
+                            while (n >= 0 && smoothedRMS[n] <= 10.0) n--;
+                            int hillEnd = n;
+                            while (n >= 0 && smoothedRMS[n] > 10.0) n--;
+                            int hillStart = n + 1;
 
-                            // Skip any burst currently entering from the right
-                            while (n >= 0 && smoothedRMS[n] > rmsAmpThresh) n--;
-                            // Skip the gap to find the tail of the finished burst
-                            while (n >= 0 && smoothedRMS[n] <= rmsAmpThresh) n--;
+                            if (hillEnd > hillStart) {
+                                // Capture the raw RMS values for this specific hill
+                                double[] burstShape = new double[hillEnd - hillStart + 1];
+                                System.arraycopy(smoothedRMS, hillStart, burstShape, 0, burstShape.length);
 
-                            boolean conditionMet = false;
-                            if (n >= 0) {
-                                double islandSum = 0;
-                                int tempN = n;
-                                // Calculate area of this specific island at CURRENT threshold
-                                while (tempN >= 0 && smoothedRMS[tempN] > rmsAmpThresh) {
-                                    islandSum += (smoothedRMS[tempN] * 3.22);
-                                    tempN--;
+                                burstShapeHistory.add(burstShape);
+                                if (burstShapeHistory.size() > 5) {
+                                    burstShapeHistory.remove(0); // Maintain rolling 5
                                 }
-                                double currentArea = islandSum * 0.001;
-                                if (currentArea >= rmsAreaThresh) {
-                                    conditionMet = true;
+
+                                // 2. GLOBAL SEARCH: Find the threshold height where the
+                                // AVERAGE area of all 5 bursts equals rmsAreaThresh
+                                float searchThresh = 600.0f;
+                                float bestFitThresh = 10.0f;
+
+                                // Iterate downwards to find the highest threshold that satisfies the area
+                                while (searchThresh > 10.0f) {
+                                    double totalAreaOfAllBursts = 0;
+
+                                    for (double[] shape : burstShapeHistory) {
+                                        double singleBurstSum = 0;
+                                        for (double val : shape) {
+                                            if (val > searchThresh) {
+                                                singleBurstSum += (val * 3.22); // Convert to uV
+                                            }
+                                        }
+                                        totalAreaOfAllBursts += (singleBurstSum * 0.001); // Convert to mV*S
+                                    }
+
+                                    double averageArea = totalAreaOfAllBursts / burstShapeHistory.size();
+
+                                    if (averageArea >= rmsAreaThresh) {
+                                        bestFitThresh = searchThresh;
+                                        break; // Found the highest threshold that yields the target average area
+                                    }
+                                    searchThresh -= 2.0f; // Step down by 2 for high precision
                                 }
+                                rmsAmpThresh = bestFitThresh;
                             }
 
-                            // 3. LOGIC: If area is too small, move threshold down.
-                            // If area is enough, stay here.
-                            if (!conditionMet && rmsAmpThresh > 10) {
-                                rmsAmpThresh -= 10;
-                            }
-                        }
-                        // 1. Snapshot the current buffer position and ID
-                        final int currentEndIdx = ramRecordBufferIdx;
-                        final int currentID = eventCount;
-                        final Context threadContext = (Context) game;
+                            // --- Snapshot and Save Logic (Keep your existing save code here) ---
+                            final int currentEndIdx = ramRecordBufferIdx;
+                            final int currentID = eventCount;
+                            final Context threadContext = (Context) game;
 
-                        // 2. Save the Timestamp for the Log Screen
-                        long delta = System.currentTimeMillis() - startTimeMillis;
-                        timeStamp[eventCount] = String.format("%02d:%02d:%03d",
-                                (delta / 60000), (delta / 1000) % 60, (delta % 1000));
+                            long delta = System.currentTimeMillis() - startTimeMillis;
+                            timeStamp[eventCount] = String.format("%02d:%02d:%03d",
+                                    (delta / 60000), (delta / 1000) % 60, (delta % 1000));
 
-                        // 3. Queue the 2-second background save
-                        saveExecutor.execute(() -> {
-                            try {
-                                if (threadContext == null) return;
-
-                                // CALCULATE BOUNDS: 1000Hz * 2 seconds = 2000 samples
-                                int startIdx = currentEndIdx - 2000;
-                                if (startIdx < 0) startIdx = 0;
-
-                                File path = threadContext.getExternalFilesDir(null);
-                                String eventFileName = "Event_" + currentID + ".csv";
-                                File file = new File(path, eventFileName);
-
-                                PrintWriter pw = new PrintWriter(new BufferedWriter(
-                                        new OutputStreamWriter(new FileOutputStream(file, false)), 65536));
-
-                                synchronized (ramRecordBuffer) {
-                                    for (int k = startIdx; k < currentEndIdx; k++) {
-                                        if (k >= 0 && k < ramRecordBuffer.length) {
-                                            pw.println(ramRecordBuffer[k]);
+                            saveExecutor.execute(() -> {
+                                try {
+                                    if (threadContext == null) return;
+                                    int startIdx = currentEndIdx - 2000;
+                                    if (startIdx < 0) startIdx = 0;
+                                    File path = threadContext.getExternalFilesDir(null);
+                                    File file = new File(path, "Event_" + currentID + ".csv");
+                                    PrintWriter pw = new PrintWriter(new BufferedWriter(new OutputStreamWriter(new FileOutputStream(file, false)), 65536));
+                                    synchronized (ramRecordBuffer) {
+                                        for (int k = startIdx; k < currentEndIdx; k++) {
+                                            if (k >= 0 && k < ramRecordBuffer.length) pw.println(ramRecordBuffer[k]);
                                         }
                                     }
+                                    pw.flush();
+                                    pw.close();
+                                } catch (Exception e) {
+                                    Log.e("SAVE_ERROR", "Failed to save: " + e.getMessage());
                                 }
-                                pw.flush();
-                                pw.close();
-                                Log.d("MANUAL_EVENT", "Saved 2s window to " + eventFileName);
-                            } catch (Exception e) {
-                                Log.e("SAVE_ERROR", "Failed to save: " + e.getMessage());
-                            }
-                        });
-
-                        eventCount++;
-                        manualPatientEventUpCount = 1;
+                            });
+                            eventCount++;
+                            manualPatientEventUpCount = 1;
+                        }
                     }
                 }
 
