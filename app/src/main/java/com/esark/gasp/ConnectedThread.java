@@ -235,7 +235,7 @@ public class ConnectedThread extends Thread {
                                 // --- 3. CALCULATE RMS ON BIPOLAR SIGNAL ---
                                 // Using the zero-centered data ensures the RMS reflects
                                 // only the actual signal power/artifact.
-                                movingRMS = RMSCalculator.calculateMovingRMS(bipolarData, 40);
+                                movingRMS = RMSCalculator.calculateMovingRMS(bipolarData, 60);      // Was 40
                                 if (movingRMS != null) {
                                     // --- NEW: INCREASE RMS SCALE ---
                                     // Multiplying by 8.0 (or higher) boosts the small bipolar values
