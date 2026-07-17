@@ -81,7 +81,6 @@ public class GameScreen extends Screen implements Input {
     long remainingMilliseconds = 0;
     int rmsThresholdTouch = 0;
     int rmsAreaThreshTouch = 0;
-    double rmsAmpThresh = 300, rmsAreaThresh = 50;
     int leftUpCount = 0, leftDownCount = 0, rightUpCount = 0, rightDownCount = 0;
     private static final double PI = 3.1415927;
 
@@ -151,6 +150,9 @@ public class GameScreen extends Screen implements Input {
     private double lastCompleteAreaMvS = 0;
     private int lastCompleteBurstStart = -1;
     private int lastCompleteBurstEnd = -1;
+    // Set these at the class level or in the constructor
+    public static float rmsAmpThresh = 400.0f;
+    public static float rmsAreaThresh = 100.0f;
     // Constructor
     public GameScreen(Game game) {
         super(game);
@@ -318,7 +320,42 @@ public class GameScreen extends Screen implements Input {
                 //////////////////// Manual Patient Event (2 Second Window) /////////////////////
                 else if (event.x > 10 && event.x < 675 && event.y > 2450 && event.y < 2800) {
                     if (manualPatientEventUpCount == 0 && isRecording && eventCount < 100) {
+                        if (manualPatientEventUpCount == 0) {
+                            manualPatientEventUpCount = 1;
 
+                            // 1. Force the UI to show the "Touched" state
+                            rmsThresholdTouch = 1;
+
+                            // 2. Identify the most recent completed burst to check its area
+                            double areaFactor = 0.00322;
+                            int n = smoothedRMS.length - 1;
+
+                            // Skip any burst currently entering from the right
+                            while (n >= 0 && smoothedRMS[n] > rmsAmpThresh) n--;
+                            // Skip the gap to find the tail of the finished burst
+                            while (n >= 0 && smoothedRMS[n] <= rmsAmpThresh) n--;
+
+                            boolean conditionMet = false;
+                            if (n >= 0) {
+                                double islandSum = 0;
+                                int tempN = n;
+                                // Calculate area of this specific island at CURRENT threshold
+                                while (tempN >= 0 && smoothedRMS[tempN] > rmsAmpThresh) {
+                                    islandSum += (smoothedRMS[tempN] * 3.22);
+                                    tempN--;
+                                }
+                                double currentArea = islandSum * 0.001;
+                                if (currentArea >= rmsAreaThresh) {
+                                    conditionMet = true;
+                                }
+                            }
+
+                            // 3. LOGIC: If area is too small, move threshold down.
+                            // If area is enough, stay here.
+                            if (!conditionMet && rmsAmpThresh > 10) {
+                                rmsAmpThresh -= 10;
+                            }
+                        }
                         // 1. Snapshot the current buffer position and ID
                         final int currentEndIdx = ramRecordBufferIdx;
                         final int currentID = eventCount;
@@ -521,7 +558,7 @@ public class GameScreen extends Screen implements Input {
 
         //////////////////// RMS Threshold to Trigger Event //////////////////////////////////
         if (rmsThresholdTouch == 0) {
-            g.drawText("300.0", 400, 2235);    //Manual RMS Height Above Threshold Text
+            g.drawText("400.0", 400, 2235);    //Manual RMS Height Above Threshold Text
         } else if (rmsThresholdTouch == 1) {
             String rmsAmpThreshStr = String.valueOf(rmsAmpThresh);
             g.drawText(rmsAmpThreshStr, 400, 2235);    //Manual RMS Height Above Threshold Text
@@ -531,7 +568,7 @@ public class GameScreen extends Screen implements Input {
 
         //////////////////// Manual RMS Width Above Threshold to Trigger Event //////////////////////
         if (rmsAreaThreshTouch == 0) {
-            g.drawText("50.0", 1215, 2235);    //Manual RMS Width Above Threshold Text
+            g.drawText("100.0", 1215, 2235);    //Manual RMS Width Above Threshold Text
         } else if (rmsAreaThreshTouch == 1) {
             String rmsAreaThreshStr = String.valueOf(rmsAreaThresh);
             g.drawText(rmsAreaThreshStr, 1215, 2235);    //Manual RMS Width Above Threshold Text
