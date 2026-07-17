@@ -521,7 +521,7 @@ public class GameScreen extends Screen implements Input {
 
         //////////////////// RMS Threshold to Trigger Event //////////////////////////////////
         if (rmsThresholdTouch == 0) {
-            g.drawText("200.0", 400, 2235);    //Manual RMS Height Above Threshold Text
+            g.drawText("300.0", 400, 2235);    //Manual RMS Height Above Threshold Text
         } else if (rmsThresholdTouch == 1) {
             String rmsAmpThreshStr = String.valueOf(rmsAmpThresh);
             g.drawText(rmsAmpThreshStr, 400, 2235);    //Manual RMS Height Above Threshold Text
@@ -556,7 +556,7 @@ public class GameScreen extends Screen implements Input {
 
 // --- LIVE RMS & PSD (Only shows when NOT replaying) ---
         if (!isReplaying) {
-            int blueCenterY = 1400;
+            int blueCenterY = 1550;
             float rmsYScale = 1.5f;
             int xRightLimit = 1574;
             int xLeftLimit = 130;
@@ -618,8 +618,8 @@ public class GameScreen extends Screen implements Input {
                 thresholdY = (int) (blueCenterY - (rmsAmpThresh * rmsYScale));
                 g.drawGreenLine(xLeftLimit, thresholdY, xRightLimit, thresholdY, 0);
 
-                final int CEILING = 869;
-                final int FLOOR = 1308;
+                final int CEILING = 835;
+                final int FLOOR = 1300;
                 final int STROKE_OFFSET = 4;
 
                 // --- 2. PASS 1: SHADED FILL (Using the Spasm Map for Persistence) ---
@@ -749,7 +749,7 @@ public class GameScreen extends Screen implements Input {
             }
 
             // --- PSD Drawing Logic (Live) ---
-            float psdLiveGain = 0.35f;
+            float psdLiveGain = 3.0f; // Was 0.35f;
             float yLiveOffset = 1640.0f;
             float xBoxStart = 140;
             float xBoxEnd = 1582;
@@ -879,7 +879,7 @@ public class GameScreen extends Screen implements Input {
 
             // --- 2. DRAW REPLAY RMS (Mirroring Live Logic) ---
             if (replayRMSArray != null) {
-                final int blueCenterY = 1400;
+                final int blueCenterY = 1550;
                 final float rmsYScale = 1.5f;
                 final int xRightLimit = 1574;
                 final int xLeftLimit = 130;
@@ -930,8 +930,8 @@ public class GameScreen extends Screen implements Input {
                 int thresholdYRep = (int) (blueCenterY - (rmsAmpThresh * rmsYScale));
                 g.drawGreenLine(xLeftLimit, thresholdYRep, xRightLimit, thresholdYRep, 0);
 
-                final int CEILING = 869;
-                final int FLOOR = 1308;
+                final int CEILING = 835;
+                final int FLOOR = 1300;
                 final int STROKE_OFFSET = 4;
 
                 // Mapping constants for Replay window
