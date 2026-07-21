@@ -156,6 +156,7 @@ public class GameScreen extends Screen implements Input {
     // Add these to your class member variables at the top
     private List<Float> thresholdRollingHistory = new ArrayList<>();
     private List<double[]> burstShapeHistory = new ArrayList<>();
+    private int truePositive = 0, truePositiveTouch = 0, truePositiveDownCount = 0;
     // Constructor
     public GameScreen(Game game) {
         super(game);
@@ -312,7 +313,16 @@ public class GameScreen extends Screen implements Input {
                         rmsAreaThresh -= 5;
                         rightDownCount = 1;
                     }
-                } else if (event.x > 720 && event.x < 1190 && event.y > 2535 && event.y < 2735) {
+                }
+                /////////////////// True Positive //////////////////////////////////////////
+                else if (event.x > 715 && event.x < 1015 && event.y > 2330 && event.y < 2490) {
+                    truePositiveTouch = 1;
+                    if (truePositiveDownCount == 0) {       //Flag so we only increment the delay by 5 once per touch
+                        truePositive ++;
+                        truePositiveDownCount = 1;
+                    }
+                }
+                else if (event.x > 720 && event.x < 1190 && event.y > 2535 && event.y < 2735) {
                     //Event Log Screen
                     // Only create it when the user actually wants to see it
                     if (gameScreenEventLog == null) {
@@ -513,6 +523,7 @@ public class GameScreen extends Screen implements Input {
                 rightUpCount = 0;
                 rightDownCount = 0;
                 manualPatientEventUpCount = 0;
+                truePositiveDownCount = 0;
             }
         } // This brace closes the for-loop
 
@@ -558,6 +569,9 @@ public class GameScreen extends Screen implements Input {
 
         //   g.drawRect(1600, 1330, 100, 270, 0);       //Start/Stop Save a Sample
         //  g.drawRect(1600, 1610, 100, 310, 0);       //Replay
+       // g.drawRect(715, 2330, 300, 160, 0);     //True Positive
+       // g.drawRect(1040, 2330, 325, 160, 0);     //False Positive
+       // g.drawRect(1390, 2330, 310, 160, 0);     //False Negative
 
         //////////////////// Battery Voltage and SOC //////////////////////////////////
         // Inside GameScreen.java -> present()// Draw Battery Voltage
@@ -579,12 +593,20 @@ public class GameScreen extends Screen implements Input {
 
         //////////////////////////////////////////////////////////////////////////////////////
 
-        //////////////////// Manual RMS Width Above Threshold to Trigger Event //////////////////////
+        //////////////////// Manual RMS Area Above Threshold to Trigger Event //////////////////////
         if (rmsAreaThreshTouch == 0) {
             g.drawText("100.0", 1215, 2235);    //Manual RMS Width Above Threshold Text
         } else if (rmsAreaThreshTouch == 1) {
             String rmsAreaThreshStr = String.valueOf(rmsAreaThresh);
             g.drawText(rmsAreaThreshStr, 1215, 2235);    //Manual RMS Width Above Threshold Text
+        }
+
+        //////////////////// Manual RMS Area Above Threshold to Trigger Event //////////////////////
+        if (truePositiveTouch == 0) {
+            g.drawText("0", 930, 2425);    //Manual RMS Width Above Threshold Text
+        } else if (truePositiveTouch == 1) {
+            String truePositiveStr = String.valueOf(truePositive);
+            g.drawText(truePositiveStr, 930, 2425);    //Manual RMS Width Above Threshold Text
         }
 
         String eventCountStr = String.valueOf(eventCount);
