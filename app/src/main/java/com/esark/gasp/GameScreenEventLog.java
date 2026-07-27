@@ -16,15 +16,15 @@ import java.util.List;
 
 public class GameScreenEventLog extends Screen implements Input {
     // --- GRID CONSTANTS (64 Buttons: 4 cols x 16 rows) ---
-    private static final int COLS = 4;
+    private static final int COLS = 8;
     private static final int ROWS = 16;
-    private static final int MAX_CAPACITY = 64;
+    private static final int MAX_CAPACITY = 128;
 
-    private static final int START_X = 95;
+    private static final int START_X = 55;
     private static final int START_Y = 165;
-    private static final int BTN_W = 350;
+    private static final int BTN_W = 175;
     private static final int BTN_H = 100;
-    private static final int SPACING_X = 50;
+    private static final int SPACING_X = 30;
     private static final int SPACING_Y = 20;
 
     // DO NOT initialize here. Initializing other screens in fields
@@ -40,12 +40,18 @@ public class GameScreenEventLog extends Screen implements Input {
         Graphics g = game.getGraphics();
         if (g == null) return;
         try {
-            // RGB565 uses the least amount of RAM possible for images
             if (Assets.eventLogBackground == null) {
                 Assets.eventLogBackground = g.newPixmap("eventLogBackground.png", Graphics.PixmapFormat.RGB565);
             }
             if (Assets.eventLogButtonJpeg == null) {
                 Assets.eventLogButtonJpeg = g.newPixmap("eventLogButtonJpeg.jpg", Graphics.PixmapFormat.RGB565);
+            }
+            // ADD THESE TWO:
+            if (Assets.eventLogButtonBlue == null) {
+                Assets.eventLogButtonBlue = g.newPixmap("eventLogButtonBlue.png", Graphics.PixmapFormat.RGB565);
+            }
+            if (Assets.eventLogButtonPurple == null) {
+                Assets.eventLogButtonPurple = g.newPixmap("eventLogButtonPurple.png", Graphics.PixmapFormat.RGB565);
             }
         } catch (Exception e) {
             Log.e("EventLog", "Memory Error: " + e.getMessage());
@@ -132,28 +138,50 @@ public class GameScreenEventLog extends Screen implements Input {
         }
 
         if (Assets.eventLogButtonJpeg != null) {
+            // --- DRAWING LOOP ---
             for (int i = 0; i < displayCount; i++) {
                 int row = i / COLS;
                 int col = i % COLS;
                 int x = START_X + col * (BTN_W + SPACING_X);
                 int y = START_Y + row * (BTN_H + SPACING_Y);
 
-                // Stop if we go off the visual area of the background
                 if (y > 2500) break;
 
-                g.drawEventLogButtonPixmap(Assets.eventLogButtonJpeg, x, y);
+                // 1. SELECT BUTTON COLOR
+                com.esark.framework.Pixmap btnPixmap;
+                int classification = GameScreen.eventClassification[i];
 
-                String label = localLabels[i];
-                if (label != null && label.length() > 0) {
-                    // 1. TRUNCATE: Remove the right-most digit (the 3rd millisecond digit)
-                    // e.g., "00:00:000" becomes "00:00:00"
-                    String truncatedLabel = label.substring(0, label.length() - 1);
+                if (classification == 1) {
+                    btnPixmap = Assets.eventLogButtonBlue;   // False Positive
+                } else if (classification == 2) {
+                    btnPixmap = Assets.eventLogButtonPurple; // False Negative
+                } else {
+                    btnPixmap = Assets.eventLogButtonJpeg;   // True Positive / Default Green
+                }
 
-                    // 2. CENTER: Adjust the offsets.
-                    // Button width is 350. Text length is roughly 200px.
-                    // (350 - 180) / 2 = ~85.
-                    // x + 85 centers it horizontally. y + 68 centers it vertically.
-                    g.drawText(truncatedLabel, x + 42, y + 72);
+                if (btnPixmap != null) {
+                    g.drawEventLogButtonPixmap(btnPixmap, x, y);
+                }
+
+                // 2. PARSE AND DRAW TIMESTAMP (Seconds Only)
+                String label = GameScreen.timeStamp[i];
+                if (label != null && label.contains(":")) {
+                    try {
+                        // Split "MM:SS:mmm"
+                        String[] parts = label.split(":");
+                        int minutes = Integer.parseInt(parts[0]);
+                        int seconds = Integer.parseInt(parts[1]);
+
+                        // Convert to total seconds
+                        int totalSeconds = (minutes * 60) + seconds;
+                        String finalLabel = totalSeconds + " s";
+
+                        // Draw text centered on the button
+                        g.drawText(finalLabel, x + 55, y + 72);
+                    } catch (Exception e) {
+                        // Fallback to raw label if parsing fails
+                        g.drawText(label, x + 42, y + 72);
+                    }
                 }
             }
         }
