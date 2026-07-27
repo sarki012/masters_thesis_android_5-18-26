@@ -90,7 +90,9 @@ public class GameScreen extends Screen implements Input {
     private int mActivePointerId = INVALID_POINTER_ID;
     // public static int len = 0;
     private int len = 0;
-    public static String[] timeStamp = new String[100];
+    public static String[] timeStamp = new String[150];
+    // 0 = True Positive (Default), 1 = False Positive, 2 = False Negative
+    public static int[] eventClassification = new int[150];
     public static double[] eventData = new double[100];
     public static int eventCount = 0;
     public static volatile double[] psdResult = new double[signalBufferLen];
@@ -159,6 +161,7 @@ public class GameScreen extends Screen implements Input {
     private int falsePositive = 0, falsePositiveTouch = 0, falsePositiveDownCount = 0;
     private int falseNegative = 0, falseNegativeTouch = 0, falseNegativeDownCount = 0;
     private int truePositive = 0, truePositiveTouch = 0, truePositiveDownCount = 0;
+    public static int selectedEventId = 0;
     // Constructor
     public GameScreen(Game game) {
         super(game);
@@ -316,28 +319,53 @@ public class GameScreen extends Screen implements Input {
                         rightDownCount = 1;
                     }
                 }
-                /////////////////// False Positive //////////////////////////////////////////
+                /////////////////// False Positive (Blue) //////////////////////////////////////////
                 else if (event.x > 715 && event.x < 1015 && event.y > 2330 && event.y < 2490) {
                     falsePositiveTouch = 1;
-                    if (falsePositiveDownCount == 0) {       //Flag so we only increment the delay by 5 once per touch
-                        falsePositive++;
+                    if (falsePositiveDownCount == 0 && eventCount < 120) {
                         falsePositiveDownCount = 1;
+
+                        // 1. Mark classification as 1 (Blue)
+                        eventClassification[eventCount] = 1;
+
+                        // 2. Capture the Timestamp and Save Data
+                        captureAndSaveEvent();
+                        falsePositive++;
+                        // 3. Move to next slot
+                        eventCount++;
                     }
                 }
                 /////////////////// False Negative //////////////////////////////////////////
                 else if (event.x > 1040 && event.x < 1365 && event.y > 2330 && event.y < 2490) {
                     falseNegativeTouch = 1;
-                    if (falseNegativeDownCount == 0) {       //Flag so we only increment the delay by 5 once per touch
-                        falseNegative++;
+                    if (falseNegativeDownCount == 0 && eventCount < 120) {
                         falseNegativeDownCount = 1;
+
+                        // 1. Mark classification as 2 (Purple)
+                        eventClassification[eventCount] = 2;
+
+                        // 2. Capture the Timestamp and Save Data
+                        captureAndSaveEvent();
+                        falseNegative++;
+                        // 3. Move to next slot
+                        eventCount++;
                     }
                 }
                 /////////////////// True Positive //////////////////////////////////////////
                 else if (event.x > 1390 && event.x < 1700 && event.y > 2330 && event.y < 2490) {
                     truePositiveTouch = 1;
-                    if (truePositiveDownCount == 0) {       //Flag so we only increment the delay by 5 once per touch
-                        truePositive ++;
+                    if (truePositiveDownCount == 0 && eventCount < 100) {
                         truePositiveDownCount = 1;
+
+                        // 1. Mark classification as 0 (Green/Jpeg)
+                        eventClassification[eventCount] = 0;
+
+                        // 2. Capture the Timestamp and Save Data
+                        captureAndSaveEvent();
+
+                        // 3. Move to next slot
+                        eventCount++;
+                        truePositive++;
                     }
                 }
                 else if (event.x > 720 && event.x < 1190 && event.y > 2535 && event.y < 2735) {
@@ -352,7 +380,7 @@ public class GameScreen extends Screen implements Input {
                 }
                 //////////////////// Manual Patient Event (2 Second Window) /////////////////////
                 else if (event.x > 10 && event.x < 675 && event.y > 2450 && event.y < 2800) {
-                    if (manualPatientEventUpCount == 0 && isRecording && eventCount < 100) {
+                    if (manualPatientEventUpCount == 0 && isRecording && eventCount < 150) {
                         if (manualPatientEventUpCount == 0) {
                             manualPatientEventUpCount = 1;
 
@@ -438,6 +466,7 @@ public class GameScreen extends Screen implements Input {
                                 }
                             });
                             eventCount++;
+                            truePositive++; // Increment the counter shared with True Positive
                             manualPatientEventUpCount = 1;
                         }
                     }
@@ -642,8 +671,8 @@ public class GameScreen extends Screen implements Input {
             g.drawText(truePositiveStr, 1565, 2415);    //Manual RMS Width Above Threshold Text
         }
 
-        String eventCountStr = String.valueOf(eventCount);
-        g.drawText(eventCountStr, 570, 2660);
+        String patientEventStr = String.valueOf(truePositive);
+        g.drawText(patientEventStr, 570, 2660);
 
         // Inside present() method
         if (startRecording == 0) {
@@ -1184,6 +1213,7 @@ public class GameScreen extends Screen implements Input {
     // Call this from GameScreenEventLog when a button is pressed
     // Replace/Update your loadSpecificEvent method:
     public void loadSpecificEvent(int id, Context context) {
+        this.selectedEventId = id;// Store the ID of the event being loaded
         replayList.clear();
         replayPosition = 0;
         // Create a temporary filter to match real-time behavior
@@ -1247,6 +1277,49 @@ public class GameScreen extends Screen implements Input {
             e.printStackTrace();
         }
     }
+
+    /////////////// Capture and Save Event /////////////////////////
+    private void captureAndSaveEvent() {
+        // Define threadContext locally so the executor can access it
+        final Context threadContext = (Context) game;
+
+        // Capture time
+        long delta = System.currentTimeMillis() - startTimeMillis;
+        timeStamp[eventCount] = String.format("%02d:%02d:%03d",
+                (delta / 60000), (delta / 1000) % 60, (delta % 1000));
+
+        // Trigger your existing CSV save logic
+        final int currentID = eventCount;
+        final int currentEndIdx = ramRecordBufferIdx;
+
+        saveExecutor.execute(() -> {
+            try {
+                // Now threadContext is recognized
+                if (threadContext == null) return;
+
+                int startIdx = currentEndIdx - 2000;
+                if (startIdx < 0) startIdx = 0;
+
+                File path = threadContext.getExternalFilesDir(null);
+                File file = new File(path, "Event_" + currentID + ".csv");
+
+                PrintWriter pw = new PrintWriter(new BufferedWriter(new OutputStreamWriter(new FileOutputStream(file, false)), 65536));
+                synchronized (ramRecordBuffer) {
+                    for (int k = startIdx; k < currentEndIdx; k++) {
+                        if (k >= 0 && k < ramRecordBuffer.length) {
+                            pw.println(ramRecordBuffer[k]);
+                        }
+                    }
+                }
+                pw.flush();
+                pw.close();
+            } catch (Exception e) {
+                Log.e("SAVE_ERROR", "Failed to save: " + e.getMessage());
+            }
+        });
+    }
+
+
     /////////////// LoadReplayData Helper Method ///////////////////////////////////////////////////
     private void loadReplayDataLoop(Context context) {
         replayList.clear();
