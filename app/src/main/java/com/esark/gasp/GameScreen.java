@@ -156,6 +156,8 @@ public class GameScreen extends Screen implements Input {
     // Add these to your class member variables at the top
     private List<Float> thresholdRollingHistory = new ArrayList<>();
     private List<double[]> burstShapeHistory = new ArrayList<>();
+    private int falsePositive = 0, falsePositiveTouch = 0, falsePositiveDownCount = 0;
+    private int falseNegative = 0, falseNegativeTouch = 0, falseNegativeDownCount = 0;
     private int truePositive = 0, truePositiveTouch = 0, truePositiveDownCount = 0;
     // Constructor
     public GameScreen(Game game) {
@@ -314,8 +316,24 @@ public class GameScreen extends Screen implements Input {
                         rightDownCount = 1;
                     }
                 }
-                /////////////////// True Positive //////////////////////////////////////////
+                /////////////////// False Positive //////////////////////////////////////////
                 else if (event.x > 715 && event.x < 1015 && event.y > 2330 && event.y < 2490) {
+                    falsePositiveTouch = 1;
+                    if (falsePositiveDownCount == 0) {       //Flag so we only increment the delay by 5 once per touch
+                        falsePositive++;
+                        falsePositiveDownCount = 1;
+                    }
+                }
+                /////////////////// False Negative //////////////////////////////////////////
+                else if (event.x > 1040 && event.x < 1365 && event.y > 2330 && event.y < 2490) {
+                    falseNegativeTouch = 1;
+                    if (falseNegativeDownCount == 0) {       //Flag so we only increment the delay by 5 once per touch
+                        falseNegative++;
+                        falseNegativeDownCount = 1;
+                    }
+                }
+                /////////////////// True Positive //////////////////////////////////////////
+                else if (event.x > 1390 && event.x < 1700 && event.y > 2330 && event.y < 2490) {
                     truePositiveTouch = 1;
                     if (truePositiveDownCount == 0) {       //Flag so we only increment the delay by 5 once per touch
                         truePositive ++;
@@ -523,6 +541,8 @@ public class GameScreen extends Screen implements Input {
                 rightUpCount = 0;
                 rightDownCount = 0;
                 manualPatientEventUpCount = 0;
+                falsePositiveDownCount = 0;
+                falseNegativeDownCount = 0;
                 truePositiveDownCount = 0;
             }
         } // This brace closes the for-loop
@@ -541,7 +561,7 @@ public class GameScreen extends Screen implements Input {
         // White text, centered at top (adjust 850/100 based on your font size)
         g.drawMedText(btStatus, 100, 130);
 //        g.drawRect(1245, 2535, 470, 200, 0);       //Bluetooth Connect
-        //     g.drawRect(45, 2000, 800, 100, 0);       //Start
+            // g.drawRect(45, 2000, 800, 100, 0);       //Start
         //   g.drawRect(910, 2000, 355, 100, 0);       //Stop
 
         // g.drawRect(1310, 2000, 355, 100, 0);       //Replay (Blue Button)
@@ -569,9 +589,9 @@ public class GameScreen extends Screen implements Input {
 
         //   g.drawRect(1600, 1330, 100, 270, 0);       //Start/Stop Save a Sample
         //  g.drawRect(1600, 1610, 100, 310, 0);       //Replay
-       // g.drawRect(715, 2330, 300, 160, 0);     //True Positive
-       // g.drawRect(1040, 2330, 325, 160, 0);     //False Positive
-       // g.drawRect(1390, 2330, 310, 160, 0);     //False Negative
+       // g.drawRect(715, 2330, 300, 160, 0);     //False Positive
+       // g.drawRect(1040, 2330, 325, 160, 0);     //False Negative
+       // g.drawRect(1390, 2330, 310, 160, 0);     //True Positive
 
         //////////////////// Battery Voltage and SOC //////////////////////////////////
         // Inside GameScreen.java -> present()// Draw Battery Voltage
@@ -600,13 +620,26 @@ public class GameScreen extends Screen implements Input {
             String rmsAreaThreshStr = String.valueOf(rmsAreaThresh);
             g.drawText(rmsAreaThreshStr, 1215, 2235);    //Manual RMS Width Above Threshold Text
         }
-
-        //////////////////// Manual RMS Area Above Threshold to Trigger Event //////////////////////
+        //////////////////// False Positive Button ///////////////////////////////////////////////////////////
+        if (falsePositiveTouch == 0) {
+            g.drawText("0", 895, 2415);    //Manual RMS Width Above Threshold Text
+        } else if (falsePositiveTouch == 1) {
+            String falsePositiveStr = String.valueOf(falsePositive);
+            g.drawText(falsePositiveStr, 895, 2415);    //Manual RMS Width Above Threshold Text
+        }
+        //////////////////// False Negative Button ///////////////////////////////////////////////////////////
+        if (falseNegativeTouch == 0) {
+            g.drawText("0", 1240, 2415);    //Manual RMS Width Above Threshold Text
+        } else if (falseNegativeTouch == 1) {
+            String falseNegativeStr = String.valueOf(falseNegative);
+            g.drawText(falseNegativeStr, 1240, 2415);    //Manual RMS Width Above Threshold Text
+        }
+        //////////////////// True Positive Button ///////////////////////////////////////////////////////////
         if (truePositiveTouch == 0) {
-            g.drawText("0", 930, 2425);    //Manual RMS Width Above Threshold Text
+            g.drawText("0", 1565, 2415);    //Manual RMS Width Above Threshold Text
         } else if (truePositiveTouch == 1) {
             String truePositiveStr = String.valueOf(truePositive);
-            g.drawText(truePositiveStr, 930, 2425);    //Manual RMS Width Above Threshold Text
+            g.drawText(truePositiveStr, 1565, 2415);    //Manual RMS Width Above Threshold Text
         }
 
         String eventCountStr = String.valueOf(eventCount);
