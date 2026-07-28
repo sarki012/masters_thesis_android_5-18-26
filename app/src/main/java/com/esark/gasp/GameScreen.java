@@ -162,6 +162,7 @@ public class GameScreen extends Screen implements Input {
     private int falseNegative = 0, falseNegativeTouch = 0, falseNegativeDownCount = 0;
     private int truePositive = 0, truePositiveTouch = 0, truePositiveDownCount = 0;
     public static int selectedEventId = 0;
+    public static float[] eventAmpThresholds = new float[120]; // Stores the threshold for each event
     // Constructor
     public GameScreen(Game game) {
         super(game);
@@ -1018,66 +1019,56 @@ public class GameScreen extends Screen implements Input {
                 final int xRightLimit = 1574;
                 final int xLeftLimit = 130;
 
-                // 1. PRE-PASS: IDENTIFY ALL SPASM "ISLANDS" IN THE REPLAY BUFFER
-                // We scan the whole recorded array once so the color persists as we scroll
+                // --- FIX: Use the threshold that was active when THIS event was recorded ---
+                float savedThresh = eventAmpThresholds[selectedEventId];
+                // If for some reason it's 0 (old save), fallback to current live threshold
+                if (savedThresh == 0) savedThresh = rmsAmpThresh;
+
+                // 1. Identify Islands in Replay using the SAVED threshold
                 double areaFactor = 0.00322;
                 boolean[] replaySpasmMap = new boolean[replayRMSArray.length];
-
                 int iScan = replayRMSArray.length - 1;
                 while (iScan >= 0) {
-                    if (replayRMSArray[iScan] > rmsAmpThresh) {
+                    if (replayRMSArray[iScan] > savedThresh) {
                         int islandEnd = iScan;
                         double islandSum = 0;
                         int islandWidth = 0;
-
                         while (iScan >= 0) {
-                            if (replayRMSArray[iScan] > rmsAmpThresh) {
+                            if (replayRMSArray[iScan] > savedThresh) {
                                 islandSum += (replayRMSArray[iScan] * areaFactor);
                                 islandWidth++;
                                 iScan--;
                             } else {
-                                // 5ms Hysteresis
                                 boolean flicker = false;
                                 for (int h = 1; h <= 5; h++) {
-                                    if (iScan - h >= 0 && replayRMSArray[iScan - h] > rmsAmpThresh) {
-                                        flicker = true;
-                                        iScan -= h;
-                                        break;
+                                    if (iScan - h >= 0 && replayRMSArray[iScan - h] > savedThresh) {
+                                        flicker = true; iScan -= h; break;
                                     }
                                 }
                                 if (!flicker) break;
                             }
                         }
-                        int islandStart = iScan + 1;
-                        // Determine if this island was a spasm
-                        if (islandSum >= rmsAreaThresh && islandWidth > 0) {
-                            for (int k = Math.max(0, islandStart); k <= islandEnd; k++) {
+                        // Use live rmsAreaThresh to decide if it turns green in replay
+                        if (islandSum * 0.001 >= rmsAreaThresh) {
+                            for (int k = Math.max(0, iScan + 1); k <= islandEnd; k++) {
                                 replaySpasmMap[k] = true;
                             }
                         }
-                    } else {
-                        iScan--;
-                    }
+                    } else { iScan--; }
                 }
 
-                // 2. DRAW THRESHOLD LINE
-                int thresholdYRep = (int) (blueCenterY - (rmsAmpThresh * rmsYScale));
+                // 2. Draw the Threshold Line at the SAVED height
+                int thresholdYRep = (int) (blueCenterY - (savedThresh * rmsYScale));
                 g.drawGreenLine(xLeftLimit, thresholdYRep, xRightLimit, thresholdYRep, 0);
 
-                final int CEILING = 835;
+                final int CEILING = 1019;
                 final int FLOOR = 1300;
                 final int STROKE_OFFSET = 4;
 
-                // Mapping constants for Replay window
-                // This assumes we show the same window width as live mode
-                int windowSize = xRightLimit - xLeftLimit;
-
-                // --- PASS 1: SHADED FILL (Yellow or Green) ---
-                for (int n = 0; n < windowSize; n++) {
+                // --- PASS 1: SHADED FILL ---
+                for (int n = 0; n < (xRightLimit - xLeftLimit); n++) {
                     int xCurrent = xRightLimit - n;
-                    // In Replay, we look back from the current playback position
                     int dataIdx = replayPosition - n;
-
                     if (dataIdx >= 0 && dataIdx < replayRMSArray.length) {
                         int yVal = (int) (blueCenterY - replayRMSArray[dataIdx] * rmsYScale);
                         if (yVal < CEILING) yVal = CEILING;
@@ -1091,9 +1082,8 @@ public class GameScreen extends Screen implements Input {
                             }
                         }
                     }
-                    if (xCurrent <= xLeftLimit) break;
                 }
-
+                int windowSize = xRightLimit - xLeftLimit;
                 // --- PASS 2: BLUE RMS LINE ---
                 for (int n = 0; n < windowSize - 1; n++) {
                     int x1 = xRightLimit - n;
@@ -1287,6 +1277,10 @@ public class GameScreen extends Screen implements Input {
         long delta = System.currentTimeMillis() - startTimeMillis;
         timeStamp[eventCount] = String.format("%02d:%02d:%03d",
                 (delta / 60000), (delta / 1000) % 60, (delta % 1000));
+
+        // --- ADD THIS LINE ---
+        // Save the current threshold so we can recreate the fills exactly during replay
+        eventAmpThresholds[eventCount] = rmsAmpThresh;
 
         // Trigger your existing CSV save logic
         final int currentID = eventCount;
