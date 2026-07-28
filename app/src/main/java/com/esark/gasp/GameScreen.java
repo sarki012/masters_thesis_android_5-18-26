@@ -1,6 +1,7 @@
 package com.esark.gasp;
 
 import static com.esark.framework.AndroidGame.signalBufferLen;
+import static com.esark.gasp.ConnectedThread.*;
 
 import android.content.Context;
 import android.content.Intent;
@@ -369,16 +370,7 @@ public class GameScreen extends Screen implements Input {
                         truePositive++;
                     }
                 }
-                else if (event.x > 720 && event.x < 1190 && event.y > 2535 && event.y < 2735) {
-                    //Event Log Screen
-                    // Only create it when the user actually wants to see it
-                    if (gameScreenEventLog == null) {
-                        gameScreenEventLog = new GameScreenEventLog(game);
-                    }
-                    // Stop recording or any heavy UI tasks before switching to save memory
-                    isRecording = false;
-                    game.setScreen(gameScreenEventLog);
-                }
+
                 //////////////////// Manual Patient Event (2 Second Window) /////////////////////
                 else if (event.x > 10 && event.x < 675 && event.y > 2450 && event.y < 2800) {
                     if (manualPatientEventUpCount == 0 && isRecording && eventCount < 150) {
@@ -561,6 +553,12 @@ public class GameScreen extends Screen implements Input {
                 if (rmsAmpThresh < 0) {
                     rmsAmpThresh = 0;
                 }
+                // 3. BACK TO BLUETOOTH (Move this to the VERY BOTTOM of the button checks)
+                else if (event.x > 1245 && event.x < 1715 && event.y > 2535 && event.y < 2735) {
+                    Intent intent2 = new Intent(context.getApplicationContext(), GaspSemg.class);
+                    context.startActivity(intent2);
+                    return;
+                }
                 /////////////////////////////////////////////////////////////////////////
             } // This brace closes the if (TOUCH_DOWN || TOUCH_DRAGGED) block
 
@@ -574,6 +572,21 @@ public class GameScreen extends Screen implements Input {
                 falsePositiveDownCount = 0;
                 falseNegativeDownCount = 0;
                 truePositiveDownCount = 0;
+
+                // else if (event.x > 720 && event.x < 1190 && event.y > 2535 && event.y < 2735) {
+                // 1. EVENT LOG BUTTON (New Logic)
+                // Assuming your Event Log button is the one you want to navigate to the log
+                if (event.x > 840 && event.x < 1220 && event.y > 2535 && event.y < 2735) {
+                    //Event Log Screen
+                    // Only create it when the user actually wants to see it
+                    if (gameScreenEventLog == null) {
+                        gameScreenEventLog = new GameScreenEventLog(game);
+                    }
+                    // Stop recording or any heavy UI tasks before switching to save memory
+                    isRecording = false;
+                    game.setScreen(gameScreenEventLog);
+                    return;
+                }
             }
         } // This brace closes the for-loop
 
@@ -697,6 +710,13 @@ public class GameScreen extends Screen implements Input {
             int xLeftLimit = 130;
             float totalPixelWidth = (float) (xRightLimit - xLeftLimit);
             float stretchFactor = totalPixelWidth / (float) (smoothedRMS.length - 1);
+
+
+            // If the data acquisition thread stopped, jCount will stop increasing
+            // Let's force a refresh or check if we are getting data
+        //    int currentCount = ConnectedThread.jCount.get();
+            // If btStatus is "BT: Connected" but waves aren't moving,
+            // it means rxThread is dead.
 
             // --- 1. CALCULATE LIVE AREA FIRST (To determine color) ---
             // --- 1. PRE-PASS: IDENTIFY ALL SPASM "ISLANDS" IN THE BUFFER ---

@@ -63,7 +63,7 @@ public abstract class AndroidGame extends Activity implements Game {
     private ArrayAdapter<String> mBTArrayAdapter;
     private ListView mDevicesListView;
     private Handler mHandler;
-    private ConnectedThread mConnectedThread;
+    public static ConnectedThread mConnectedThread;
     private BluetoothSocket mBTSocket = null;
 
     private static final UUID BT_MODULE_UUID = UUID.fromString("00001101-0000-1000-8000-00805F9B34FB");
@@ -219,15 +219,18 @@ public abstract class AndroidGame extends Activity implements Game {
 
             if (!fail) {
                 try {
-                    mConnectedThread = new ConnectedThread(mBTSocket.getInputStream());
+                    // The constructor handles its own IOException now,
+                    // so we catch a general Exception here just in case of other issues.
+                    mConnectedThread = new ConnectedThread(mBTSocket);
                     mConnectedThread.start();
                     mHandler.obtainMessage(CONNECTING_STATUS, 1, -1, name).sendToTarget();
-                } catch (IOException e) {
-                    Log.e("BT", "Stream creation failed");
+                } catch (Exception e) {
+                    Log.e("BT", "Thread initialization failed", e);
                 } finally {
-                    isConnecting = false; // Reset on success
+                    isConnecting = false; // Reset on success or failure
                 }
             }
+
         }).start();
     }
 
