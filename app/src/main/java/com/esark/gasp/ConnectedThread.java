@@ -1,7 +1,9 @@
 package com.esark.gasp;
 
+import static android.system.Os.*;
 import static com.esark.gasp.GameScreen.*;
 import android.os.Process;
+import android.system.Os;
 import android.util.Log;
 import java.io.IOException;
 import java.io.InputStream;
@@ -10,8 +12,10 @@ import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicBoolean;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.concurrent.locks.LockSupport;
+import android.bluetooth.BluetoothSocket;
 
 public class ConnectedThread extends Thread {
+    private final BluetoothSocket mmSocket;    // Add this
     private final InputStream mmInStream;
     private int tempHighByte;
     private boolean expectingLowByte = false;
@@ -20,8 +24,19 @@ public class ConnectedThread extends Thread {
     private final AtomicBoolean mathIsBusy = new AtomicBoolean(false);
     private final double[] a2dCopyForMath = new double[signalBufferLen];
 
-    public ConnectedThread(InputStream stream) {
-        this.mmInStream = stream;
+    // Change the constructor to accept the Socket
+    public ConnectedThread(BluetoothSocket socket) {
+        this.mmSocket = socket;
+        InputStream tmpIn = null;
+
+        // Extract the stream from the socket
+        try {
+            tmpIn = socket.getInputStream();
+        } catch (IOException e) {
+            Log.e("ConnectedThread", "Error occurred when creating input stream", e);
+        }
+
+        this.mmInStream = tmpIn;
     }
 
     @Override
@@ -262,5 +277,17 @@ public class ConnectedThread extends Thread {
         }
         rxThread.interrupt();
         mathExecutor.shutdownNow();
+    }
+    // Inside ConnectedThread.java
+    public void cancel() {
+        try {
+            // This closes the Bluetooth socket, which forces the
+            // mmInStream.read() to throw an IOException and stop the thread
+            if (mmSocket != null) {
+                mmSocket.close();
+            }
+        } catch (IOException e) {
+            Log.e("ConnectedThread", "Could not close the connect socket", e);
+        }
     }
 }

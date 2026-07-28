@@ -4,8 +4,10 @@ import static com.esark.gasp.GameScreen.eventCount;
 import static com.esark.gasp.GameScreen.timeStamp;
 
 import android.content.Context;
+import android.content.Intent;
 import android.util.Log;
 
+import com.esark.framework.AndroidGame;
 import com.esark.framework.Game;
 import com.esark.framework.Graphics;
 import com.esark.framework.Input;
@@ -15,9 +17,8 @@ import com.esark.framework.Screen;
 import java.util.List;
 
 public class GameScreenEventLog extends Screen implements Input {
-    // --- GRID CONSTANTS (64 Buttons: 4 cols x 16 rows) ---
+    // --- GRID CONSTANTS (8 cols x 16 rows = 128 max) ---
     private static final int COLS = 8;
-    private static final int ROWS = 16;
     private static final int MAX_CAPACITY = 128;
 
     private static final int START_X = 55;
@@ -27,8 +28,6 @@ public class GameScreenEventLog extends Screen implements Input {
     private static final int SPACING_X = 30;
     private static final int SPACING_Y = 20;
 
-    // DO NOT initialize here. Initializing other screens in fields
-    // is what causes the "20 event crash" due to memory recursion.
     private GameScreenEvent gameScreenEvent = null;
 
     public GameScreenEventLog(Game game) {
@@ -46,7 +45,6 @@ public class GameScreenEventLog extends Screen implements Input {
             if (Assets.eventLogButtonJpeg == null) {
                 Assets.eventLogButtonJpeg = g.newPixmap("eventLogButtonJpeg.jpg", Graphics.PixmapFormat.RGB565);
             }
-            // ADD THESE TWO:
             if (Assets.eventLogButtonBlue == null) {
                 Assets.eventLogButtonBlue = g.newPixmap("eventLogButtonBlue.png", Graphics.PixmapFormat.RGB565);
             }
@@ -54,7 +52,7 @@ public class GameScreenEventLog extends Screen implements Input {
                 Assets.eventLogButtonPurple = g.newPixmap("eventLogButtonPurple.png", Graphics.PixmapFormat.RGB565);
             }
         } catch (Exception e) {
-            Log.e("EventLog", "Memory Error: " + e.getMessage());
+            Log.e("EventLog", "Asset Loading Error: " + e.getMessage());
         }
     }
 
@@ -63,7 +61,6 @@ public class GameScreenEventLog extends Screen implements Input {
         List<TouchEvent> touchEvents = game.getInput().getTouchEvents();
         if (touchEvents == null) return;
 
-        // Take a snapshot of the count so it doesn't change during the loop
         int currentTotal;
         synchronized (timeStamp) {
             currentTotal = eventCount;
@@ -72,13 +69,24 @@ public class GameScreenEventLog extends Screen implements Input {
         for (int i = 0; i < touchEvents.size(); i++) {
             TouchEvent event = touchEvents.get(i);
             if (event.type == TouchEvent.TOUCH_UP) {
-                // 1. Back Button
-                if (event.x > 25 && event.x < 675 && event.y > 2583) {
+                // 1. Navigation: Back to Live View
+                if (event.x > 25 && event.x < 850 && event.y > 2510) {
                     game.setScreen(game.getStartScreen());
                     return;
                 }
+                // 2. Navigation: Reconnect Bluetooth (Fixed to prevent frozen waves)
+                else if (event.x > 1300 && event.y > 2510) {
+                    // Update this to use AndroidGame.mConnectedThread
+                    if (AndroidGame.mConnectedThread != null) {
+                        AndroidGame.mConnectedThread.cancel();
+                    }
+                    Intent intent2 = new Intent(context.getApplicationContext(), AndroidGame.class);
+                    intent2.setFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TASK);
+                    context.startActivity(intent2);
+                    return;
+                }
 
-                // 2. Grid Detection
+                // 3. Grid Selection Detection
                 int limit = Math.min(currentTotal, MAX_CAPACITY);
                 for (int j = 0; j < limit; j++) {
                     int row = j / COLS;
@@ -87,14 +95,9 @@ public class GameScreenEventLog extends Screen implements Input {
                     int y = START_Y + row * (BTN_H + SPACING_Y);
 
                     if (event.x > x && event.x < x + BTN_W && event.y > y && event.y < y + BTN_H) {
-                        // LAZY INITIALIZATION: Create the sub-screen ONLY when clicked
-                        if (gameScreenEvent == null) {
-                            gameScreenEvent = new GameScreenEvent(game);
-                        }
-
-                        // Pass the index to GameScreen to load the specific CSV
                         GameScreen gs = GameScreen.liveScreen;
                         if (gs != null) {
+                            // selectedEventId is updated inside loadSpecificEvent
                             gs.loadSpecificEvent(j, context);
                             game.setScreen(gs);
                         }
@@ -110,78 +113,71 @@ public class GameScreenEventLog extends Screen implements Input {
         Graphics g = game.getGraphics();
         if (g == null) return;
 
-        if (Assets.eventLogBackground == null || Assets.eventLogButtonJpeg == null) {
-            loadAssets();
-        }
+        if (Assets.eventLogBackground == null) loadAssets();
 
-        // Draw Background
         if (Assets.eventLogBackground != null) {
             g.drawPortraitPixmap(Assets.eventLogBackground, 0, 0);
         }
 
-        // THREAD-SAFE DRAWING
+        // Thread-safe copy of labels
         String[] localLabels = new String[MAX_CAPACITY];
-        int displayCount = 0;
+        int[] localClass = new int[MAX_CAPACITY];
+        int displayCount;
 
         synchronized (timeStamp) {
             displayCount = Math.min(eventCount, MAX_CAPACITY);
             for (int k = 0; k < displayCount; k++) {
-                if (k < timeStamp.length) {
-                    localLabels[k] = timeStamp[k];
-                }
+                localLabels[k] = timeStamp[k];
+                localClass[k] = GameScreen.eventClassification[k];
             }
         }
 
         if (displayCount == 0) {
-            g.drawText("No Events Recorded", 170, 400);
+            g.drawText("No Events Recorded", 600, 1400);
             return;
         }
 
-        if (Assets.eventLogButtonJpeg != null) {
-            // --- DRAWING LOOP ---
-            for (int i = 0; i < displayCount; i++) {
-                int row = i / COLS;
-                int col = i % COLS;
-                int x = START_X + col * (BTN_W + SPACING_X);
-                int y = START_Y + row * (BTN_H + SPACING_Y);
+        // DRAWING LOOP
+        for (int i = 0; i < displayCount; i++) {
+            int row = i / COLS;
+            int col = i % COLS;
+            int x = START_X + col * (BTN_W + SPACING_X);
+            int y = START_Y + row * (BTN_H + SPACING_Y);
 
-                if (y > 2500) break;
+            if (y > 2500) break;
 
-                // 1. SELECT BUTTON COLOR
-                com.esark.framework.Pixmap btnPixmap;
-                int classification = GameScreen.eventClassification[i];
+            // 1. Pick Button Pixmap based on Classification
+            com.esark.framework.Pixmap btnPixmap;
+            int classification = localClass[i];
 
-                if (classification == 1) {
-                    btnPixmap = Assets.eventLogButtonBlue;   // False Positive
-                } else if (classification == 2) {
-                    btnPixmap = Assets.eventLogButtonPurple; // False Negative
-                } else {
-                    btnPixmap = Assets.eventLogButtonJpeg;   // True Positive / Default Green
-                }
+            if (classification == 1) {
+                btnPixmap = Assets.eventLogButtonBlue;   // False Positive
+            } else if (classification == 2) {
+                btnPixmap = Assets.eventLogButtonPurple; // False Negative
+            } else {
+                btnPixmap = Assets.eventLogButtonJpeg;   // True Positive / Default Green
+            }
 
-                if (btnPixmap != null) {
-                    g.drawEventLogButtonPixmap(btnPixmap, x, y);
-                }
+            if (btnPixmap != null) {
+                g.drawEventLogButtonPixmap(btnPixmap, x, y);
+            }
 
-                // 2. PARSE AND DRAW TIMESTAMP (Seconds Only)
-                String label = GameScreen.timeStamp[i];
-                if (label != null && label.contains(":")) {
-                    try {
-                        // Split "MM:SS:mmm"
-                        String[] parts = label.split(":");
+            // 2. Draw "Seconds Only" Timestamp
+            String label = localLabels[i];
+            if (label != null && label.contains(":")) {
+                try {
+                    String[] parts = label.split(":");
+                    if (parts.length >= 2) {
                         int minutes = Integer.parseInt(parts[0]);
                         int seconds = Integer.parseInt(parts[1]);
-
-                        // Convert to total seconds
                         int totalSeconds = (minutes * 60) + seconds;
-                        String finalLabel = totalSeconds + " s";
 
-                        // Draw text centered on the button
+                        String finalLabel = totalSeconds + " s";
+                        // Standardized text centering
                         g.drawText(finalLabel, x + 55, y + 72);
-                    } catch (Exception e) {
-                        // Fallback to raw label if parsing fails
-                        g.drawText(label, x + 42, y + 72);
                     }
+                } catch (Exception e) {
+                    g.drawText(label, x + 35, y + 72);
                 }
             }
         }
