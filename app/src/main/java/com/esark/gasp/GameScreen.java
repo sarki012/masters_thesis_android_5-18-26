@@ -904,30 +904,27 @@ public class GameScreen extends Screen implements Input {
             }
 
             // --- PSD Drawing Logic (Live) ---
-            float psdLiveGain = 10.0f; //Was 3.0 Was 0.35f;
-            float yLiveOffset = 1640.0f;
+            // Units: uV^2 (Linear Power)
+            float psdLiveGain = 5.0f;      // Was 0.05   // Adjusted gain for linear uV^2 (usually requires a smaller number)
+            float yLiveOffset = 1695.0f;  // Sets baseline (3600 - 1695 = 1905)
             float xBoxStart = 140;
             float xBoxEnd = 1582;
 
-            // Draw only first half to fix horizontal compression
+            // Draw only first half (0-500Hz)
             int halfLen = psdResult.length / 2;
             float xStepPsd = (xBoxEnd - xBoxStart) / (float) halfLen;
 
             float currentXpsd = xBoxStart;
 
-
-            // --- FIXED PSD DB Grid Lines ---// These must use the SAME math as the red PSD lines to appear in the same box
-            final int psdBase = 500;       // Must match ConnectedThread <caret>
-            final int psdMult = -20;       // Must match ConnectedThread <caret>
-            final float drawGain = 0.35f;  // Must match psdLiveGain
-            final float drawBase = 3600f;  // The vertical baseline
-            final float drawOff = 1750f;   // yLiveOffset
-
             for (int i = 1; i < halfLen; i++) {
                 float nextXpsd = xBoxStart + (i * xStepPsd);
+
+                // LINEAR MATH: Power (uV^2) * Gain
+                // We no longer use Math.log10 here
                 float y1 = (float) (psdResult[i - 1] * -psdLiveGain + 3600) - yLiveOffset;
                 float y2 = (float) (psdResult[i] * -psdLiveGain + 3600) - yLiveOffset;
 
+                // Clamping to stay inside the PSD box floor (1905) and ceiling (1445)
                 if (y1 < 1445) y1 = 1445;
                 if (y1 > 1905) y1 = 1905;
                 if (y2 < 1445) y2 = 1445;
@@ -935,6 +932,7 @@ public class GameScreen extends Screen implements Input {
 
                 g.drawRedLine((int) currentXpsd, (int) y1, (int) nextXpsd, (int) y2, 0);
                 currentXpsd = nextXpsd;
+
                 if (currentXpsd >= xBoxEnd) break;
             }
             // --- AREA-BASED ALERT LOGIC ---
@@ -1126,36 +1124,31 @@ public class GameScreen extends Screen implements Input {
                 }
             }
 
-            // --- 3. ANIMATED REPLAY PSD (Synced with Real-Time) ---
-            // --- 3. ANIMATED REPLAY PSD (dB Units, Gridlines Removed) ---
-            // --- 3. ANIMATED REPLAY PSD (Fixed Sync & Movement) ---
-            // --- 3. ANIMATED REPLAY PSD (Cleaned & Synchronized) ---
-            // --- 3. ANIMATED REPLAY PSD (Linear Mode to match Real-Time) ---
+            // --- 3. ANIMATED REPLAY PSD (Linear uV^2 - Fixed Baseline & Gain) ---
             int psdWin = 1024;
-            // --- 3. ANIMATED REPLAY PSD (Fixed Scaling & Noise) ---int psdWin = 1024;
             if (replayRawArray != null && replayRawArray.length >= psdWin) {
                 double[] psdBuf = new double[psdWin];
 
-                // Synchronize window to playhead (centered on current position)
+                // Synchronize window to playhead (centered)
                 int windowStart = replayPosition - (psdWin / 2);
                 if (windowStart < 0) windowStart = 0;
                 if (windowStart > replayRawArray.length - psdWin) {
                     windowStart = replayRawArray.length - psdWin;
                 }
 
-                // 1. Copy and SCALE data (divide by 3.0 to match Live Mode math)
+                // 1. Copy data and SCALE ONLY for PSD (divide by 3.0)
                 for (int i = 0; i < psdWin; i++) {
-                    psdBuf[i] = replayRawArray[windowStart + i] / 3.0;
+                    psdBuf[i] = replayRawArray[windowStart + i] / 10.0f;      // Was 3.0
                 }
 
-                // 2. CRITICAL: Remove Local Mean for this window
+                // 2. Local Mean Removal (Prevents broadband noise)
                 double localSum = 0;
                 for (double v : psdBuf) localSum += v;
                 double localMean = localSum / psdWin;
 
                 for (int i = 0; i < psdWin; i++) {
-                    // Subtract mean and apply Hanning Window
                     double val = psdBuf[i] - localMean;
+                    // Hanning Window
                     double window = 0.5 * (1.0 - Math.cos(2.0 * Math.PI * i / (psdWin - 1)));
                     psdBuf[i] = val * window;
                 }
@@ -1164,32 +1157,34 @@ public class GameScreen extends Screen implements Input {
                 double[] currentPsd = psdCalc.calculatePSD(psdBuf, 1000);
 
                 if (currentPsd != null) {
-                    float xStart = 140;   // Match your xBoxStart
-                    float xEnd = 1582;    // Match your xBoxEnd
+                    float xStart = 140;
+                    float xEnd = 1582;
                     int hLen = currentPsd.length / 2;
                     float xStep = (xEnd - xStart) / (float) hLen;
 
-                    // Match your LIVE constants exactly
-                    float psdGain = 1.0f; // Scale this down from 10.0 if it's too sensitive
-                    float yOffset = 1640.0f;
+                    // --- CALIBRATED LINEAR SCALING ---
+                    // Using a higher gain for linear power to make it visible
+                    float psdGain = 2000.0f;
+
+                    // FIX: yOffset set to 1695 so (0 * -gain + 3600) - 1695 = 1905 (The Floor)
+                    float yOffset = 1695.0f;
                     float baselineY = 1905.0f;
 
                     for (int i = 0; i < hLen; i++) {
                         float xPos = xStart + (i * xStep);
 
-                        // Calculate the peak height (Linear math to match your live view)
+                        // Calculate Peak Height
                         float yPeak = (float) (currentPsd[i] * -psdGain + 3600) - yOffset;
 
-                        // Clamping to stay inside the PSD box
+                        // Clamping
                         if (yPeak < 1445) yPeak = 1445;
                         if (yPeak > 1905) yPeak = 1905;
 
-                        // Draw as a sharp needle spike (Baseline to Peak)
-                        // This prevents the "mountain" look and keeps it looking like the live PSD
+                        // Draw Needle Spike
                         if (yPeak < 1904) {
                             g.drawRedLine((int) xPos, (int) baselineY, (int) xPos, (int) yPeak, 0);
                         } else {
-                            // Baseline pixel
+                            // Draw a single dot at baseline
                             g.drawRedLine((int) xPos, (int) baselineY, (int) xPos, (int) baselineY, 0);
                         }
                     }
