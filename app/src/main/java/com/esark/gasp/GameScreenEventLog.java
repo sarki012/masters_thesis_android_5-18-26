@@ -15,6 +15,7 @@ import com.esark.framework.Input.TouchEvent;
 import com.esark.framework.Screen;
 
 import java.util.List;
+import com.esark.gasp.GaspSemg;
 
 public class GameScreenEventLog extends Screen implements Input {
     // --- GRID CONSTANTS (8 cols x 16 rows = 128 max) ---
@@ -76,11 +77,15 @@ public class GameScreenEventLog extends Screen implements Input {
                 }
                 // 2. Navigation: Reconnect Bluetooth (Fixed to prevent frozen waves)
                 else if (event.x > 1300 && event.y > 2510) {
-                    // Update this to use AndroidGame.mConnectedThread
-                    if (AndroidGame.mConnectedThread != null) {
-                        AndroidGame.mConnectedThread.cancel();
+                    // Stop the current thread to prevent memory leaks/crashes
+                    if (com.esark.framework.AndroidGame.mConnectedThread != null) {
+                        com.esark.framework.AndroidGame.mConnectedThread.cancel();
                     }
-                    Intent intent2 = new Intent(context.getApplicationContext(), AndroidGame.class);
+
+                    // FIX: Use GaspSemg.class (the Activity) instead of AndroidGame.class
+                    Intent intent2 = new Intent(context.getApplicationContext(), GaspSemg.class);
+
+                    // Clear the stack so the app doesn't try to "resume" into a broken state
                     intent2.setFlags(Intent.FLAG_ACTIVITY_NEW_TASK | Intent.FLAG_ACTIVITY_CLEAR_TASK);
                     context.startActivity(intent2);
                     return;
@@ -172,12 +177,14 @@ public class GameScreenEventLog extends Screen implements Input {
                         int seconds = Integer.parseInt(parts[1]);
                         int totalSeconds = (minutes * 60) + seconds;
 
-                        String finalLabel = totalSeconds + " s";
+                       // String finalLabel = totalSeconds + " s";
+                        String finalLabel = String.format("%02d:%02d", minutes, seconds) + " m:s";
+
                         // Standardized text centering
-                        g.drawText(finalLabel, x + 55, y + 72);
+                        g.drawSmallText(finalLabel, x + 10, y + 58);
                     }
                 } catch (Exception e) {
-                    g.drawText(label, x + 35, y + 72);
+                    g.drawSmallText(label, x + 10, y + 58);
                 }
             }
         }
