@@ -1123,32 +1123,30 @@ public class GameScreen extends Screen implements Input {
                     if (x2 <= xLeftLimit) break;
                 }
             }
-
-            // --- 3. ANIMATED REPLAY PSD (Linear uV^2 - Fixed Baseline & Gain) ---
+            // ---3. ANIMATED REPLAY PSD (Needle Spike Mode - Linear uV^2) ---
             int psdWin = 1024;
             if (replayRawArray != null && replayRawArray.length >= psdWin) {
                 double[] psdBuf = new double[psdWin];
 
-                // Synchronize window to playhead (centered)
+                // 1. Sync window to playhead
                 int windowStart = replayPosition - (psdWin / 2);
                 if (windowStart < 0) windowStart = 0;
                 if (windowStart > replayRawArray.length - psdWin) {
                     windowStart = replayRawArray.length - psdWin;
                 }
 
-                // 1. Copy data and SCALE ONLY for PSD (divide by 3.0)
+                // 2. Copy and Scale (Divide by 3 to match Live math)
+                double localSum = 0;
                 for (int i = 0; i < psdWin; i++) {
-                    psdBuf[i] = replayRawArray[windowStart + i] / 10.0f;      // Was 3.0
+                    psdBuf[i] = replayRawArray[windowStart + i] / 3.0;
+                    localSum += psdBuf[i];
                 }
 
-                // 2. Local Mean Removal (Prevents broadband noise)
-                double localSum = 0;
-                for (double v : psdBuf) localSum += v;
+                // 3. Local Mean Subtraction (CRITICAL to remove the "lit up" noise)
                 double localMean = localSum / psdWin;
-
                 for (int i = 0; i < psdWin; i++) {
                     double val = psdBuf[i] - localMean;
-                    // Hanning Window
+                    // Apply Hanning window
                     double window = 0.5 * (1.0 - Math.cos(2.0 * Math.PI * i / (psdWin - 1)));
                     psdBuf[i] = val * window;
                 }
@@ -1157,39 +1155,42 @@ public class GameScreen extends Screen implements Input {
                 double[] currentPsd = psdCalc.calculatePSD(psdBuf, 1000);
 
                 if (currentPsd != null) {
-                    float xStart = 140;
-                    float xEnd = 1582;
-                    int hLen = currentPsd.length / 2;
-                    float xStep = (xEnd - xStart) / (float) hLen;
+                    float xStartPSD = 140;
+                    float xEndPSD = 1582;
+                    int hLen = currentPsd.length / 2; // 0-500Hz
+                    float xStep = (xEndPSD - xStartPSD) / (float) hLen;
 
                     // --- CALIBRATED LINEAR SCALING ---
-                    // Using a higher gain for linear power to make it visible
-                    float psdGain = 2000.0f;
-
-                    // FIX: yOffset set to 1695 so (0 * -gain + 3600) - 1695 = 1905 (The Floor)
-                    float yOffset = 1695.0f;
+                    // Increased gain (2.5f) to ensure small spikes are visible
+                    float psdGainRep = 25.0f;
+                    // Baseline Math: (0 * -gain + 3600) - 1695 = 1905 (The Floor)
+                    float yOffsetRep = 1695.0f;
                     float baselineY = 1905.0f;
 
                     for (int i = 0; i < hLen; i++) {
-                        float xPos = xStart + (i * xStep);
+                        // Calculate X for this specific frequency needle
+                        float xPos = xStartPSD + (i * xStep);
 
-                        // Calculate Peak Height
-                        float yPeak = (float) (currentPsd[i] * -psdGain + 3600) - yOffset;
+                        // Calculate Peak Height (Linear uV^2)
+                        float yPeak = (float) (currentPsd[i] * -psdGainRep + 3600) - yOffsetRep;
 
                         // Clamping
                         if (yPeak < 1445) yPeak = 1445;
                         if (yPeak > 1905) yPeak = 1905;
 
-                        // Draw Needle Spike
-                        if (yPeak < 1904) {
+                        // DRAW VERTICAL NEEDLE
+                        // We draw from the floor (1905) UP to the peak.
+                        // This prevents "mountains" and ensures sharp spikes.
+                        if (yPeak < 1904.5f) {
                             g.drawRedLine((int) xPos, (int) baselineY, (int) xPos, (int) yPeak, 0);
                         } else {
-                            // Draw a single dot at baseline
+                            // Draw a single dot at the baseline if no signal
                             g.drawRedLine((int) xPos, (int) baselineY, (int) xPos, (int) baselineY, 0);
                         }
                     }
                 }
             }
+
 
             // --- IMPROVED REPLAY VELOCITY & LOOPING ---
             replayPosition += 20;
