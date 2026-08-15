@@ -165,6 +165,9 @@ public class GameScreen extends Screen implements Input {
     public static int selectedEventId = 0;
     public static float[] eventAmpThresholds = new float[120]; // Stores the threshold for each event
     private double[] replayMaxPsd = null; // Stores the "screenshot"
+    public static float psdInternalScalar = 1.0f;  // The "Volume Knob" for PSD data
+    // This array holds the 0-500Hz data for WHATEVER is currently active
+    public static double[] activePsdBuffer = new double[512];
     // Constructor
     public GameScreen(Game game) {
         super(game);
@@ -903,39 +906,50 @@ public class GameScreen extends Screen implements Input {
                 g.drawSmallText(areaText3, 1630, 805);
 
             }
+            // --- PSD SWITCHBOARD ---
+            if (isReplaying) {
+                if (replayMaxPsd != null) {
+                    // Copy the "Screenshot" into the active buffer
+                    System.arraycopy(replayMaxPsd, 0, activePsdBuffer, 0, 512);
+                }
+            } else {
+                if (psdResult != null) {
+                    // Copy the Live Result into the active buffer
+                    System.arraycopy(psdResult, 0, activePsdBuffer, 0, 512);
+                }
+            }
 
-            // --- PSD Drawing Logic (Live) ---
-            // Units: uV^2 (Linear Power)
-            float psdLiveGain = 5.0f;      // Was 0.05   // Adjusted gain for linear uV^2 (usually requires a smaller number)
-            float yLiveOffset = 1695.0f;  // Sets baseline (3600 - 1695 = 1905)
-            float xBoxStart = 140;
-            float xBoxEnd = 1582;
+            // --- UNIFIED PSD DRAWING (Live & Replay) ---
+            float psdGlobalGain = 1.2f;    // ONE variable to rule them all
+            float yPsdOffset = 1695.0f;    // Baseline at 1905
+            float xPsdStart = 140;
+            float xPsdEnd = 1582;
+            float drawBase = 3600f;
 
-            // Draw only first half (0-500Hz)
-            int halfLen = psdResult.length / 2;
-            float xStepPsd = (xBoxEnd - xBoxStart) / (float) halfLen;
+            int hLen = 512;
+            float xStep = (xPsdEnd - xPsdStart) / (float) hLen;
+            float curX = xPsdStart;
 
-            float currentXpsd = xBoxStart;
+            for (int i = 1; i < hLen; i++) {
+                float nextX = xPsdStart + (i * xStep);
 
-            for (int i = 1; i < halfLen; i++) {
-                float nextXpsd = xBoxStart + (i * xStepPsd);
+                // Connected Line Math (The "Mountain" look)
+                // Note: activePsdBuffer is filled by the switchboard above
+                float y1 = (float) (activePsdBuffer[i - 1] * -psdGlobalGain + drawBase) - yPsdOffset;
+                float y2 = (float) (activePsdBuffer[i] * -psdGlobalGain + drawBase) - yPsdOffset;
 
-                // LINEAR MATH: Power (uV^2) * Gain
-                // We no longer use Math.log10 here
-                float y1 = (float) (psdResult[i - 1] * -psdLiveGain + 3600) - yLiveOffset;
-                float y2 = (float) (psdResult[i] * -psdLiveGain + 3600) - yLiveOffset;
-
-                // Clamping to stay inside the PSD box floor (1905) and ceiling (1445)
+                // Unified Clamping
                 if (y1 < 1445) y1 = 1445;
                 if (y1 > 1905) y1 = 1905;
                 if (y2 < 1445) y2 = 1445;
                 if (y2 > 1905) y2 = 1905;
 
-                g.drawRedLine((int) currentXpsd, (int) y1, (int) nextXpsd, (int) y2, 0);
-                currentXpsd = nextXpsd;
+                g.drawRedLine((int) curX, (int) y1, (int) nextX, (int) y2, 0);
+                curX = nextX;
 
-                if (currentXpsd >= xBoxEnd) break;
+                if (curX >= xPsdEnd) break;
             }
+
             // --- AREA-BASED ALERT LOGIC ---
             // Convert stableAreaValue to uV*S for the comparison (multiply by 1000)
             // if your rmsAreaThresh is set in uV*S units.
@@ -953,18 +967,6 @@ public class GameScreen extends Screen implements Input {
             } else {
                 isAlertPlaying = false;
             }
-/*
-            latestY = (int) (blueCenterY - smoothedRMS[smoothedRMS.length - 1] * rmsYScale);
-            if (latestY < thresholdY) {
-                if (!isAlertPlaying && alertSound != null) {
-                    alertSound.play(5.0f);
-                    isAlertPlaying = true;
-                }
-            } else {
-                isAlertPlaying = false;
-            }
-            */
-
         }
 
         // --- RAW SIGNAL CONSTANTS ---
@@ -1124,44 +1126,7 @@ public class GameScreen extends Screen implements Input {
                     if (x2 <= xLeftLimit) break;
                 }
             }
-            // --- 3. STATIC REPLAY PSD (MAX SCREENSHOT) ---
-            // This draws the captured peak PSD as a connected line
-            if (isReplaying && replayMaxPsd != null) {
-                float xStartPSD = 140;
-                float xEndPSD = 1582;
-                int hLen = replayMaxPsd.length / 2;
-                float xStep = (xEndPSD - xStartPSD) / (float) hLen;
 
-                // SCALING: Synced to Live View
-                float psdGainRep = 0.35f;
-                float yOffsetRep = 1695.0f;
-                float drawBase = 3600f;
-
-                final int CEILING_PSD = 1445;
-                final int FLOOR_PSD = 1905;
-
-                float curX = xStartPSD;
-
-                for (int i = 1; i < hLen; i++) {
-                    float nextX = xStartPSD + (i * xStep);
-
-                    // Calculate Y for connected segments
-                    float y1 = (float) (replayMaxPsd[i - 1] * -psdGainRep + drawBase) - yOffsetRep;
-                    float y2 = (float) (replayMaxPsd[i] * -psdGainRep + drawBase) - yOffsetRep;
-
-                    // Clamp to PSD Box
-                    if (y1 < CEILING_PSD) y1 = CEILING_PSD;
-                    if (y1 > FLOOR_PSD)   y1 = FLOOR_PSD;
-                    if (y2 < CEILING_PSD) y2 = CEILING_PSD;
-                    if (y2 > FLOOR_PSD)   y2 = FLOOR_PSD;
-
-                    // Draw connected lines (like Real-Time)
-                    g.drawRedLine((int) curX, (int) y1, (int) nextX, (int) y2, 0);
-
-                    curX = nextX;
-                    if (curX >= xEndPSD) break;
-                }
-            }
 
             // --- IMPROVED REPLAY VELOCITY & LOOPING ---
             replayPosition += 20;
@@ -1186,7 +1151,7 @@ public class GameScreen extends Screen implements Input {
         this.selectedEventId = id;
         replayList.clear();
         replayPosition = 0;
-        replayMaxPsd = null;    // Reset the PSD screenshot
+        replayMaxPsd = null;    // Reset screenshot
         replayRawArray = null;
         replayRMSArray = null;
 
@@ -1201,7 +1166,6 @@ public class GameScreen extends Screen implements Input {
             String line;
             while ((line = br.readLine()) != null) {
                 if (!line.trim().isEmpty()) {
-                    // Load raw values (1:1) so Raw and RMS stay full size
                     replayList.add(Double.parseDouble(line));
                 }
             }
@@ -1209,8 +1173,6 @@ public class GameScreen extends Screen implements Input {
 
             if (!replayList.isEmpty()) {
                 replayRawArray = new double[replayList.size()];
-
-                // Warm up filter to prevent startup noise
                 double firstVal = replayList.get(0);
                 for(int i = 0; i < 200; i++) { replayNotch.filter(firstVal); }
 
@@ -1221,35 +1183,29 @@ public class GameScreen extends Screen implements Input {
                 for (int i = 0; i < replayList.size(); i++) {
                     double filtered = replayNotch.filter(replayList.get(i));
                     replayRawArray[i] = filtered;
-
-                    // Track sum for mean (bipolar conversion)
                     sum += filtered;
-
-                    // Track peak for PSD screenshot
+                    // Find the peak to center the PSD screenshot
                     if (Math.abs(filtered) > maxAbsVal) {
                         maxAbsVal = Math.abs(filtered);
                         peakIdx = i;
                     }
                 }
 
-                // --- 1. CALCULATE REPLAY RMS (Full Scale) ---
+                // --- 1. CALCULATE REPLAY RMS ---
                 double mean = sum / replayRawArray.length;
                 double[] bipolarReplay = new double[replayRawArray.length];
                 for (int i = 0; i < replayRawArray.length; i++) {
                     bipolarReplay[i] = replayRawArray[i] - mean;
                 }
-
-                // Match Live Mode RMS Logic exactly
                 replayRMSArray = RMSCalculator.calculateMovingRMS(bipolarReplay, 40);
                 if (replayRMSArray != null) {
                     for (int k = 0; k < replayRMSArray.length; k++) {
-                        replayRMSArray[k] *= 1.75; // Live Mode Multiplier
+                        replayRMSArray[k] *= 1.75;
                     }
-                    // Smoothing
                     replayRMSArray = MovingAverageCalculator.calculateMovingAverage(replayRMSArray, 80);
                 }
 
-                // --- 2. CAPTURE THE PSD "SCREENSHOT" AT PEAK (Scaled / 3.0) ---
+                // --- 2. CAPTURE THE PSD "SCREENSHOT" (CRITICAL FIX) ---
                 int psdWin = 1024;
                 if (replayRawArray.length >= psdWin) {
                     double[] psdBuf = new double[psdWin];
@@ -1257,14 +1213,14 @@ public class GameScreen extends Screen implements Input {
                     if (start < 0) start = 0;
                     if (start > replayRawArray.length - psdWin) start = replayRawArray.length - psdWin;
 
-                    // Copy data and apply / 3.0 ONLY for the PSD calculation
                     double localSum = 0;
                     for (int i = 0; i < psdWin; i++) {
+                        // Apply / 3.0 to match Live scaling
                         psdBuf[i] = replayRawArray[start + i] / 3.0;
                         localSum += psdBuf[i];
                     }
 
-                    // Remove local mean and apply Hanning
+                    // Remove local mean to prevent "lit up" noise floor
                     double localMean = localSum / psdWin;
                     for (int i = 0; i < psdWin; i++) {
                         double val = psdBuf[i] - localMean;
@@ -1281,7 +1237,7 @@ public class GameScreen extends Screen implements Input {
                 if (view != null) view.postInvalidate();
             }
         } catch (Exception e) {
-            Log.e("REPLAY", "Error loading event: " + e.getMessage());
+            Log.e("REPLAY", "Load failed: " + e.getMessage());
         }
     }
 
