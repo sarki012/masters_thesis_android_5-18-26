@@ -893,7 +893,7 @@ public class GameScreen extends Screen implements Input {
                 }
 
                 // Draw the result using the persistent variable
-                String areaText1 = "Area of Incoming Yellow";
+                String areaText1 = "Area of Incoming Green";
                 String areaText2 = String.format("Shaded Region: %.1f", stableAreaValue);
                 String areaText3 = "uV*mS";
 
@@ -904,7 +904,7 @@ public class GameScreen extends Screen implements Input {
             }
 
             // --- PSD Drawing Logic (Live) ---
-            float psdLiveGain = 3.0f; // Was 0.35f;
+            float psdLiveGain = 10.0f; //Was 3.0 Was 0.35f;
             float yLiveOffset = 1640.0f;
             float xBoxStart = 140;
             float xBoxEnd = 1582;
@@ -1132,28 +1132,30 @@ public class GameScreen extends Screen implements Input {
             // --- 3. ANIMATED REPLAY PSD (Cleaned & Synchronized) ---
             // --- 3. ANIMATED REPLAY PSD (Linear Mode to match Real-Time) ---
             int psdWin = 1024;
+            // --- 3. ANIMATED REPLAY PSD (Fixed Scaling & Noise) ---int psdWin = 1024;
             if (replayRawArray != null && replayRawArray.length >= psdWin) {
                 double[] psdBuf = new double[psdWin];
 
+                // Synchronize window to playhead (centered on current position)
                 int windowStart = replayPosition - (psdWin / 2);
                 if (windowStart < 0) windowStart = 0;
                 if (windowStart > replayRawArray.length - psdWin) {
                     windowStart = replayRawArray.length - psdWin;
                 }
 
-                // Copy and scale by 3.0 (Matches ConnectedThread)
+                // 1. Copy and SCALE data (divide by 3.0 to match Live Mode math)
                 for (int i = 0; i < psdWin; i++) {
                     psdBuf[i] = replayRawArray[windowStart + i] / 3.0;
                 }
 
-                // Local Mean Subtraction (Identical to Live)
+                // 2. CRITICAL: Remove Local Mean for this window
                 double localSum = 0;
                 for (double v : psdBuf) localSum += v;
                 double localMean = localSum / psdWin;
 
                 for (int i = 0; i < psdWin; i++) {
+                    // Subtract mean and apply Hanning Window
                     double val = psdBuf[i] - localMean;
-                    // Hanning Window
                     double window = 0.5 * (1.0 - Math.cos(2.0 * Math.PI * i / (psdWin - 1)));
                     psdBuf[i] = val * window;
                 }
@@ -1162,42 +1164,33 @@ public class GameScreen extends Screen implements Input {
                 double[] currentPsd = psdCalc.calculatePSD(psdBuf, 1000);
 
                 if (currentPsd != null) {
-                    float xStart = 130;
-                    float xEnd = 1582;
+                    float xStart = 140;   // Match your xBoxStart
+                    float xEnd = 1582;    // Match your xBoxEnd
                     int hLen = currentPsd.length / 2;
                     float xStep = (xEnd - xStart) / (float) hLen;
 
-                    // --- LINEAR TRANSFORMATION (Matches Live View) ---
-                    // --- MATCHED LINEAR TRANSFORMATION ---
-                    // Using 0.35f matches the real-time sensitivity perfectly
-                    // --- SHARP NEEDLE TRANSFORMATION ---
-                    float psdLiveGain = 3.0f; // As requested
-                    // 3600 - 1700 = 1900. This puts the floor exactly at 1900
-                    float yLiveOffset = 1700.0f;
-                    float baselineY = 1900.0f;
+                    // Match your LIVE constants exactly
+                    float psdGain = 1.0f; // Scale this down from 10.0 if it's too sensitive
+                    float yOffset = 1640.0f;
+                    float baselineY = 1905.0f;
 
                     for (int i = 0; i < hLen; i++) {
-                        // Calculate the X coordinates for this specific bin
-                        float xLeftPSD = xStart + (i * xStep);
-                        float xMid = xLeftPSD + (xStep / 2.0f);
-                        float xRightPSD = xLeftPSD + xStep;
+                        float xPos = xStart + (i * xStep);
 
-                        // Calculate the peak height for this bin
-                        float yPeak = (float) (currentPsd[i] * -psdLiveGain + 3600) - yLiveOffset;
+                        // Calculate the peak height (Linear math to match your live view)
+                        float yPeak = (float) (currentPsd[i] * -psdGain + 3600) - yOffset;
 
                         // Clamping to stay inside the PSD box
-                        if (yPeak < 1455) yPeak = 1455;
-                        if (yPeak > 1900) yPeak = 1900;
+                        if (yPeak < 1445) yPeak = 1445;
+                        if (yPeak > 1905) yPeak = 1905;
 
-                        // Only draw if there is a spike to show
-                        if (yPeak < 1899) {
-                            // FIX: Use xLeftPSD, xMid, and xRightPSD (the bin coordinates)
-                            // instead of xLeft and xRight (the box boundaries)
-                            g.drawRedLine((int) xLeftPSD, (int) baselineY, (int) xMid, (int) yPeak, 0);
-                            g.drawRedLine((int) xMid, (int) yPeak, (int) xRightPSD, (int) baselineY, 0);
+                        // Draw as a sharp needle spike (Baseline to Peak)
+                        // This prevents the "mountain" look and keeps it looking like the live PSD
+                        if (yPeak < 1904) {
+                            g.drawRedLine((int) xPos, (int) baselineY, (int) xPos, (int) yPeak, 0);
                         } else {
-                            // Just draw the flat baseline for the width of this specific bin
-                            g.drawRedLine((int) xLeftPSD, (int) baselineY, (int) xRightPSD, (int) baselineY, 0);
+                            // Baseline pixel
+                            g.drawRedLine((int) xPos, (int) baselineY, (int) xPos, (int) baselineY, 0);
                         }
                     }
                 }
