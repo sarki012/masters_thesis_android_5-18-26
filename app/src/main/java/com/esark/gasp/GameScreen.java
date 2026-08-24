@@ -608,7 +608,7 @@ public class GameScreen extends Screen implements Input {
         // White text, centered at top (adjust 850/100 based on your font size)
         g.drawMedText(btStatus, 100, 130);
 //        g.drawRect(1245, 2535, 470, 200, 0);       //Bluetooth Connect
-            // g.drawRect(45, 2000, 800, 100, 0);       //Start
+        // g.drawRect(45, 2000, 800, 100, 0);       //Start
         //   g.drawRect(910, 2000, 355, 100, 0);       //Stop
 
         // g.drawRect(1310, 2000, 355, 100, 0);       //Replay (Blue Button)
@@ -636,9 +636,9 @@ public class GameScreen extends Screen implements Input {
 
         //   g.drawRect(1600, 1330, 100, 270, 0);       //Start/Stop Save a Sample
         //  g.drawRect(1600, 1610, 100, 310, 0);       //Replay
-       // g.drawRect(715, 2330, 300, 160, 0);     //False Positive
-       // g.drawRect(1040, 2330, 325, 160, 0);     //False Negative
-       // g.drawRect(1390, 2330, 310, 160, 0);     //True Positive
+        // g.drawRect(715, 2330, 300, 160, 0);     //False Positive
+        // g.drawRect(1040, 2330, 325, 160, 0);     //False Negative
+        // g.drawRect(1390, 2330, 310, 160, 0);     //True Positive
 
         //////////////////// Battery Voltage and SOC //////////////////////////////////
         // Inside GameScreen.java -> present()// Draw Battery Voltage
@@ -718,7 +718,7 @@ public class GameScreen extends Screen implements Input {
 
             // If the data acquisition thread stopped, jCount will stop increasing
             // Let's force a refresh or check if we are getting data
-        //    int currentCount = ConnectedThread.jCount.get();
+            //    int currentCount = ConnectedThread.jCount.get();
             // If btStatus is "BT: Connected" but waves aren't moving,
             // it means rxThread is dead.
 
@@ -915,12 +915,13 @@ public class GameScreen extends Screen implements Input {
             } else {
                 if (psdResult != null) {
                     // Copy the Live Result into the active buffer
-                    System.arraycopy(psdResult, 0, activePsdBuffer, 0, 512);
+                    // Live uses the real-time buffer from ConnectedThread
+                    System.arraycopy(psdResult, 0, activePsdBuffer, 0, Math.min(psdResult.length, 512));
                 }
             }
 
             // --- UNIFIED PSD DRAWING (Live & Replay) ---
-            float psdGlobalGain = 1.2f;    // ONE variable to rule them all
+            float psdGlobalGain = 10.0f;    // Was 1.2 ONE variable to rule them all
             float yPsdOffset = 1695.0f;    // Baseline at 1905
             float xPsdStart = 140;
             float xPsdEnd = 1582;
@@ -1010,151 +1011,127 @@ public class GameScreen extends Screen implements Input {
         }
 
         if (isReplaying && !replayList.isEmpty() && replayRawArray != null) {
-            // --- 1. DRAW REPLAY RAW SIGNAL (RED) ---
+            // --- 1. REPLAY RAW SIGNAL (RED) ---
             signalPaint.setColor(android.graphics.Color.RED);
+            signalPaint.setStrokeWidth(2.5f);    // Match the Live signal thickness
             bufferIdx = 0;
-            int safePos = Math.min(replayPosition, replayRawArray.length - 1);
-            float yLast = 565.0f - (float) ((replayRawArray[safePos] - 410.0f) * 0.15f);
-            for (int n = 1; n < signalBufferLen; n++) {
-                int x1 = xRight - (n - 1);
-                int x2 = xRight - n;
+
+// Constants matched to your Live Black Signal logic
+            final float centerYRep = 565.0f;
+            final float gMultRep = 0.15f;
+            final float baseRep = 410.0f;
+
+// Determine the starting Y point based on the current playback head
+            int startPos = Math.min(replayPosition, replayRawArray.length - 1);
+            float yLastRep = centerYRep - ((float) replayRawArray[startPos] - baseRep) * gMultRep;
+
+// Draw up to 1444 pixels (the width of the box)
+            for (int n = 1; n < 1444; n++) {
+                float x1 = 1574 - (n - 1);
+                float x2 = 1574 - n;
                 int dataIdx = replayPosition - n;
+
                 if (dataIdx >= 0 && dataIdx < replayRawArray.length) {
-                    float yNext = 565.0f - (float) ((replayRawArray[dataIdx] - 410.0f) * 0.15f);
+                    float yNext = centerYRep - ((float) replayRawArray[dataIdx] - baseRep) * gMultRep;
+
+                    // Clamping to stay inside the Raw Signal box (Ceiling 222, Floor 680)
                     if (yNext < 222) yNext = 222;
                     if (yNext > 680) yNext = 680;
-                    lineBuffer[bufferIdx++] = (float) x1;
-                    lineBuffer[bufferIdx++] = yLast;
-                    lineBuffer[bufferIdx++] = (float) x2;
-                    lineBuffer[bufferIdx++] = yNext;
-                    yLast = yNext;
-                }
-                if (x2 <= xLeft || bufferIdx >= lineBuffer.length - 4) break;
-            }
-            if (bufferIdx > 0) canvas.drawLines(lineBuffer, 0, bufferIdx, signalPaint);
 
-            // --- 2. DRAW REPLAY RMS (Mirroring Live Logic) ---
+                    // Load coordinates into the high-performance line buffer
+                    lineBuffer[bufferIdx++] = x1;
+                    lineBuffer[bufferIdx++] = yLastRep;
+                    lineBuffer[bufferIdx++] = x2;
+                    lineBuffer[bufferIdx++] = yNext;
+                    yLastRep = yNext;
+                }
+
+                // Stop if we hit the left limit or the line buffer is full
+                if (x2 <= 140 || bufferIdx >= lineBuffer.length - 4) break;
+            }
+
+// Draw all segments at once for maximum performance
+            if (bufferIdx > 0) {
+                canvas.drawLines(lineBuffer, 0, bufferIdx, signalPaint);
+            }
+
+            // --- 2. REPLAY RMS (BLUE & FILLS) ---
             if (replayRMSArray != null) {
                 final int blueCenterY = 1550;
                 final float rmsYScale = 1.5f;
-                final int xRightLimit = 1574;
-                final int xLeftLimit = 130;
-
-                // --- FIX: Use the threshold that was active when THIS event was recorded ---
                 float savedThresh = eventAmpThresholds[selectedEventId];
-                // If for some reason it's 0 (old save), fallback to current live threshold
                 if (savedThresh == 0) savedThresh = rmsAmpThresh;
+                int threshY = (int) (blueCenterY - (savedThresh * rmsYScale));
 
-                // 1. Identify Islands in Replay using the SAVED threshold
-                double areaFactor = 0.00322;
-                boolean[] replaySpasmMap = new boolean[replayRMSArray.length];
-                int iScan = replayRMSArray.length - 1;
-                while (iScan >= 0) {
-                    if (replayRMSArray[iScan] > savedThresh) {
-                        int islandEnd = iScan;
-                        double islandSum = 0;
-                        int islandWidth = 0;
-                        while (iScan >= 0) {
-                            if (replayRMSArray[iScan] > savedThresh) {
-                                islandSum += (replayRMSArray[iScan] * areaFactor);
-                                islandWidth++;
-                                iScan--;
-                            } else {
-                                boolean flicker = false;
-                                for (int h = 1; h <= 5; h++) {
-                                    if (iScan - h >= 0 && replayRMSArray[iScan - h] > savedThresh) {
-                                        flicker = true; iScan -= h; break;
-                                    }
-                                }
-                                if (!flicker) break;
-                            }
+                // Draw Threshold Line
+                g.drawGreenLine(130, threshY, 1574, threshY, 0);
+
+                // --- 2. REPLAY RMS (BLUE & FILLS) ---
+// Fixed: Changed ryLast to int to match Graphics method signatures
+                int ryLast = blueCenterY;
+                for (int n = 0; n < 1444; n++) {
+                    int x = 1574 - n;
+                    int dIdx = replayPosition - n;
+
+                    if (dIdx >= 0 && dIdx < replayRMSArray.length) {
+                        int yVal = (int) (blueCenterY - replayRMSArray[dIdx] * rmsYScale);
+
+                        // Vertical Clamping
+                        if (yVal < 1019) yVal = 1019;
+                        if (yVal > 1300) yVal = 1300;
+
+                        // Shaded Fill (Yellow)
+                        if (yVal < threshY) {
+                            g.drawYellowLine(x, yVal + 4, x, threshY, 0);
                         }
-                        // Use live rmsAreaThresh to decide if it turns green in replay
-                        if (islandSum * 0.001 >= rmsAreaThresh) {
-                            for (int k = Math.max(0, iScan + 1); k <= islandEnd; k++) {
-                                replaySpasmMap[k] = true;
-                            }
+
+                        // RMS Line (Blue)
+                        if (n > 0) {
+                            // FIXED: x and y coordinates are now all integers
+                            g.drawBlueLine(x + 1, ryLast, x, yVal, 0);
                         }
-                    } else { iScan--; }
-                }
-
-                // 2. Draw the Threshold Line at the SAVED height
-                int thresholdYRep = (int) (blueCenterY - (savedThresh * rmsYScale));
-                g.drawGreenLine(xLeftLimit, thresholdYRep, xRightLimit, thresholdYRep, 0);
-
-                final int CEILING = 1019;
-                final int FLOOR = 1300;
-                final int STROKE_OFFSET = 4;
-
-                // --- PASS 1: SHADED FILL ---
-                for (int n = 0; n < (xRightLimit - xLeftLimit); n++) {
-                    int xCurrent = xRightLimit - n;
-                    int dataIdx = replayPosition - n;
-                    if (dataIdx >= 0 && dataIdx < replayRMSArray.length) {
-                        int yVal = (int) (blueCenterY - replayRMSArray[dataIdx] * rmsYScale);
-                        if (yVal < CEILING) yVal = CEILING;
-                        if (yVal > FLOOR) yVal = FLOOR;
-
-                        if (yVal < thresholdYRep) {
-                            if (replaySpasmMap[dataIdx]) {
-                                g.drawGreenLine(xCurrent, yVal + STROKE_OFFSET, xCurrent, thresholdYRep, 0);
-                            } else {
-                                g.drawYellowLine(xCurrent, yVal + STROKE_OFFSET, xCurrent, thresholdYRep, 0);
-                            }
-                        }
+                        ryLast = yVal;
                     }
+                    if (x <= 130) break;
                 }
-                int windowSize = xRightLimit - xLeftLimit;
-                // --- PASS 2: BLUE RMS LINE ---
-                for (int n = 0; n < windowSize - 1; n++) {
-                    int x1 = xRightLimit - n;
-                    int x2 = xRightLimit - (n + 1);
-                    int dataIdx1 = replayPosition - n;
-                    int dataIdx2 = replayPosition - (n + 1);
 
-                    if (dataIdx2 >= 0 && dataIdx1 < replayRMSArray.length) {
-                        int ry1 = (int) (blueCenterY - replayRMSArray[dataIdx1] * rmsYScale);
-                        int ry2 = (int) (blueCenterY - replayRMSArray[dataIdx2] * rmsYScale);
-
-                        if (ry1 < CEILING) ry1 = CEILING;
-                        if (ry1 > FLOOR) ry1 = FLOOR;
-                        if (ry2 < CEILING) ry2 = CEILING;
-                        if (ry2 > FLOOR) ry2 = FLOOR;
-
-                        g.drawBlueLine(x1, ry1, x2, ry2, 0);
-                    }
-                    if (x2 <= xLeftLimit) break;
+                // --- 3. PSD SWITCHBOARD ---
+                if (replayMaxPsd != null) {
+                    System.arraycopy(replayMaxPsd, 0, activePsdBuffer, 0, 512);
                 }
-            }
 
+                // Unified PSD Drawing (Place after the switchboard)
+                float psdGlobalGain = 15.0f;
+                float yPsdOffset = 1695.0f;
+                for (int i = 1; i < 512; i++) {
+                    float x1 = 140 + ((i - 1) * 2.81f);
+                    float x2 = 140 + (i * 2.81f);
+                    float y1 = (float) (activePsdBuffer[i - 1] * -psdGlobalGain + 3600) - yPsdOffset;
+                    float y2 = (float) (activePsdBuffer[i] * -psdGlobalGain + 3600) - yPsdOffset;
+                    if (y1 < 1445) y1 = 1445;
+                    if (y1 > 1905) y1 = 1905;
+                    if (y2 < 1445) y2 = 1445;
+                    if (y2 > 1905) y2 = 1905;
+                    g.drawRedLine((int) x1, (int) y1, (int) x2, (int) y2, 0);
+                }
 
-            // --- IMPROVED REPLAY VELOCITY & LOOPING ---
-            replayPosition += 20;
-            int totalReplayPath = (replayRawArray != null) ? replayRawArray.length + (1574 - 130) : 0;
-
-            if (replayPosition >= totalReplayPath) {
-                replayPosition = 0;
-            }
-
-            if (view != null) {
+                replayPosition += 15;
+                if (replayPosition >= replayRawArray.length + 1444) replayPosition = 0;
                 view.postInvalidate();
             }
-        } // This closes "else if (isReplaying)"
-    } // This closes the "public void present(float deltaTime)" method
-
+        } // This closes the "public void present(float deltaTime)" method
+    }
 
     /////////////////////////// Replay Helper Method ////////////////////////////////////
 
     // Call this from GameScreenEventLog when a button is pressed
     // Replace/Update your loadSpecificEvent method:
+
     public void loadSpecificEvent(int id, Context context) {
         this.selectedEventId = id;
         replayList.clear();
         replayPosition = 0;
-        replayMaxPsd = null;    // Reset screenshot
-        replayRawArray = null;
-        replayRMSArray = null;
-
+        replayMaxPsd = new double[512]; // Initialize screenshot array
         NotchFilter replayNotch = new NotchFilter();
 
         try {
@@ -1173,6 +1150,7 @@ public class GameScreen extends Screen implements Input {
 
             if (!replayList.isEmpty()) {
                 replayRawArray = new double[replayList.size()];
+                // Warm up filter
                 double firstVal = replayList.get(0);
                 for(int i = 0; i < 200; i++) { replayNotch.filter(firstVal); }
 
@@ -1181,66 +1159,53 @@ public class GameScreen extends Screen implements Input {
                 double sum = 0;
 
                 for (int i = 0; i < replayList.size(); i++) {
-                    double filtered = replayNotch.filter(replayList.get(i));
-                    replayRawArray[i] = filtered;
-                    sum += filtered;
-                    // Find the peak to center the PSD screenshot
-                    if (Math.abs(filtered) > maxAbsVal) {
-                        maxAbsVal = Math.abs(filtered);
+                    double val = replayNotch.filter(replayList.get(i));
+                    replayRawArray[i] = val;
+                    sum += val;
+                    if (Math.abs(val) > maxAbsVal) {
+                        maxAbsVal = Math.abs(val);
                         peakIdx = i;
                     }
                 }
 
                 // --- 1. CALCULATE REPLAY RMS ---
                 double mean = sum / replayRawArray.length;
-                double[] bipolarReplay = new double[replayRawArray.length];
-                for (int i = 0; i < replayRawArray.length; i++) {
-                    bipolarReplay[i] = replayRawArray[i] - mean;
-                }
-                replayRMSArray = RMSCalculator.calculateMovingRMS(bipolarReplay, 40);
+                double[] bipolar = new double[replayRawArray.length];
+                for (int i = 0; i < bipolar.length; i++) bipolar[i] = replayRawArray[i] - mean;
+
+                replayRMSArray = RMSCalculator.calculateMovingRMS(bipolar, 40);
                 if (replayRMSArray != null) {
-                    for (int k = 0; k < replayRMSArray.length; k++) {
-                        replayRMSArray[k] *= 1.75;
-                    }
+                    for (int k = 0; k < replayRMSArray.length; k++) replayRMSArray[k] *= 1.75;
                     replayRMSArray = MovingAverageCalculator.calculateMovingAverage(replayRMSArray, 80);
                 }
 
-                // --- 2. CAPTURE THE PSD "SCREENSHOT" (CRITICAL FIX) ---
+                // --- 2. CAPTURE PSD "SCREENSHOT" AT PEAK ---
                 int psdWin = 1024;
                 if (replayRawArray.length >= psdWin) {
                     double[] psdBuf = new double[psdWin];
-                    int start = peakIdx - (psdWin / 2);
+                    int start = peakIdx - 512;
                     if (start < 0) start = 0;
                     if (start > replayRawArray.length - psdWin) start = replayRawArray.length - psdWin;
 
                     double localSum = 0;
                     for (int i = 0; i < psdWin; i++) {
-                        // Apply / 3.0 to match Live scaling
-                        psdBuf[i] = replayRawArray[start + i] / 3.0;
+                        psdBuf[i] = replayRawArray[start + i] / 3.0; // Scale to match Live
                         localSum += psdBuf[i];
                     }
-
-                    // Remove local mean to prevent "lit up" noise floor
                     double localMean = localSum / psdWin;
                     for (int i = 0; i < psdWin; i++) {
-                        double val = psdBuf[i] - localMean;
-                        double window = 0.5 * (1.0 - Math.cos(2.0 * Math.PI * i / (psdWin - 1)));
-                        psdBuf[i] = val * window;
+                        double v = (psdBuf[i] - localMean) * (0.5 * (1.0 - Math.cos(2.0 * Math.PI * i / 1023)));
+                        psdBuf[i] = v;
                     }
-
                     PowerSpectralDensityCalculator psdCalc = new PowerSpectralDensityCalculator(psdBuf, 1000);
-                    replayMaxPsd = psdCalc.calculatePSD(psdBuf, 1000);
+                    double[] fullPsd = psdCalc.calculatePSD(psdBuf, 1000);
+                    System.arraycopy(fullPsd, 0, replayMaxPsd, 0, 512);
                 }
-
                 isReplaying = true;
                 isRecording = false;
-                if (view != null) view.postInvalidate();
             }
-        } catch (Exception e) {
-            Log.e("REPLAY", "Load failed: " + e.getMessage());
-        }
+        } catch (Exception e) { Log.e("REPLAY", "Error: " + e.getMessage()); }
     }
-
     /////////////// Capture and Save Event /////////////////////////
     private void captureAndSaveEvent() {
         // Define threadContext locally so the executor can access it
