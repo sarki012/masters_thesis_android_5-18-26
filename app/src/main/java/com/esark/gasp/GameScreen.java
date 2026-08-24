@@ -73,8 +73,9 @@ public class GameScreen extends Screen implements Input {
     int amplitude = 100;
     int increasingFlag = 1;
     int freqIncreasingFlag = 1;
-    int startRecording = 0;
+    public static int startRecording = 0;
     public static long startTimeMillis = 0;
+    public static long totalRecordingTime = 0;
     long recDeltaTimeMillis = 0;
     long currentTimeMillis = 0;
     long minutes = 0;
@@ -135,7 +136,6 @@ public class GameScreen extends Screen implements Input {
 
     // FIX 2: Declare these here, but do NOT initialize them here
     public GameScreenEventLog gameScreenEventLog;
-    private long totalRecordingTime = 0;
     public static int[] eventBufferPointers = new int[100]; // Stores the index of each event
     public static int selectedEventPointer = -1;           // Which event we are currently replaying
     // Inside GameScreen.java
@@ -231,8 +231,7 @@ public class GameScreen extends Screen implements Input {
                 //////////////////// Start Recording Button (Green Button) ////////////////////////////////////////////////
                 else if (event.x > 45 && event.x < 845 && event.y > 2000 && event.y < 2100) {//Start
                     if (!isRecording) {
-                        // Only set the start time if it hasn't been set yet
-                        // OR if we are explicitly starting a brand new session
+                        // Only set the startTime if it's the very first time starting
                         if (startTimeMillis == 0) {
                             startTimeMillis = System.currentTimeMillis();
                         }
@@ -696,19 +695,32 @@ public class GameScreen extends Screen implements Input {
         String patientEventStr = String.valueOf(truePositive);
         g.drawText(patientEventStr, 570, 2660);
 
-        // Inside present() method
-        if (startTimeMillis == 0) {
-            g.drawText("00:00:000", 245, 2070);
-        } else if (startRecording == 1) {
-            // Mode 1: Timer is actively counting
-            long delta = System.currentTimeMillis() - startTimeMillis;
-            String time = String.format("%02d:%02d:%03d", (delta / 60000), (delta / 1000) % 60, (delta % 1000));
-            g.drawText(time, 245, 2070);
-        } else if (startRecording == 2) {
-            // Mode 2: Timer is stopped/frozen at totalRecordingTime
-            String time = String.format("%02d:%02d:%03d", (totalRecordingTime / 60000), (totalRecordingTime / 1000) % 60, (totalRecordingTime % 1000));
-            g.drawText(time, 245, 2070);
+        // --- STOPWATCH DRAWING (Fixed for persistence) ---
+        String timeStr = "00:00:000";
+
+        if (isReplaying) {
+            // 1. REPLAY MODE: Show the timestamp of the specific event being viewed
+            if (selectedEventId >= 0 && timeStamp[selectedEventId] != null) {
+                timeStr = timeStamp[selectedEventId];
+            }
+        } else if (startTimeMillis != 0) {
+            // 2. LIVE MODE: Show elapsed time if we have a valid start time
+            long displayTime;
+            if (isRecording) {
+                displayTime = System.currentTimeMillis() - startTimeMillis;
+            } else {
+                // If we stopped, show the frozen time.
+                // If we just returned home, show the current elapsed time.
+                displayTime = (totalRecordingTime > 0) ? totalRecordingTime : (System.currentTimeMillis() - startTimeMillis);
+            }
+
+            timeStr = String.format("%02d:%02d:%03d",
+                    (displayTime / 60000),
+                    (displayTime / 1000) % 60,
+                    (displayTime % 1000));
         }
+
+        g.drawText(timeStr, 245, 2070);
 
 // --- LIVE RMS & PSD (Only shows when NOT replaying) ---
         if (!isReplaying) {
