@@ -176,6 +176,13 @@ public class GameScreen extends Screen implements Input {
         // This works because AndroidGame extends Activity, which is a Context.
         this.context = (Context) game;
 
+        // AUTO-RESUME LOGIC:
+        // If startTimeMillis is not 0, it means a session is already active.
+        if (startTimeMillis != 0) {
+            isRecording = true;   // Resume the data flow
+            isReplaying = false;   // Ensure we aren't stuck in replay mode
+            startRecording = 1;    // Set timer state to running
+        }
         // FIX 4: Initialize sub-screens here so 'game' is valid
         //   gameScreenLastEvent = new GameScreenLastEvent(game);
         //   gameScreenEventLog = new GameScreenEventLog(game);
@@ -234,11 +241,12 @@ public class GameScreen extends Screen implements Input {
                         // Only set the startTime if it's the very first time starting
                         if (startTimeMillis == 0) {
                             startTimeMillis = System.currentTimeMillis();
+                            synchronized (ramRecordBuffer) {
+                                ramRecordBufferIdx = 0; // Reset index for new data
+                            }
                         }
                         startRecording = 1; // Timer starts counting
-                        synchronized (ramRecordBuffer) {
-                            ramRecordBufferIdx = 0; // Reset index for new data
-                        }
+
                         isRecording = true;
                         isReplaying = false;
                         Log.d("RECORD", "Recording Started");
@@ -542,6 +550,11 @@ public class GameScreen extends Screen implements Input {
                 {
                     // 1. Disable replay mode to return to live waveforms
                     isReplaying = false;
+
+                    // If the timer was ever started, make sure recording is active
+                    if (startTimeMillis != 0) {
+                        isRecording = true;
+                    }
 
                     // 2. Reset replay-specific variables to free up memory
                     replayPosition = 0;
@@ -922,69 +935,69 @@ public class GameScreen extends Screen implements Input {
                 g.drawSmallText(areaText3, 1630, 805);
 
             }
-            // --- PSD SWITCHBOARD ---
-            if (isReplaying) {
-                if (replayMaxPsd != null) {
-                    // Copy the "Screenshot" into the active buffer
-                    System.arraycopy(replayMaxPsd, 0, activePsdBuffer, 0, 512);
-                }
-            } else {
-                if (psdResult != null) {
-                    // Copy the Live Result into the active buffer
-                    // Live uses the real-time buffer from ConnectedThread
-                    System.arraycopy(psdResult, 0, activePsdBuffer, 0, Math.min(psdResult.length, 512));
-                }
+        }
+        // --- PSD SWITCHBOARD ---
+        if (isReplaying) {
+            if (replayMaxPsd != null) {
+                // Copy the "Screenshot" into the active buffer
+                System.arraycopy(replayMaxPsd, 0, activePsdBuffer, 0, 512);
             }
-
-            // --- UNIFIED PSD DRAWING (Live & Replay) ---
-            float psdGlobalGain = 10.0f;    // Was 1.2 ONE variable to rule them all
-            float yPsdOffset = 1695.0f;    // Baseline at 1905
-            float xPsdStart = 140;
-            float xPsdEnd = 1582;
-            float drawBase = 3600f;
-
-            int hLen = 512;
-            float xStep = (xPsdEnd - xPsdStart) / (float) hLen;
-            float curX = xPsdStart;
-
-            for (int i = 1; i < hLen; i++) {
-                float nextX = xPsdStart + (i * xStep);
-
-                // Connected Line Math (The "Mountain" look)
-                // Note: activePsdBuffer is filled by the switchboard above
-                float y1 = (float) (activePsdBuffer[i - 1] * -psdGlobalGain + drawBase) - yPsdOffset;
-                float y2 = (float) (activePsdBuffer[i] * -psdGlobalGain + drawBase) - yPsdOffset;
-
-                // Unified Clamping
-                if (y1 < 1445) y1 = 1445;
-                if (y1 > 1905) y1 = 1905;
-                if (y2 < 1445) y2 = 1445;
-                if (y2 > 1905) y2 = 1905;
-
-                g.drawRedLine((int) curX, (int) y1, (int) nextX, (int) y2, 0);
-                curX = nextX;
-
-                if (curX >= xPsdEnd) break;
-            }
-
-            // --- AREA-BASED ALERT LOGIC ---
-            // Convert stableAreaValue to uV*S for the comparison (multiply by 1000)
-            // if your rmsAreaThresh is set in uV*S units.
-            // double areaInUvS = stableAreaValue * 1000.0;
-            double areaInUvS = stableAreaValue;
-
-            // Trigger alert if the most recent completed burst exceeds the Area Threshold
-            // --- REWRITTEN ALERT LOGIC ---
-            if (alertTriggeredThisFrame) {
-                if (!isAlertPlaying && alertSound != null) {
-                    // Trigger INSTANTLY when threshold is crossed, even if burst isn't finished
-                    alertSound.play(5.0f);
-                    isAlertPlaying = true;
-                }
-            } else {
-                isAlertPlaying = false;
+        } else {
+            if (psdResult != null) {
+                // Copy the Live Result into the active buffer
+                // Live uses the real-time buffer from ConnectedThread
+                System.arraycopy(psdResult, 0, activePsdBuffer, 0, Math.min(psdResult.length, 512));
             }
         }
+        // --- UNIFIED PSD DRAWING (Restoring the missing pixels) ---        // This block draws whatever data is in activePsdBuffer (Live or Replay)
+        float psdGlobalGain = 10.0f;    // Set to 5.0f for the 5x higher amplitude you requested
+        float yPsdOffset = 1695.0f;    // Sets the baseline floor to 1905
+        float xPsdStart = 140;
+        float xPsdEnd = 1582;
+        float drawBase = 3600f;
+
+        int hLen = 512;
+        float xStep = (xPsdEnd - xPsdStart) / (float) hLen;
+        float curX = xPsdStart;
+
+        for (int i = 1; i < hLen; i++) {
+            float nextX = xPsdStart + (i * xStep);
+
+            // Connected Line Math (Waveform look)
+            float y1 = (float) (activePsdBuffer[i - 1] * -psdGlobalGain + drawBase) - yPsdOffset;
+            float y2 = (float) (activePsdBuffer[i] * -psdGlobalGain + drawBase) - yPsdOffset;
+
+            // Unified Clamping to the PSD Box boundaries
+            if (y1 < 1445) y1 = 1445;
+            if (y1 > 1905) y1 = 1905;
+            if (y2 < 1445) y2 = 1445;
+            if (y2 > 1905) y2 = 1905;
+
+            // Draw the waveform segments
+            g.drawRedLine((int) curX, (int) y1, (int) nextX, (int) y2, 0);
+
+            curX = nextX;
+            if (curX >= xPsdEnd) break;
+        }
+
+        // --- AREA-BASED ALERT LOGIC ---
+        // Convert stableAreaValue to uV*S for the comparison (multiply by 1000)
+        // if your rmsAreaThresh is set in uV*S units.
+        // double areaInUvS = stableAreaValue * 1000.0;
+        double areaInUvS = stableAreaValue;
+
+        // Trigger alert if the most recent completed burst exceeds the Area Threshold
+        // --- REWRITTEN ALERT LOGIC ---
+        if (alertTriggeredThisFrame) {
+            if (!isAlertPlaying && alertSound != null) {
+                // Trigger INSTANTLY when threshold is crossed, even if burst isn't finished
+                alertSound.play(5.0f);
+                isAlertPlaying = true;
+            }
+        } else {
+            isAlertPlaying = false;
+        }
+
 
         // --- RAW SIGNAL CONSTANTS ---
         final int xRight = 1574;
@@ -1072,19 +1085,33 @@ public class GameScreen extends Screen implements Input {
             }
 
             // --- 2. REPLAY RMS (BLUE & FILLS) ---
+            // --- 2. REPLAY RMS (BLUE & FILLS) ---
             if (replayRMSArray != null) {
                 final int blueCenterY = 1550;
                 final float rmsYScale = 1.5f;
+
+                // Retrieve the threshold specific to this event
                 float savedThresh = eventAmpThresholds[selectedEventId];
                 if (savedThresh == 0) savedThresh = rmsAmpThresh;
-                int threshY = (int) (blueCenterY - (savedThresh * rmsYScale));
+
+                // Calculate vertical position of the green threshold line
+                int thresholdYRep = (int) (blueCenterY - (savedThresh * rmsYScale));
+
+                // --- ADJUSTED CONSTANTS ---
+                final int CEILING = 835;
+                // Updated FLOOR to 1296 to cutoff the signal lower on the screen
+                final int FLOOR = 1296;
+                final int STROKE_OFFSET = 4;
+
+                // Ensure the threshold line itself isn't clamped off-screen
+                if (thresholdYRep > FLOOR) thresholdYRep = FLOOR;
+                if (thresholdYRep < CEILING) thresholdYRep = CEILING;
 
                 // Draw Threshold Line
-                g.drawGreenLine(130, threshY, 1574, threshY, 0);
+                g.drawGreenLine(130, thresholdYRep, 1574, thresholdYRep, 0);
 
-                // --- 2. REPLAY RMS (BLUE & FILLS) ---
-// Fixed: Changed ryLast to int to match Graphics method signatures
-                int ryLast = blueCenterY;
+                int ryLast = blueCenterY; // Handled as int for drawBlueLine
+
                 for (int n = 0; n < 1444; n++) {
                     int x = 1574 - n;
                     int dIdx = replayPosition - n;
@@ -1092,18 +1119,21 @@ public class GameScreen extends Screen implements Input {
                     if (dIdx >= 0 && dIdx < replayRMSArray.length) {
                         int yVal = (int) (blueCenterY - replayRMSArray[dIdx] * rmsYScale);
 
-                        // Vertical Clamping
-                        if (yVal < 1019) yVal = 1019;
-                        if (yVal > 1300) yVal = 1300;
+                        // Apply Clamping: Ceiling at 835, Floor at 1296
+                        if (yVal < CEILING) yVal = CEILING;
+                        if (yVal > FLOOR) yVal = FLOOR;
 
-                        // Shaded Fill (Yellow)
-                        if (yVal < threshY) {
-                            g.drawYellowLine(x, yVal + 4, x, threshY, 0);
+                        // --- DRAW FILLS (Yellow or Green) ---
+                        if (yVal < thresholdYRep) {
+                            if (eventClassification[selectedEventId] == 0) {
+                                g.drawGreenLine(x, yVal + STROKE_OFFSET, x, thresholdYRep, 0);
+                            } else {
+                                g.drawYellowLine(x, yVal + STROKE_OFFSET, x, thresholdYRep, 0);
+                            }
                         }
 
-                        // RMS Line (Blue)
+                        // --- DRAW BLUE RMS LINE ---
                         if (n > 0) {
-                            // FIXED: x and y coordinates are now all integers
                             g.drawBlueLine(x + 1, ryLast, x, yVal, 0);
                         }
                         ryLast = yVal;
@@ -1111,30 +1141,17 @@ public class GameScreen extends Screen implements Input {
                     if (x <= 130) break;
                 }
 
-                // --- 3. PSD SWITCHBOARD ---
+                // Replay controls and post-processing
+                replayPosition += 15;
+                if (replayPosition >= replayRawArray.length + 1444) {
+                    replayPosition = 0;
+                }
                 if (replayMaxPsd != null) {
                     System.arraycopy(replayMaxPsd, 0, activePsdBuffer, 0, 512);
                 }
-
-                // Unified PSD Drawing (Place after the switchboard)
-                float psdGlobalGain = 15.0f;
-                float yPsdOffset = 1695.0f;
-                for (int i = 1; i < 512; i++) {
-                    float x1 = 140 + ((i - 1) * 2.81f);
-                    float x2 = 140 + (i * 2.81f);
-                    float y1 = (float) (activePsdBuffer[i - 1] * -psdGlobalGain + 3600) - yPsdOffset;
-                    float y2 = (float) (activePsdBuffer[i] * -psdGlobalGain + 3600) - yPsdOffset;
-                    if (y1 < 1445) y1 = 1445;
-                    if (y1 > 1905) y1 = 1905;
-                    if (y2 < 1445) y2 = 1445;
-                    if (y2 > 1905) y2 = 1905;
-                    g.drawRedLine((int) x1, (int) y1, (int) x2, (int) y2, 0);
-                }
-
-                replayPosition += 15;
-                if (replayPosition >= replayRawArray.length + 1444) replayPosition = 0;
                 view.postInvalidate();
             }
+//
         } // This closes the "public void present(float deltaTime)" method
     }
 
