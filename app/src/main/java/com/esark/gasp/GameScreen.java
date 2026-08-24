@@ -74,7 +74,7 @@ public class GameScreen extends Screen implements Input {
     int increasingFlag = 1;
     int freqIncreasingFlag = 1;
     int startRecording = 0;
-    long startTimeMillis = 0;
+    public static long startTimeMillis = 0;
     long recDeltaTimeMillis = 0;
     long currentTimeMillis = 0;
     long minutes = 0;
@@ -231,7 +231,11 @@ public class GameScreen extends Screen implements Input {
                 //////////////////// Start Recording Button (Green Button) ////////////////////////////////////////////////
                 else if (event.x > 45 && event.x < 845 && event.y > 2000 && event.y < 2100) {//Start
                     if (!isRecording) {
-                        startTimeMillis = System.currentTimeMillis();
+                        // Only set the start time if it hasn't been set yet
+                        // OR if we are explicitly starting a brand new session
+                        if (startTimeMillis == 0) {
+                            startTimeMillis = System.currentTimeMillis();
+                        }
                         startRecording = 1; // Timer starts counting
                         synchronized (ramRecordBuffer) {
                             ramRecordBufferIdx = 0; // Reset index for new data
@@ -693,7 +697,7 @@ public class GameScreen extends Screen implements Input {
         g.drawText(patientEventStr, 570, 2660);
 
         // Inside present() method
-        if (startRecording == 0) {
+        if (startTimeMillis == 0) {
             g.drawText("00:00:000", 245, 2070);
         } else if (startRecording == 1) {
             // Mode 1: Timer is actively counting
