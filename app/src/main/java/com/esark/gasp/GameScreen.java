@@ -176,6 +176,13 @@ public class GameScreen extends Screen implements Input {
         // This works because AndroidGame extends Activity, which is a Context.
         this.context = (Context) game;
 
+        // AUTO-RESUME LOGIC:
+        // If startTimeMillis is not 0, it means a session is already active.
+        if (startTimeMillis != 0) {
+            isRecording = true;   // Resume the data flow
+            isReplaying = false;   // Ensure we aren't stuck in replay mode
+            startRecording = 1;    // Set timer state to running
+        }
         // FIX 4: Initialize sub-screens here so 'game' is valid
         //   gameScreenLastEvent = new GameScreenLastEvent(game);
         //   gameScreenEventLog = new GameScreenEventLog(game);
@@ -234,11 +241,12 @@ public class GameScreen extends Screen implements Input {
                         // Only set the startTime if it's the very first time starting
                         if (startTimeMillis == 0) {
                             startTimeMillis = System.currentTimeMillis();
+                            synchronized (ramRecordBuffer) {
+                                ramRecordBufferIdx = 0; // Reset index for new data
+                            }
                         }
                         startRecording = 1; // Timer starts counting
-                        synchronized (ramRecordBuffer) {
-                            ramRecordBufferIdx = 0; // Reset index for new data
-                        }
+
                         isRecording = true;
                         isReplaying = false;
                         Log.d("RECORD", "Recording Started");
@@ -542,6 +550,11 @@ public class GameScreen extends Screen implements Input {
                 {
                     // 1. Disable replay mode to return to live waveforms
                     isReplaying = false;
+
+                    // If the timer was ever started, make sure recording is active
+                    if (startTimeMillis != 0) {
+                        isRecording = true;
+                    }
 
                     // 2. Reset replay-specific variables to free up memory
                     replayPosition = 0;
