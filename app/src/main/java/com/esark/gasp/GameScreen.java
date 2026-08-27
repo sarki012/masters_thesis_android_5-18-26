@@ -1110,7 +1110,18 @@ public class GameScreen extends Screen implements Input {
                 // Draw Threshold Line
                 g.drawGreenLine(130, thresholdYRep, 1574, thresholdYRep, 0);
 
-                int ryLast = blueCenterY; // Handled as int for drawBlueLine
+                // --- FIX: PRE-CALCULATE ryLast TO REMOVE BLUE TAIL ---
+                int ryLast = blueCenterY;
+                int startIdxForTail = replayPosition;
+                if (startIdxForTail >= 0 && startIdxForTail < replayRMSArray.length) {
+                    ryLast = (int) (blueCenterY - replayRMSArray[startIdxForTail] * rmsYScale);
+                    // Apply same clamping as inside the loop
+                    if (ryLast < CEILING) ryLast = CEILING;
+                    if (ryLast > FLOOR) ryLast = FLOOR;
+                }
+
+                // --- FIX: USE FLAG TO REMOVE BLUE TAIL ---
+                boolean firstPointFound = false;
 
                 for (int n = 0; n < 1444; n++) {
                     int x = 1574 - n;
@@ -1133,10 +1144,16 @@ public class GameScreen extends Screen implements Input {
                         }
 
                         // --- DRAW BLUE RMS LINE ---
-                        if (n > 0) {
+                        if (!firstPointFound) {
+                            // This is the very first valid data point on the right.
+                            // We set ryLast but do NOT draw a line yet to prevent the tail.
+                            ryLast = yVal;
+                            firstPointFound = true;
+                        } else {
+                            // Draw segment from previous valid point to current point
                             g.drawBlueLine(x + 1, ryLast, x, yVal, 0);
+                            ryLast = yVal;
                         }
-                        ryLast = yVal;
                     }
                     if (x <= 130) break;
                 }
