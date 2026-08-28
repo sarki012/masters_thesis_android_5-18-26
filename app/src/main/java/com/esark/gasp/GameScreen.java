@@ -1097,31 +1097,26 @@ public class GameScreen extends Screen implements Input {
                 // Calculate vertical position of the green threshold line
                 int thresholdYRep = (int) (blueCenterY - (savedThresh * rmsYScale));
 
-                // --- ADJUSTED CONSTANTS ---
                 final int CEILING = 835;
-                // Updated FLOOR to 1296 to cutoff the signal lower on the screen
                 final int FLOOR = 1296;
                 final int STROKE_OFFSET = 4;
 
-                // Ensure the threshold line itself isn't clamped off-screen
+                // Clamp threshold line
                 if (thresholdYRep > FLOOR) thresholdYRep = FLOOR;
                 if (thresholdYRep < CEILING) thresholdYRep = CEILING;
 
                 // Draw Threshold Line
                 g.drawGreenLine(130, thresholdYRep, 1574, thresholdYRep, 0);
 
-                // --- FIX: PRE-CALCULATE ryLast TO REMOVE BLUE TAIL ---
+                // --- FIX: PRE-INITIALIZE ryLast TO SIGNAL HEIGHT ---
+                // This prevents the vertical "tail" from the baseline to the first point
                 int ryLast = blueCenterY;
-                int startIdxForTail = replayPosition;
-                if (startIdxForTail >= 0 && startIdxForTail < replayRMSArray.length) {
-                    ryLast = (int) (blueCenterY - replayRMSArray[startIdxForTail] * rmsYScale);
-                    // Apply same clamping as inside the loop
+                int startIdx = Math.min(replayPosition, replayRMSArray.length - 1);
+                if (startIdx >= 0) {
+                    ryLast = (int) (blueCenterY - replayRMSArray[startIdx] * rmsYScale);
                     if (ryLast < CEILING) ryLast = CEILING;
                     if (ryLast > FLOOR) ryLast = FLOOR;
                 }
-
-                // --- FIX: USE FLAG TO REMOVE BLUE TAIL ---
-                boolean firstPointFound = false;
 
                 for (int n = 0; n < 1444; n++) {
                     int x = 1574 - n;
@@ -1130,11 +1125,11 @@ public class GameScreen extends Screen implements Input {
                     if (dIdx >= 0 && dIdx < replayRMSArray.length) {
                         int yVal = (int) (blueCenterY - replayRMSArray[dIdx] * rmsYScale);
 
-                        // Apply Clamping: Ceiling at 835, Floor at 1296
+                        // Apply Clamping
                         if (yVal < CEILING) yVal = CEILING;
                         if (yVal > FLOOR) yVal = FLOOR;
 
-                        // --- DRAW FILLS (Yellow or Green) ---
+                        // --- 1. DRAW FILLS FIRST ---
                         if (yVal < thresholdYRep) {
                             if (eventClassification[selectedEventId] == 0) {
                                 g.drawGreenLine(x, yVal + STROKE_OFFSET, x, thresholdYRep, 0);
@@ -1143,19 +1138,19 @@ public class GameScreen extends Screen implements Input {
                             }
                         }
 
-                        // --- DRAW BLUE RMS LINE ---
-                        if (!firstPointFound) {
-                            // This is the very first valid data point on the right.
-                            // We set ryLast but do NOT draw a line yet to prevent the tail.
-                            ryLast = yVal;
-                            firstPointFound = true;
+                        // --- 2. DRAW BLUE RMS LINE (THE CAP) ---
+                        // For n=0, we draw a dot at the very edge to ensure the "cap" exists.
+                        // For n > 0, we draw the segment from the previous point.
+                        if (n == 0) {
+                            g.drawBlueLine(x, yVal, x, yVal, 0);
                         } else {
-                            // Draw segment from previous valid point to current point
                             g.drawBlueLine(x + 1, ryLast, x, yVal, 0);
-                            ryLast = yVal;
                         }
+                        ryLast = yVal;
                     }
-                    if (x <= 130) break;
+
+                    // Stop if we hit the left boundary of the box
+                    if (x <= 140) break;
                 }
 
                 // Replay controls and post-processing
