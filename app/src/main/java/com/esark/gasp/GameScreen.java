@@ -155,7 +155,7 @@ public class GameScreen extends Screen implements Input {
     private int lastCompleteBurstEnd = -1;
     // Set these at the class level or in the constructor
     public static float rmsAmpThresh = 400.0f;
-    public static float rmsAreaThresh = 100.0f;
+    public static float rmsAreaThresh = 20.0f;
     // Add these to your class member variables at the top
     private List<Float> thresholdRollingHistory = new ArrayList<>();
     private List<double[]> burstShapeHistory = new ArrayList<>();
@@ -168,6 +168,9 @@ public class GameScreen extends Screen implements Input {
     public static float psdInternalScalar = 1.0f;  // The "Volume Knob" for PSD data
     // This array holds the 0-500Hz data for WHATEVER is currently active
     public static double[] activePsdBuffer = new double[512];
+    // Stores the specific threshold found for each of the last 5 events
+    private List<Float> calibrationThresholdHistory = new ArrayList<>();
+    float rmsYScale = 1.0f;
     // Constructor
     public GameScreen(Game game) {
         super(game);
@@ -386,96 +389,109 @@ public class GameScreen extends Screen implements Input {
                     }
                 }
 
-                //////////////////// Manual Patient Event (2 Second Window) /////////////////////
+                //////////////////// Manual Patient Event (Auto-Calibration: Minimum of 5) /////////////////////
+                //////////////////// Manual Patient Event (Calibration Fix) /////////////////////
+                //////////////////// Manual Patient Event (Auto-Calibration: Minimum of 5) /////////////////////
+                //////////////////// Manual Patient Event (Auto-Calibration: Minimum of 5) /////////////////////
                 else if (event.x > 10 && event.x < 675 && event.y > 2450 && event.y < 2800) {
                     if (manualPatientEventUpCount == 0 && isRecording && eventCount < 150) {
-                        if (manualPatientEventUpCount == 0) {
-                            manualPatientEventUpCount = 1;
+                        manualPatientEventUpCount = 1;
+                        rmsThresholdTouch = 1; // Force UI to show calibrated values
 
-                            // 1. Force the UI to show the "Touched" state
-                            rmsThresholdTouch = 1;
+                        // 1. Identify the most recent "Hill" (spasm) in the signal
+                        int n = smoothedRMS.length - 1;
+                        // Skip any data currently crossing the line to find the gap
+                        while (n >= 0 && smoothedRMS[n] > rmsAmpThresh) n--;
+                        // Find the end of the previous completed hill
+                        while (n >= 0 && smoothedRMS[n] <= 10.0) n--;
+                        int hillEnd = n;
+                        // Find the start of that hill
+                        while (n >= 0 && smoothedRMS[n] > 10.0) n--;
+                        int hillStart = n + 1;
 
-                            rmsThresholdTouch = 1; // Show values on UI
+                        if (hillEnd > hillStart) {
+                            final double[] burstShape = new double[hillEnd - hillStart + 1];
+                            System.arraycopy(smoothedRMS, hillStart, burstShape, 0, burstShape.length);
 
-                            // 1. Identify and extract the shape of the most recent burst
-                            int n = smoothedRMS.length - 1;
-                            // Move back to find the tail of the hill (using a low floor of 10 to capture the whole shape)
-                            while (n >= 0 && smoothedRMS[n] <= 10.0) n--;
-                            int hillEnd = n;
-                            while (n >= 0 && smoothedRMS[n] > 10.0) n--;
-                            int hillStart = n + 1;
-
-                            if (hillEnd > hillStart) {
-                                // Capture the raw RMS values for this specific hill
-                                double[] burstShape = new double[hillEnd - hillStart + 1];
-                                System.arraycopy(smoothedRMS, hillStart, burstShape, 0, burstShape.length);
-
-                                burstShapeHistory.add(burstShape);
-                                if (burstShapeHistory.size() > 5) {
-                                    burstShapeHistory.remove(0); // Maintain rolling 5
-                                }
-
-                                // 2. GLOBAL SEARCH: Find the threshold height where the
-                                // AVERAGE area of all 5 bursts equals rmsAreaThresh
-                                float searchThresh = 600.0f;
-                                float bestFitThresh = 10.0f;
-
-                                // Iterate downwards to find the highest threshold that satisfies the area
-                                while (searchThresh > 10.0f) {
-                                    double totalAreaOfAllBursts = 0;
-
-                                    for (double[] shape : burstShapeHistory) {
-                                        double singleBurstSum = 0;
-                                        for (double val : shape) {
-                                            if (val > searchThresh) {
-                                                singleBurstSum += (val * 3.22); // Convert to uV
-                                            }
-                                        }
-                                        totalAreaOfAllBursts += (singleBurstSum * 0.001); // Convert to mV*S
-                                    }
-
-                                    double averageArea = totalAreaOfAllBursts / burstShapeHistory.size();
-
-                                    if (averageArea >= rmsAreaThresh) {
-                                        bestFitThresh = searchThresh;
-                                        break; // Found the highest threshold that yields the target average area
-                                    }
-                                    searchThresh -= 2.0f; // Step down by 2 for high precision
-                                }
-                                rmsAmpThresh = bestFitThresh;
-                            }
-
-                            // --- Snapshot and Save Logic (Keep your existing save code here) ---
-                            final int currentEndIdx = ramRecordBufferIdx;
                             final int currentID = eventCount;
                             final Context threadContext = (Context) game;
 
-                            long delta = System.currentTimeMillis() - startTimeMillis;
-                            timeStamp[eventCount] = String.format("%02d:%02d:%03d",
-                                    (delta / 60000), (delta / 1000) % 60, (delta % 1000));
-
                             saveExecutor.execute(() -> {
                                 try {
+                                    // --- STEP A: FIND IDEAL THRESHOLD FOR THIS SPECIFIC HILL ---
+                                    float searchThresh = 600.0f;
+                                    float idealForThisHill = 10.0f;
+
+                                    // Visual Ratio: The line is drawn at 1.5, Signal is at rmsYScale (1.0)
+                                    // We need to bridge this gap to make the visual fill match the math
+                                    float scaleRatio = 1.5f / rmsYScale;
+
+                                    while (searchThresh > 5.0f) {
+                                        double shadedArea = 0;
+                                        // The logical point where the signal (1.0) meets the line (1.5)
+                                        float visualLineLogicalVal = searchThresh * scaleRatio;
+
+                                        for (double val : burstShape) {
+                                            if (val > visualLineLogicalVal) {
+                                                // SHADED AREA MATH: (Signal Magnitude - Line Magnitude)
+                                                // This represents the actual pixels that turn green/yellow
+                                                shadedArea += (val - visualLineLogicalVal) * 3.22 * 0.001;
+                                            }
+                                        }
+
+                                        if (shadedArea >= rmsAreaThresh) {
+                                            idealForThisHill = searchThresh;
+                                            break;
+                                        }
+                                        searchThresh -= 0.5f; // High precision search
+                                    }
+
+                                    // --- STEP B: ROLLING MINIMUM OF 5 LOGIC ---
+                                    // Store this event's specific result
+                                    synchronized (calibrationThresholdHistory) {
+                                        calibrationThresholdHistory.add(idealForThisHill);
+                                        if (calibrationThresholdHistory.size() > 5) {
+                                            calibrationThresholdHistory.remove(0);
+                                        }
+
+                                        // Set global threshold to the MINIMUM of the history
+                                        // This fulfills the "Minimum of 5" requirement
+                                        float minThresh = 600.0f;
+                                        for (float t : calibrationThresholdHistory) {
+                                            if (t < minThresh) minThresh = t;
+                                        }
+                                        rmsAmpThresh = minThresh;
+                                    }
+
+                                    // --- STEP C: PERSISTENT SAVE ---
                                     if (threadContext == null) return;
-                                    int startIdx = currentEndIdx - 2000;
+                                    int startIdx = ramRecordBufferIdx - 2000;
                                     if (startIdx < 0) startIdx = 0;
                                     File path = threadContext.getExternalFilesDir(null);
                                     File file = new File(path, "Event_" + currentID + ".csv");
                                     PrintWriter pw = new PrintWriter(new BufferedWriter(new OutputStreamWriter(new FileOutputStream(file, false)), 65536));
                                     synchronized (ramRecordBuffer) {
-                                        for (int k = startIdx; k < currentEndIdx; k++) {
+                                        for (int k = startIdx; k < ramRecordBufferIdx; k++) {
                                             if (k >= 0 && k < ramRecordBuffer.length) pw.println(ramRecordBuffer[k]);
                                         }
                                     }
                                     pw.flush();
                                     pw.close();
                                 } catch (Exception e) {
-                                    Log.e("SAVE_ERROR", "Failed to save: " + e.getMessage());
+                                    Log.e("CALIB_ERROR", "Calibration or Save failed: " + e.getMessage());
                                 }
                             });
+
+                            // Update meta-data for the Event Log and Replay
+                            eventAmpThresholds[eventCount] = rmsAmpThresh;
+                            eventClassification[eventCount] = 0; // Default to True Positive
+
+                            long delta = System.currentTimeMillis() - startTimeMillis;
+                            timeStamp[eventCount] = String.format("%02d:%02d:%03d",
+                                    (delta / 60000), (delta / 1000) % 60, (delta % 1000));
+
                             eventCount++;
-                            truePositive++; // Increment the counter shared with True Positive
-                            manualPatientEventUpCount = 1;
+                            truePositive++;
                         }
                     }
                 }
@@ -677,12 +693,12 @@ public class GameScreen extends Screen implements Input {
         //////////////////////////////////////////////////////////////////////////////////////
 
         //////////////////// Manual RMS Area Above Threshold to Trigger Event //////////////////////
-        if (rmsAreaThreshTouch == 0) {
-            g.drawText("100.0", 1215, 2235);    //Manual RMS Width Above Threshold Text
-        } else if (rmsAreaThreshTouch == 1) {
-            String rmsAreaThreshStr = String.valueOf(rmsAreaThresh);
-            g.drawText(rmsAreaThreshStr, 1215, 2235);    //Manual RMS Width Above Threshold Text
-        }
+       // if (rmsAreaThreshTouch == 0) {
+         //   g.drawText("100.0", 1215, 2235);    //Manual RMS Width Above Threshold Text
+       // } else if (rmsAreaThreshTouch == 1) {
+        String rmsAreaThreshStr = String.valueOf(rmsAreaThresh);
+        g.drawText(rmsAreaThreshStr, 1215, 2235);    //Manual RMS Width Above Threshold Text
+        //}
         //////////////////// False Positive Button ///////////////////////////////////////////////////////////
         if (falsePositiveTouch == 0) {
             g.drawText("0", 895, 2415);    //Manual RMS Width Above Threshold Text
@@ -698,12 +714,12 @@ public class GameScreen extends Screen implements Input {
             g.drawText(falseNegativeStr, 1240, 2415);    //Manual RMS Width Above Threshold Text
         }
         //////////////////// True Positive Button ///////////////////////////////////////////////////////////
-        if (truePositiveTouch == 0) {
-            g.drawText("0", 1565, 2415);    //Manual RMS Width Above Threshold Text
-        } else if (truePositiveTouch == 1) {
-            String truePositiveStr = String.valueOf(truePositive);
-            g.drawText(truePositiveStr, 1565, 2415);    //Manual RMS Width Above Threshold Text
-        }
+       // if (truePositiveTouch == 0) {
+         //   g.drawText("0", 1565, 2415);    //Manual RMS Width Above Threshold Text
+        //} else if (truePositiveTouch == 1) {
+        String truePositiveStr = String.valueOf(truePositive);
+        g.drawText(truePositiveStr, 1565, 2415);    //Manual RMS Width Above Threshold Text
+        //}
 
         String patientEventStr = String.valueOf(truePositive);
         g.drawText(patientEventStr, 570, 2660);
@@ -738,7 +754,7 @@ public class GameScreen extends Screen implements Input {
 // --- LIVE RMS & PSD (Only shows when NOT replaying) ---
         if (!isReplaying) {
             int blueCenterY = 1550;
-            float rmsYScale = 1.5f;
+
             int xRightLimit = 1574;
             int xLeftLimit = 130;
             float totalPixelWidth = (float) (xRightLimit - xLeftLimit);
@@ -803,7 +819,7 @@ public class GameScreen extends Screen implements Input {
             }
 
             if (smoothedRMS.length > 2) {
-                thresholdY = (int) (blueCenterY - (rmsAmpThresh * rmsYScale));
+                thresholdY = (int) (blueCenterY - (rmsAmpThresh * 1.5f));
                 g.drawGreenLine(xLeftLimit, thresholdY, xRightLimit, thresholdY, 0);
 
                 final int CEILING = 835;
@@ -980,18 +996,50 @@ public class GameScreen extends Screen implements Input {
             if (curX >= xPsdEnd) break;
         }
 
-        // --- AREA-BASED ALERT LOGIC ---
-        // Convert stableAreaValue to uV*S for the comparison (multiply by 1000)
-        // if your rmsAreaThresh is set in uV*S units.
-        // double areaInUvS = stableAreaValue * 1000.0;
-        double areaInUvS = stableAreaValue;
+        // --- FIXED AREA-BASED ALERT LOGIC (Scale Synchronized) ---
+        double liveSpasmArea = 0;
+        int alertIdx = smoothedRMS.length - 1;
+        boolean latestPointAbove = false;
 
-        // Trigger alert if the most recent completed burst exceeds the Area Threshold
-        // --- REWRITTEN ALERT LOGIC ---
-        if (alertTriggeredThisFrame) {
+        // Visual adjustment factor:
+        // Your line is drawn at (rmsAmpThresh * 1.5f), but signal is (smoothedRMS * rmsYScale).
+        // To only alert when the signal VISUALLY touches the line, we adjust the logical threshold.
+        float effectiveAmpThresh = rmsAmpThresh * (1.5f / rmsYScale);
+
+        // 1. Check if the latest point is visually above the threshold line
+        if (alertIdx >= 0 && smoothedRMS[alertIdx] > effectiveAmpThresh) {
+            latestPointAbove = true;
+
+            // 2. Calculate the area of ONLY this specific incoming island
+            while (alertIdx >= 0) {
+                if (smoothedRMS[alertIdx] > effectiveAmpThresh) {
+                    // Area = Magnitude * Time(0.001s) * Conversion(3.22)
+                    liveSpasmArea += (smoothedRMS[alertIdx] * 3.22 * 0.001);
+                    alertIdx--;
+                } else {
+                    // HYSTERESIS: Bridge noise gaps (match the visual fill logic)
+                    boolean noiseFlicker = false;
+                    for (int h = 1; h <= 5; h++) {
+                        if (alertIdx - h >= 0 && smoothedRMS[alertIdx - h] > effectiveAmpThresh) {
+                            noiseFlicker = true;
+                            alertIdx -= h;
+                            break;
+                        }
+                    }
+                    if (!noiseFlicker) break;
+                }
+            }
+        }
+
+        // 3. Update the UI display variable
+        stableAreaValue = liveSpasmArea;
+
+        // 4. THE TRIGGER: Only play alert if:
+        //    a) The latest point is visually above the line
+        //    b) The calculated area is >= the user threshold (Matches the GREEN fill)
+        if (latestPointAbove && liveSpasmArea >= rmsAreaThresh && liveSpasmArea > 0) {
             if (!isAlertPlaying && alertSound != null) {
-                // Trigger INSTANTLY when threshold is crossed, even if burst isn't finished
-                alertSound.play(5.0f);
+                alertSound.play(1.0f);
                 isAlertPlaying = true;
             }
         } else {
@@ -1088,14 +1136,14 @@ public class GameScreen extends Screen implements Input {
             // --- 2. REPLAY RMS (BLUE & FILLS) ---
             if (replayRMSArray != null) {
                 final int blueCenterY = 1550;
-                final float rmsYScale = 1.5f;
+                final float rmsYScale = 1.0f;
 
                 // Retrieve the threshold specific to this event
                 float savedThresh = eventAmpThresholds[selectedEventId];
                 if (savedThresh == 0) savedThresh = rmsAmpThresh;
 
                 // Calculate vertical position of the green threshold line
-                int thresholdYRep = (int) (blueCenterY - (savedThresh * rmsYScale));
+                int thresholdYRep = (int) (blueCenterY - (savedThresh * 1.5f));
 
                 final int CEILING = 835;
                 final int FLOOR = 1296;
