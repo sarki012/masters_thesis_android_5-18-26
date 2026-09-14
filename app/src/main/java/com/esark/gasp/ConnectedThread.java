@@ -68,66 +68,68 @@ public class ConnectedThread extends Thread {
             int firstByte = -1;
             boolean inMetaBlock = false;
             int[] metaBytes = new int[4];
+            int logThrottleCounter = 0; // Added for throttling signal logs
 
             while (!Thread.currentThread().isInterrupted()) {
-                try {
-                    int bytesRead = mmInStream.read(buffer);
+                try {int bytesRead = mmInStream.read(buffer);
                     if (bytesRead == -1) break;
 
                     for (int i = 0; i < bytesRead; i++) {
                         int b = buffer[i] & 0xFF;
 
-                        // --- SMART SYNC TRIGGER ---
-                        // Only treat '120' as a header if:
-                        // 1. We aren't in the metadata block AND
-                        // 2. We are either between samples (firstByte == -1) OR
-                        // 3. The current alignment is clearly wrong (firstByte > 15 is impossible for 12-bit)
-                        if (!inMetaBlock && (b == 120) && (firstByte == -1 || firstByte > 15)) {
+                        // --- 1. METADATA HEADER CHECK ---
+                        // Only enter metadata block if:
+                        // - We see the header '120'
+                        // - AND we aren't already in the middle of a 16-bit sample (firstByte == -1)
+                        if (!inMetaBlock && (b == 120) && (firstByte == -1)) {
                             inMetaBlock = true;
                             metaByteCount = 0;
-                            firstByte = -1;
                             continue;
                         }
 
                         if (inMetaBlock) {
-                            // 2. Collect 4 bytes of Metadata (Big Endian)
+                            // Collect 4 bytes of Metadata
                             metaBytes[metaByteCount++] = b;
                             if (metaByteCount == 4) {
                                 int vRaw = ((metaBytes[0] & 0xFF) << 8) | (metaBytes[1] & 0xFF);
                                 GameScreen.batVoltage = vRaw / 100.0;
                                 int sRaw = ((metaBytes[2] & 0xFF) << 8) | (metaBytes[3] & 0xFF);
                                 GameScreen.batSOC = sRaw / 100.0;
+
                                 inMetaBlock = false;
                             }
                         } else {
-                            // 3. Collect Signal Data (Big Endian)
+                            // --- 2. COLLECT 16-BIT SIGNAL DATA ---
                             if (firstByte == -1) {
                                 firstByte = b;
                             } else {
                                 // Reconstruct 16-bit value
                                 int val = ((firstByte & 0xFF) << 8) | (b & 0xFF);
 
-                                // SANITY CHECK: 12-bit ADC max is 4095.
-                                // If we get something impossible, our alignment is flipped.
-                                if (val > 4095) {
-                                    // Reset alignment: Treat THIS byte as the new High Byte
-                                    // and wait for the next Low Byte.
-                                    firstByte = b;
-                                } else {
-                                    firstByte = -1; // Reset for next pair
+                                // Reset for next pair immediately
+                                firstByte = -1;
 
-                                    // Normal Signal Processing
-                                    double filteredVal = filter60Hz.filter(val / 3.0);
-                                    int w = jWrite.get();
-                                    jitterBuffer[w] = filteredVal;
-                                    jWrite.set((w + 1) % jitterBuffer.length);
-                                    jCount.incrementAndGet();
+                                // 16-bit mid-point is 32768. Subtract it to center the signal at 0.0
+                                double bipolarRaw = (val - 32768.0);
 
-                                    if (GameScreen.isRecording) {
-                                        synchronized (GameScreen.ramRecordBuffer) {
-                                            if (ramRecordBufferIdx < ramRecordBuffer.length) {
-                                                ramRecordBuffer[ramRecordBufferIdx++] = filteredVal;
-                                            }
+                                // Divide by 10.0 (instead of 3.0) to bring the 16-bit range
+                                // down to a manageable size for your existing UI scales
+                                double filteredVal = filter60Hz.filter(bipolarRaw / 10.0);
+
+                                if (logThrottleCounter++ % 100 == 0) {
+                                    Log.d("BT_SIGNAL", "Raw: " + val + " | Filtered: " + filteredVal);
+                                }
+
+                                int w = jWrite.get();
+                                jitterBuffer[w] = filteredVal;
+                                jWrite.set((w + 1) % jitterBuffer.length);
+                                jCount.incrementAndGet();
+
+                                // --- 4. DATA LOGGING ---
+                                if (GameScreen.isRecording) {
+                                    synchronized (GameScreen.ramRecordBuffer) {
+                                        if (GameScreen.ramRecordBufferIdx < GameScreen.ramRecordBuffer.length) {
+                                            GameScreen.ramRecordBuffer[GameScreen.ramRecordBufferIdx++] = filteredVal;
                                         }
                                     }
                                 }
@@ -139,7 +141,7 @@ public class ConnectedThread extends Thread {
                     break;
                 }
             }
-        });
+        }); // End of rxThread
         rxThread.start();
 
         // 2. MAIN PRECISION ENGINE (Dampened Discrete Step)
