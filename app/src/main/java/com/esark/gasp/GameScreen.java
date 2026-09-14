@@ -1057,22 +1057,32 @@ public class GameScreen extends Screen implements Input {
 
         if (!isReplaying) {
             // --- LIVE BLACK SIGNAL (Stretched) ---
+            // --- LIVE BLACK SIGNAL (Stretched & Scaled) ---
             signalPaint.setColor(android.graphics.Color.BLACK);
             signalPaint.setStrokeWidth(2.5f);
+
+// New scaling constant: 458 pixels / 65535 levels
+            final float rawScale = 458.0f / 65535.0f;
+            final float offsetV = 680.0f;
+
             synchronized (A2DVal) {
                 System.arraycopy(A2DVal, 0, drawingSnapshot, 0, signalBufferLen);
             }
 
             float stretchFactorBlack = 1452.0f / (float) (signalBufferLen - 1);
-            float yLast = centerY - ((float) drawingSnapshot[signalBufferLen - 1] - base) * gMult;
+
+// Initialize yLast using the new scale: 0 -> 680, 65535 -> 222
+            float yLast = offsetV - ((float) drawingSnapshot[signalBufferLen - 1] * rawScale);
 
             bufferIdx = 0;
             for (int n = 1; n < signalBufferLen; n++) {
                 float x1 = 1574 - ((n - 1) * stretchFactorBlack);
                 float x2 = 1574 - (n * stretchFactorBlack);
 
-                float yNext = centerY - ((float) drawingSnapshot[(signalBufferLen - 1) - n] - base) * gMult;
+                // Apply scaling to the next sample
+                float yNext = offsetV - ((float) drawingSnapshot[(signalBufferLen - 1) - n] * rawScale);
 
+                // Clamping (though math should stay within bounds)
                 if (yNext < 222) yNext = 222;
                 if (yNext > 680) yNext = 680;
 
@@ -1089,48 +1099,36 @@ public class GameScreen extends Screen implements Input {
 
         if (isReplaying && !replayList.isEmpty() && replayRawArray != null) {
             // --- 1. REPLAY RAW SIGNAL (RED) ---
+            // ---1. REPLAY RAW SIGNAL (RED) ---
             signalPaint.setColor(android.graphics.Color.RED);
-            signalPaint.setStrokeWidth(2.5f);    // Match the Live signal thickness
+            final float rawScaleRep = 458.0f / 65535.0f;
+            final float offsetVRep = 680.0f;
+
             bufferIdx = 0;
-
-// Constants matched to your Live Black Signal logic
-            final float centerYRep = 565.0f;
-            final float gMultRep = 0.15f;
-            final float baseRep = 410.0f;
-
-// Determine the starting Y point based on the current playback head
             int startPos = Math.min(replayPosition, replayRawArray.length - 1);
-            float yLastRep = centerYRep - ((float) replayRawArray[startPos] - baseRep) * gMultRep;
+            float yLastRep = offsetVRep - ((float) replayRawArray[startPos] * rawScaleRep);
 
-// Draw up to 1444 pixels (the width of the box)
             for (int n = 1; n < 1444; n++) {
                 float x1 = 1574 - (n - 1);
                 float x2 = 1574 - n;
                 int dataIdx = replayPosition - n;
 
                 if (dataIdx >= 0 && dataIdx < replayRawArray.length) {
-                    float yNext = centerYRep - ((float) replayRawArray[dataIdx] - baseRep) * gMultRep;
+                    // Map raw CSV data: 0 -> 680, 65535 -> 222
+                    float yNext = offsetVRep - ((float) replayRawArray[dataIdx] * rawScaleRep);
 
-                    // Clamping to stay inside the Raw Signal box (Ceiling 222, Floor 680)
                     if (yNext < 222) yNext = 222;
                     if (yNext > 680) yNext = 680;
 
-                    // Load coordinates into the high-performance line buffer
                     lineBuffer[bufferIdx++] = x1;
                     lineBuffer[bufferIdx++] = yLastRep;
                     lineBuffer[bufferIdx++] = x2;
                     lineBuffer[bufferIdx++] = yNext;
                     yLastRep = yNext;
                 }
-
-                // Stop if we hit the left limit or the line buffer is full
                 if (x2 <= 140 || bufferIdx >= lineBuffer.length - 4) break;
             }
-
-// Draw all segments at once for maximum performance
-            if (bufferIdx > 0) {
-                canvas.drawLines(lineBuffer, 0, bufferIdx, signalPaint);
-            }
+            if (bufferIdx > 0) canvas.drawLines(lineBuffer, 0, bufferIdx, signalPaint);
 
             // --- 2. REPLAY RMS (BLUE & FILLS) ---
             // --- 2. REPLAY RMS (BLUE & FILLS) ---
