@@ -23,6 +23,7 @@ public class ConnectedThread extends Thread {
     private final ExecutorService mathExecutor = Executors.newSingleThreadExecutor();
     private final AtomicBoolean mathIsBusy = new AtomicBoolean(false);
     private final double[] a2dCopyForMath = new double[signalBufferLen];
+    static double runningBaseline = -1;
 
     // Change the constructor to accept the Socket
     public ConnectedThread(BluetoothSocket socket) {
@@ -105,16 +106,28 @@ public class ConnectedThread extends Thread {
                             } else {
                                 // Reconstruct 16-bit value
                                 int val = ((firstByte & 0xFF) << 8) | (b & 0xFF);
-
                                 // Reset for next pair immediately
                                 firstByte = -1;
+                                // --- DYNAMIC BASELINE FIX ---
+                                // Instead of subtracting a hardcoded 32768, we center the signal
+                                // based on where the raw data actually sits (e.g., in the 200s).
+                                // We use a simple IIR low-pass to track the DC offset (the "quiet" level)
 
-                                // 16-bit mid-point is 32768. Subtract it to center the signal at 0.0
-                                double bipolarRaw = (val - 32768.0);
+                                if (runningBaseline == -1) {
+                                    runningBaseline = val; // Initialize on first sample
+                                } else {
+                                    // Slowly track the average raw value (DC Offset)
+                                    runningBaseline = (runningBaseline * 0.999) + (val * 0.001);
+                                }
 
-                                // Divide by 10.0 (instead of 3.0) to bring the 16-bit range
-                                // down to a manageable size for your existing UI scales
-                                double filteredVal = filter60Hz.filter(bipolarRaw / 10.0);
+                                // Center the signal around the discovered baseline
+                                double bipolarRaw = (val - runningBaseline);
+
+                                // Now apply scaling and filtering
+                                // Since the signal is now centered at 0.0, we can use a higher gain
+                                double filteredVal = filter60Hz.filter(bipolarRaw / 3.0);
+
+
 
                                 if (logThrottleCounter++ % 100 == 0) {
                                     Log.d("BT_SIGNAL", "Raw: " + val + " | Filtered: " + filteredVal);

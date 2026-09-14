@@ -171,6 +171,7 @@ public class GameScreen extends Screen implements Input {
     // Stores the specific threshold found for each of the last 5 events
     private List<Float> calibrationThresholdHistory = new ArrayList<>();
     float rmsYScale = 1.0f;
+    public final float visualGain = 1.2f;
     // Constructor
     public GameScreen(Game game) {
         super(game);
@@ -1050,7 +1051,11 @@ public class GameScreen extends Screen implements Input {
         // --- RAW SIGNAL CONSTANTS ---
         final int xRight = 1574;
         final int xLeft = 140;
-        final float centerY = 565.0f;
+        final float centerY = 469.0f;
+        // 2. Adjust gain so the 16-bit signal fits the box (222 to 680)
+        // Since we divided by 10.0 in ConnectedThread, a gain of 0.06f
+        // keeps the spikes inside the boundaries.
+
         final float gMult = 0.15f;
         final float base = 410.0f;
         int bufferIdx = 0;
@@ -1061,7 +1066,7 @@ public class GameScreen extends Screen implements Input {
             signalPaint.setColor(android.graphics.Color.BLACK);
             signalPaint.setStrokeWidth(2.5f);
 
-// New scaling constant: 458 pixels / 65535 levels
+            // New scaling constant: 458 pixels / 65535 levels
             final float rawScale = 458.0f / 65535.0f;
             final float offsetV = 680.0f;
 
@@ -1070,17 +1075,15 @@ public class GameScreen extends Screen implements Input {
             }
 
             float stretchFactorBlack = 1452.0f / (float) (signalBufferLen - 1);
-
-// Initialize yLast using the new scale: 0 -> 680, 65535 -> 222
-            float yLast = offsetV - ((float) drawingSnapshot[signalBufferLen - 1] * rawScale);
-
+            // Note: drawingSnapshot contains the 'filteredVal' from ConnectedThread (centered at 0.0)
+            float yLast = centerY - ((float) drawingSnapshot[signalBufferLen - 1] * visualGain);
             bufferIdx = 0;
             for (int n = 1; n < signalBufferLen; n++) {
                 float x1 = 1574 - ((n - 1) * stretchFactorBlack);
                 float x2 = 1574 - (n * stretchFactorBlack);
 
-                // Apply scaling to the next sample
-                float yNext = offsetV - ((float) drawingSnapshot[(signalBufferLen - 1) - n] * rawScale);
+                // FIX: Use centerY (469) instead of offsetV to center the bipolar signal
+                float yNext = centerY - ((float) drawingSnapshot[(signalBufferLen - 1) - n] * visualGain);
 
                 // Clamping (though math should stay within bounds)
                 if (yNext < 222) yNext = 222;
@@ -1101,12 +1104,12 @@ public class GameScreen extends Screen implements Input {
             // --- 1. REPLAY RAW SIGNAL (RED) ---
             // ---1. REPLAY RAW SIGNAL (RED) ---
             signalPaint.setColor(android.graphics.Color.RED);
-            final float rawScaleRep = 458.0f / 65535.0f;
-            final float offsetVRep = 680.0f;
+            final float centerYRep = 469.0f; // Centered at 469
+            final float visualGain = 1.75f;
 
             bufferIdx = 0;
             int startPos = Math.min(replayPosition, replayRawArray.length - 1);
-            float yLastRep = offsetVRep - ((float) replayRawArray[startPos] * rawScaleRep);
+            float yLastRep = centerYRep - ((float) replayRawArray[startPos] * visualGain);
 
             for (int n = 1; n < 1444; n++) {
                 float x1 = 1574 - (n - 1);
@@ -1115,7 +1118,7 @@ public class GameScreen extends Screen implements Input {
 
                 if (dataIdx >= 0 && dataIdx < replayRawArray.length) {
                     // Map raw CSV data: 0 -> 680, 65535 -> 222
-                    float yNext = offsetVRep - ((float) replayRawArray[dataIdx] * rawScaleRep);
+                    float yNext = centerYRep - ((float) replayRawArray[dataIdx] * visualGain);
 
                     if (yNext < 222) yNext = 222;
                     if (yNext > 680) yNext = 680;
