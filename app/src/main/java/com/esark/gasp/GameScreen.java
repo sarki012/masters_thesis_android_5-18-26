@@ -170,8 +170,9 @@ public class GameScreen extends Screen implements Input {
     public static double[] activePsdBuffer = new double[512];
     // Stores the specific threshold found for each of the last 5 events
     private List<Float> calibrationThresholdHistory = new ArrayList<>();
-    float rmsYScale = 1.0f;
+    public float rmsYScale = 10.0f;
     public final float visualGain = 1.2f;
+    public final int blueCenterY = 1550;
     // Constructor
     public GameScreen(Game game) {
         super(game);
@@ -752,10 +753,8 @@ public class GameScreen extends Screen implements Input {
 
         g.drawText(timeStr, 245, 2070);
 
-// --- LIVE RMS & PSD (Only shows when NOT replaying) ---
+        // --- LIVE RMS & PSD (Only shows when NOT replaying) ---
         if (!isReplaying) {
-            int blueCenterY = 1550;
-
             int xRightLimit = 1574;
             int xLeftLimit = 130;
             float totalPixelWidth = (float) (xRightLimit - xLeftLimit);
@@ -1136,8 +1135,7 @@ public class GameScreen extends Screen implements Input {
             // --- 2. REPLAY RMS (BLUE & FILLS) ---
             // --- 2. REPLAY RMS (BLUE & FILLS) ---
             if (replayRMSArray != null) {
-                final int blueCenterY = 1550;
-                final float rmsYScale = 1.0f;
+
 
                 // Retrieve the threshold specific to this event
                 float savedThresh = eventAmpThresholds[selectedEventId];
