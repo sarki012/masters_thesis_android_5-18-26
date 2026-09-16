@@ -170,8 +170,8 @@ public class GameScreen extends Screen implements Input {
     public static double[] activePsdBuffer = new double[512];
     // Stores the specific threshold found for each of the last 5 events
     private List<Float> calibrationThresholdHistory = new ArrayList<>();
-    public float rmsYScale = 10.0f;
-    public final float visualGain = 1.2f;
+    public float rmsYScale = 3.0f;
+    public final float visualGain = 1.5f; //1.2f;
     public final int blueCenterY = 1550;
     // Constructor
     public GameScreen(Game game) {
@@ -965,12 +965,18 @@ public class GameScreen extends Screen implements Input {
                 System.arraycopy(psdResult, 0, activePsdBuffer, 0, Math.min(psdResult.length, 512));
             }
         }
-        // --- UNIFIED PSD DRAWING (Restoring the missing pixels) ---        // This block draws whatever data is in activePsdBuffer (Live or Replay)
-        float psdGlobalGain = 10.0f;    // Set to 5.0f for the 5x higher amplitude you requested
-        float yPsdOffset = 1695.0f;    // Sets the baseline floor to 1905
+// --- UPDATED UNIFIED PSD DRAWING (Bottom 1900, Top 1435) ---
+// Adjust this gain to make the spikes taller or shorter within the box
+        float psdGlobalGain = 300.0f;
+
+// MATH: (0 * -gain + 3600) - 1700 = 1900 (The Baseline)
+        float yPsdOffset = 1700.0f;
         float xPsdStart = 140;
         float xPsdEnd = 1582;
         float drawBase = 3600f;
+
+        final int CEILING_PSD = 1435; // Peak limit
+        final int FLOOR_PSD = 1900;   // Baseline floor
 
         int hLen = 512;
         float xStep = (xPsdEnd - xPsdStart) / (float) hLen;
@@ -979,17 +985,17 @@ public class GameScreen extends Screen implements Input {
         for (int i = 1; i < hLen; i++) {
             float nextX = xPsdStart + (i * xStep);
 
-            // Connected Line Math (Waveform look)
+            // Calculate Y coordinates
             float y1 = (float) (activePsdBuffer[i - 1] * -psdGlobalGain + drawBase) - yPsdOffset;
             float y2 = (float) (activePsdBuffer[i] * -psdGlobalGain + drawBase) - yPsdOffset;
 
-            // Unified Clamping to the PSD Box boundaries
-            if (y1 < 1445) y1 = 1445;
-            if (y1 > 1905) y1 = 1905;
-            if (y2 < 1445) y2 = 1445;
-            if (y2 > 1905) y2 = 1905;
+            // Unified Clamping to your requested boundaries
+            if (y1 < CEILING_PSD) y1 = CEILING_PSD;
+            if (y1 > FLOOR_PSD)   y1 = FLOOR_PSD;
+            if (y2 < CEILING_PSD) y2 = CEILING_PSD;
+            if (y2 > FLOOR_PSD)   y2 = FLOOR_PSD;
 
-            // Draw the waveform segments
+            // Draw connected segments (Mountain look)
             g.drawRedLine((int) curX, (int) y1, (int) nextX, (int) y2, 0);
 
             curX = nextX;
