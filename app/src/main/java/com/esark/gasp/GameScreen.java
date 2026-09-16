@@ -392,22 +392,17 @@ public class GameScreen extends Screen implements Input {
                 }
 
                 //////////////////// Manual Patient Event (Auto-Calibration: Minimum of 5) /////////////////////
-                //////////////////// Manual Patient Event (Calibration Fix) /////////////////////
-                //////////////////// Manual Patient Event (Auto-Calibration: Minimum of 5) /////////////////////
-                //////////////////// Manual Patient Event (Auto-Calibration: Minimum of 5) /////////////////////
+                //////////////////// Manual Patient Event (Auto-Calibration & Timestamp Fix) /////////////////////
                 else if (event.x > 10 && event.x < 675 && event.y > 2450 && event.y < 2800) {
                     if (manualPatientEventUpCount == 0 && isRecording && eventCount < 150) {
                         manualPatientEventUpCount = 1;
-                        rmsThresholdTouch = 1; // Force UI to show calibrated values
+                        rmsThresholdTouch = 1;
 
-                        // 1. Identify the most recent "Hill" (spasm) in the signal
+                        // 1. Identify the most recent "Hill"
                         int n = smoothedRMS.length - 1;
-                        // Skip any data currently crossing the line to find the gap
                         while (n >= 0 && smoothedRMS[n] > rmsAmpThresh) n--;
-                        // Find the end of the previous completed hill
                         while (n >= 0 && smoothedRMS[n] <= 10.0) n--;
                         int hillEnd = n;
-                        // Find the start of that hill
                         while (n >= 0 && smoothedRMS[n] > 10.0) n--;
                         int hillStart = n + 1;
 
@@ -420,44 +415,31 @@ public class GameScreen extends Screen implements Input {
 
                             saveExecutor.execute(() -> {
                                 try {
-                                    // --- STEP A: FIND IDEAL THRESHOLD FOR THIS SPECIFIC HILL ---
                                     float searchThresh = 600.0f;
                                     float idealForThisHill = 10.0f;
-
-                                    // Visual Ratio: The line is drawn at 1.5, Signal is at rmsYScale (1.0)
-                                    // We need to bridge this gap to make the visual fill match the math
                                     float scaleRatio = 1.5f / rmsYScale;
+                                    float AREA_CALIBRATION_SCALAR = 5.0f;
 
-                                    while (searchThresh > 5.0f) {
+                                    while (searchThresh > 10.0f) {
                                         double shadedArea = 0;
-                                        // The logical point where the signal (1.0) meets the line (1.5)
                                         float visualLineLogicalVal = searchThresh * scaleRatio;
-
                                         for (double val : burstShape) {
                                             if (val > visualLineLogicalVal) {
-                                                // SHADED AREA MATH: (Signal Magnitude - Line Magnitude)
-                                                // This represents the actual pixels that turn green/yellow
                                                 shadedArea += (val - visualLineLogicalVal) * 3.22 * 0.001;
                                             }
                                         }
-
-                                        if (shadedArea >= rmsAreaThresh) {
+                                        if ((shadedArea * AREA_CALIBRATION_SCALAR) >= rmsAreaThresh) {
                                             idealForThisHill = searchThresh;
                                             break;
                                         }
-                                        searchThresh -= 0.5f; // High precision search
+                                        searchThresh -= 0.5f;
                                     }
 
-                                    // --- STEP B: ROLLING MINIMUM OF 5 LOGIC ---
-                                    // Store this event's specific result
                                     synchronized (calibrationThresholdHistory) {
                                         calibrationThresholdHistory.add(idealForThisHill);
                                         if (calibrationThresholdHistory.size() > 5) {
                                             calibrationThresholdHistory.remove(0);
                                         }
-
-                                        // Set global threshold to the MINIMUM of the history
-                                        // This fulfills the "Minimum of 5" requirement
                                         float minThresh = 600.0f;
                                         for (float t : calibrationThresholdHistory) {
                                             if (t < minThresh) minThresh = t;
@@ -465,39 +447,33 @@ public class GameScreen extends Screen implements Input {
                                         rmsAmpThresh = minThresh;
                                     }
 
-                                    // --- STEP C: PERSISTENT SAVE ---
-                                    if (threadContext == null) return;
-                                    int startIdx = ramRecordBufferIdx - 2000;
-                                    if (startIdx < 0) startIdx = 0;
+                                    // Save logic
                                     File path = threadContext.getExternalFilesDir(null);
                                     File file = new File(path, "Event_" + currentID + ".csv");
                                     PrintWriter pw = new PrintWriter(new BufferedWriter(new OutputStreamWriter(new FileOutputStream(file, false)), 65536));
                                     synchronized (ramRecordBuffer) {
-                                        for (int k = startIdx; k < ramRecordBufferIdx; k++) {
+                                        for (int k = ramRecordBufferIdx - 2000; k < ramRecordBufferIdx; k++) {
                                             if (k >= 0 && k < ramRecordBuffer.length) pw.println(ramRecordBuffer[k]);
                                         }
                                     }
-                                    pw.flush();
-                                    pw.close();
+                                    pw.flush(); pw.close();
                                 } catch (Exception e) {
-                                    Log.e("CALIB_ERROR", "Calibration or Save failed: " + e.getMessage());
+                                    Log.e("CALIB_ERROR", "Error: " + e.getMessage());
                                 }
                             });
 
-                            // Update meta-data for the Event Log and Replay
-                            eventAmpThresholds[eventCount] = rmsAmpThresh;
-                            eventClassification[eventCount] = 0; // Default to True Positive
-
+                            // --- ADD THE MISSING TIMESTAMP LOGIC HERE ---
                             long delta = System.currentTimeMillis() - startTimeMillis;
                             timeStamp[eventCount] = String.format("%02d:%02d:%03d",
                                     (delta / 60000), (delta / 1000) % 60, (delta % 1000));
 
+                            eventAmpThresholds[eventCount] = rmsAmpThresh;
+                            eventClassification[eventCount] = 0;
                             eventCount++;
                             truePositive++;
                         }
                     }
                 }
-
                 //////////////////////////// Start/Stop/Save Recording /////////////////////////////
                 /*  1. Start/Stop: It uses PrintWriter with a BufferedWriter. This is much faster than
                     standard file writing and prevents UI stuttering.
@@ -967,7 +943,10 @@ public class GameScreen extends Screen implements Input {
         }
 // --- UPDATED UNIFIED PSD DRAWING (Bottom 1900, Top 1435) ---
 // Adjust this gain to make the spikes taller or shorter within the box
-        float psdGlobalGain = 300.0f;
+        //float psdGlobalGain = 300.0f;
+        // --- DYNAMIC PSD GAIN ---
+        // Just the replay PSD is made bigger (1200.0f), while live stays at 300.0f
+        float psdGlobalGain = isReplaying ? 1200.0f : 300.0f;
 
 // MATH: (0 * -gain + 3600) - 1700 = 1900 (The Baseline)
         float yPsdOffset = 1700.0f;
@@ -1139,78 +1118,115 @@ public class GameScreen extends Screen implements Input {
             if (bufferIdx > 0) canvas.drawLines(lineBuffer, 0, bufferIdx, signalPaint);
 
             // --- 2. REPLAY RMS (BLUE & FILLS) ---
-            // --- 2. REPLAY RMS (BLUE & FILLS) ---
-            if (replayRMSArray != null) {
+            // --- REPLAY MASTER BLOCK ---
+            if (isReplaying && !replayList.isEmpty() && replayRawArray != null) {
 
+                // 1. REPLAY RAW SIGNAL (RED)
+                signalPaint.setColor(android.graphics.Color.RED);
+                signalPaint.setStrokeWidth(2.5f);
+                // FIX: Set gain to 0.025f for 16-bit compatibility (prevents signal from flying off screen)
+                final float visualGainRep = 0.025f;
 
-                // Retrieve the threshold specific to this event
-                float savedThresh = eventAmpThresholds[selectedEventId];
-                if (savedThresh == 0) savedThresh = rmsAmpThresh;
+                bufferIdx = 0;
+                startPos = Math.min(replayPosition, replayRawArray.length - 1);
+                yLastRep = centerYRep - ((float) replayRawArray[startPos] * visualGainRep);
 
-                // Calculate vertical position of the green threshold line
-                int thresholdYRep = (int) (blueCenterY - (savedThresh * 1.5f));
+                for (int n = 1; n < 1444; n++) {
+                    float x1 = 1574 - (n - 1);
+                    float x2 = 1574 - n;
+                    int dataIdx = replayPosition - n;
 
-                final int CEILING = 835;
-                final int FLOOR = 1296;
-                final int STROKE_OFFSET = 4;
+                    if (dataIdx >= 0 && dataIdx < replayRawArray.length) {
+                        float yNext = centerYRep - ((float) replayRawArray[dataIdx] * visualGainRep);
 
-                // Clamp threshold line
-                if (thresholdYRep > FLOOR) thresholdYRep = FLOOR;
-                if (thresholdYRep < CEILING) thresholdYRep = CEILING;
+                        // Clamping to Raw Box
+                        if (yNext < 222) yNext = 222;
+                        if (yNext > 680) yNext = 680;
 
-                // Draw Threshold Line
-                g.drawGreenLine(130, thresholdYRep, 1574, thresholdYRep, 0);
-
-                // --- FIX: PRE-INITIALIZE ryLast TO SIGNAL HEIGHT ---
-                // This prevents the vertical "tail" from the baseline to the first point
-                int ryLast = blueCenterY;
-                int startIdx = Math.min(replayPosition, replayRMSArray.length - 1);
-                if (startIdx >= 0) {
-                    ryLast = (int) (blueCenterY - replayRMSArray[startIdx] * rmsYScale);
-                    if (ryLast < CEILING) ryLast = CEILING;
-                    if (ryLast > FLOOR) ryLast = FLOOR;
+                        lineBuffer[bufferIdx++] = x1;
+                        lineBuffer[bufferIdx++] = yLastRep;
+                        lineBuffer[bufferIdx++] = x2;
+                        lineBuffer[bufferIdx++] = yNext;
+                        yLastRep = yNext;
+                    }
+                    if (x2 <= 140 || bufferIdx >= lineBuffer.length - 4) break;
                 }
+                if (bufferIdx > 0) canvas.drawLines(lineBuffer, 0, bufferIdx, signalPaint);
 
-                for (int n = 0; n < 1444; n++) {
-                    int x = 1574 - n;
-                    int dIdx = replayPosition - n;
+                // 2. REPLAY RMS (BLUE & FILLS)
+                // FIX: Changed from 'else if' to a standard 'if' so it actually executes
+                if (replayRMSArray != null) {
 
-                    if (dIdx >= 0 && dIdx < replayRMSArray.length) {
-                        int yVal = (int) (blueCenterY - replayRMSArray[dIdx] * rmsYScale);
+                    float savedThresh = eventAmpThresholds[selectedEventId];
+                    if (savedThresh == 0) savedThresh = rmsAmpThresh;
 
-                        // Apply Clamping
-                        if (yVal < CEILING) yVal = CEILING;
-                        if (yVal > FLOOR) yVal = FLOOR;
+                    // Visual line at 1.5x preference
+                    int thresholdYRep = (int) (blueCenterY - (savedThresh * 1.5f));
 
-                        // --- 1. DRAW FILLS FIRST ---
-                        if (yVal < thresholdYRep) {
-                            if (eventClassification[selectedEventId] == 0) {
-                                g.drawGreenLine(x, yVal + STROKE_OFFSET, x, thresholdYRep, 0);
-                            } else {
-                                g.drawYellowLine(x, yVal + STROKE_OFFSET, x, thresholdYRep, 0);
-                            }
-                        }
+                    final int CEILING = 835;
+                    final int FLOOR = 1296;
+                    final int STROKE_OFFSET = 4;
 
-                        // --- 2. DRAW BLUE RMS LINE (THE CAP) ---
-                        // For n=0, we draw a dot at the very edge to ensure the "cap" exists.
-                        // For n > 0, we draw the segment from the previous point.
-                        if (n == 0) {
-                            g.drawBlueLine(x, yVal, x, yVal, 0);
-                        } else {
-                            g.drawBlueLine(x + 1, ryLast, x, yVal, 0);
-                        }
-                        ryLast = yVal;
+                    if (thresholdYRep > FLOOR) thresholdYRep = FLOOR;
+                    if (thresholdYRep < CEILING) thresholdYRep = CEILING;
+
+                    g.drawGreenLine(130, thresholdYRep, 1574, thresholdYRep, 0);
+
+                    // Initialization to prevent tail
+                    int ryLast = blueCenterY;
+                    int rStartIdx = Math.min(replayPosition, replayRMSArray.length - 1);
+                    if (rStartIdx >= 0) {
+                        ryLast = (int) (blueCenterY - replayRMSArray[rStartIdx] * rmsYScale);
+                        if (ryLast < CEILING) ryLast = CEILING;
+                        if (ryLast > FLOOR) ryLast = FLOOR;
                     }
 
-                    // Stop if we hit the left boundary of the box
-                    if (x <= 140) break;
+                    boolean wasAboveThreshold = false;
+
+                    for (int n = 0; n < 1444; n++) {
+                        int x = 1574 - n;
+                        int dIdx = replayPosition - n;
+
+                        if (dIdx >= 0 && dIdx < replayRMSArray.length) {
+                            int yVal = (int) (blueCenterY - replayRMSArray[dIdx] * rmsYScale);
+                            if (yVal < CEILING) yVal = CEILING;
+                            if (yVal > FLOOR) yVal = FLOOR;
+
+                            boolean isAbove = yVal < thresholdYRep;
+
+                            // Draw Fills
+                            if (isAbove) {
+                                if (eventClassification[selectedEventId] == 0) {
+                                    g.drawGreenLine(x, yVal + STROKE_OFFSET, x, thresholdYRep, 0);
+                                } else {
+                                    g.drawYellowLine(x, yVal + STROKE_OFFSET, x, thresholdYRep, 0);
+                                }
+
+                                // Right Wall Outline
+                                if (n == 0 || !wasAboveThreshold) {
+                                    g.drawBlueLine(x, yVal, x, thresholdYRep, 0);
+                                }
+                            } else if (wasAboveThreshold) {
+                                // Left Wall Outline
+                                g.drawBlueLine(x + 1, ryLast, x + 1, thresholdYRep, 0);
+                            }
+
+                            // Draw Top Signal Line (the cap)
+                            if (n > 0) {
+                                g.drawBlueLine(x + 1, ryLast, x, yVal, 0);
+                            }
+
+                            ryLast = yVal;
+                            wasAboveThreshold = isAbove;
+                        }
+                        if (x <= 130) break;
+                    }
                 }
 
-                // Replay controls and post-processing
+                // 3. Replay Pacing & PSD
                 replayPosition += 15;
-                if (replayPosition >= replayRawArray.length + 1444) {
-                    replayPosition = 0;
-                }
+                if (replayPosition >= replayRawArray.length + 1444) replayPosition = 0;
+
                 if (replayMaxPsd != null) {
                     System.arraycopy(replayMaxPsd, 0, activePsdBuffer, 0, 512);
                 }
@@ -1229,8 +1245,7 @@ public class GameScreen extends Screen implements Input {
         this.selectedEventId = id;
         replayList.clear();
         replayPosition = 0;
-        replayMaxPsd = new double[512]; // Initialize screenshot array
-        NotchFilter replayNotch = new NotchFilter();
+        replayMaxPsd = new double[512];
 
         try {
             File path = context.getExternalFilesDir(null);
@@ -1248,16 +1263,12 @@ public class GameScreen extends Screen implements Input {
 
             if (!replayList.isEmpty()) {
                 replayRawArray = new double[replayList.size()];
-                // Warm up filter
-                double firstVal = replayList.get(0);
-                for(int i = 0; i < 200; i++) { replayNotch.filter(firstVal); }
-
+                double sum = 0;
                 double maxAbsVal = -1;
                 int peakIdx = 0;
-                double sum = 0;
 
                 for (int i = 0; i < replayList.size(); i++) {
-                    double val = replayNotch.filter(replayList.get(i));
+                    double val = replayList.get(i);
                     replayRawArray[i] = val;
                     sum += val;
                     if (Math.abs(val) > maxAbsVal) {
@@ -1267,13 +1278,19 @@ public class GameScreen extends Screen implements Input {
                 }
 
                 // --- 1. CALCULATE REPLAY RMS ---
+                // Data in CSV is already filtered/scaled. We just calculate RMS.
                 double mean = sum / replayRawArray.length;
                 double[] bipolar = new double[replayRawArray.length];
-                for (int i = 0; i < bipolar.length; i++) bipolar[i] = replayRawArray[i] - mean;
+                for (int i = 0; i < bipolar.length; i++) {
+                    bipolar[i] = replayRawArray[i] - mean;
+                }
 
-                replayRMSArray = RMSCalculator.calculateMovingRMS(bipolar, 40);
+                replayRMSArray = RMSCalculator.calculateMovingRMS(bipolar, 60); // Match Live 60ms
                 if (replayRMSArray != null) {
-                    for (int k = 0; k < replayRMSArray.length; k++) replayRMSArray[k] *= 1.75;
+                    for (int k = 0; k < replayRMSArray.length; k++) {
+                        // FIX: Match the 8.0x boost from ConnectedThread
+                        replayRMSArray[k] *= 8.0;
+                    }
                     replayRMSArray = MovingAverageCalculator.calculateMovingAverage(replayRMSArray, 80);
                 }
 
